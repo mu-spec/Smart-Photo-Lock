@@ -181,7 +181,7 @@ implementation is deferred.
 | -------------- | ------------------------- |
 | Onboarding / PIN setup | `ui` (screens), `security` (verify via hasher), `data` (SecuritySettingsRepository — ready in 1E) |
 | App list | `ui` (list screen — replaces Apps placeholder), `services/installed_apps_service` (native impl), `data/installed_apps_repository` (cache impl), `ProtectedAppsRepository` (ready in 1E) |
-| Smart automations | `ui` (replaces Smart placeholder), `rules` (already done), `data/lock_settings_repository` impl |
+| Smart automations | `ui` (replaces Smart placeholder), `rules` (already done), `data` (ready in 1E) |
 | Security settings | `ui` (PIN flows on the Security tab), `security` (Keystore hardening) |
 | Lock screen & enforcement | `ui` (challenge screen), `protection` (engine + controller impls), `services` (overlay/accessibility impls) |
 | Hardening | `services/device_admin_service` impl, Keystore-backed secrets, R8 keep-rules |
