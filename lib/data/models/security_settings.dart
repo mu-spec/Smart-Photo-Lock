@@ -1,7 +1,6 @@
 import '../../security/credentials/auth_type.dart';
 import '../../security/credentials/biometric_options.dart';
 import '../../security/credentials/credential_hash.dart';
-import '../../security/pin_hasher.dart';
 
 /// All user-configurable security settings, persisted as one JSON document
 /// in the local database (`security_settings` key-value table, encrypted at
