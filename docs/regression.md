@@ -1,0 +1,83 @@
+# Phase 1G — Regression Verification
+
+This document is the official Phase 1 regression record: what was verified,
+how, and what remains for on-device confirmation.
+
+**Build environment note:** the development sandbox has no Flutter/Android
+SDK (by design), so verification is split into two tiers:
+
+| Tier | Where it runs | What it covers |
+| ---- | ------------- | -------------- |
+| 1 — Automated (static) | Anywhere with Python 3 | Structure, imports, manifests, icons, version consistency, test inventory |
+| 1 — Automated (tests) | Your machine (`flutter test`) | Launch, navigation, persistence, security chain, theme, crash-free rendering |
+| 2 — Manual | Your device | Install, launch, live navigation, visual theme check, sustained use |
+
+---
+
+## Tier 1a — structural verification (executed in the sandbox ✅)
+
+Run anytime with: `python3 tool/verify_structure.py`
+
+| Check | Result |
+| ----- | ------ |
+| 128 relative Dart imports resolve | ✅ |
+| Brace/paren balance in all 84 Dart files | ✅ |
+| pubspec name + version format + all 9 dependency entries | ✅ |
+| Android manifests (main/debug/profile) parse as XML | ✅ |
+| Main manifest: `allowBackup="false"` (Keystore vault protection) | ✅ |
+| Launcher icons present in all 5 densities (10 PNGs) | ✅ |
+| Version consistency: pubspec ↔ README ↔ Gradle | ✅ |
+| No stale references to removed Phase 1B widgets | ✅ |
+| Every feature module has test coverage (8/8) | ✅ |
+| Design-system barrel exports every component | ✅ |
+
+## Tier 1b — automated test suites (run on your machine)
+
+```bash
+flutter clean
+flutter pub get
+flutter analyze      # expect: No issues found!
+flutter test         # expect: All tests passed!
+```
+
+| Suite | Covers |
+| ----- | ------ |
+| `test/regression/phase1_regression_test.dart` | **launch** (app pumps, MaterialApp carries both themes + system mode), **navigation** (5 tabs forward/back, quick-access tiles), **persistence** (all 5 domains via container), **security chain** (PIN → encrypted settings → verify → tamper rejection), **theme** (light/dark token application), **no crashes** (every tab under both themes, actions tapped) |
+| `test/data/*` (5 suites) | preferences, protected apps, security settings, profiles & rules, container wiring |
+| `test/security/*` (4 suites) | PIN hashing, secret store, AES-GCM cipher, encrypted settings at rest |
+| `test/design_system/*` (6 suites) | buttons, inputs, cards, section titles, status components, themes & scales |
+| `test/{rules,protection,utilities}/*` | rule engine, lock sessions, Result type |
+| `test/widget_test.dart` | tab shell navigation + quick access |
+
+## Tier 2 — on-device checklist
+
+Run on a real device (Android 7.0+):
+
+```bash
+flutter clean
+flutter pub get
+flutter build apk --debug
+flutter install         # with a device connected, or sideload the APK
+flutter run             # or launch from the launcher
+```
+
+| # | Check | How to verify | Result |
+| - | ----- | ------------- | ------ |
+| 1 | **Clean build** | `flutter build apk --debug` ends with "✓ Built build/app/outputs/flutter-apk/app-debug.apk" | ☐ |
+| 2 | **Install** | APK installs without errors; icon (navy padlock) appears in launcher | ☐ |
+| 3 | **Launch** | App opens to Home tab: logo, "Smart App Lock", "Phase 1 Complete" chip, protection status card | ☐ |
+| 4 | **Navigation** | Bottom bar switches between Home / Apps / Smart / Security / Settings; app-bar title follows; quick-access tiles on Home jump to their sections | ☐ |
+| 5 | **Security tab** | Shows "Protection is not fully set up" banner + 5 control rows (PIN, intruder selfie, break-in alerts, stealth mode, uninstall protection), all "Not set"; "Set up PIN" shows the coming-soon snackbar | ☐ |
+| 6 | **Theme** | Toggle device light/dark mode: app switches between white-ish surfaces (light) and brand navy (dark); text stays readable in both | ☐ |
+| 7 | **Persistence** | (Verified by test suites in Tier 1b; on-device persistence becomes user-visible with Phase 2+ features) | ☐ n/a |
+| 8 | **No crashes** | Rapid tab switching, light/dark toggling, and leaving the app open for several minutes produce no crashes/ANRs | ☐ |
+| 9 | **Logs** | `adb logcat` shows no unhandled exceptions while exercising the app | ☐ |
+
+### Defect log
+
+| # | Defect | Severity | Status |
+| - | ------ | -------- | ------ |
+| — | None found at handoff | — | — |
+
+Any defect you find on-device gets logged here (or in a GitHub issue) and
+fixed before Phase 2 begins.

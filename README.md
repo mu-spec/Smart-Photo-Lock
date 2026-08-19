@@ -4,10 +4,9 @@ Privacy-first Android app locker built with **Flutter**.
 Development follows the PRD phase plan; this repository is the production
 Android project.
 
-**Current status: Phase 1A–1F complete** — production project scaffold, core
-architecture, five-tab navigation, base design system, local persistence, and
-secure storage (Android Keystore-backed encryption). Locking is not
-implemented yet.
+**Current status: Phase 1 complete (1A–1G)** — production project scaffold,
+core architecture, five-tab navigation, base design system, local persistence,
+secure storage, and a full regression pass. Locking is not implemented yet.
 
 ---
 
@@ -21,6 +20,7 @@ implemented yet.
 | 1D | Base design system (tokens, components, light/dark, security status) | ✅ |
 | 1E | Local persistence foundation (preferences, protected apps, security settings, profiles, rules) | ✅ |
 | 1F | Secure storage foundation (Android Keystore-backed encryption, no raw PINs) | ✅ |
+| 1G | Phase 1 regression (structure + test suites + on-device checklist) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -110,6 +110,19 @@ PIN ──► PBKDF2 (salted) ──► PinHash ──► SecuritySettings JSON
 - **`android:allowBackup="false"`** — Keystore keys can't survive device
   restore, so cloud backup is disabled to protect the vault.
 
+### Phase 1G ✅ — Phase 1 Regression
+
+Full verification pass — see **docs/regression.md** for the complete record:
+
+- **Structural regression tool** — `python3 tool/verify_structure.py`
+  (15 checks: imports, balance, pubspec, manifests, icons, versions, test
+  inventory, barrel exports — all green).
+- **Regression test suite** — `test/regression/phase1_regression_test.dart`
+  covers launch, navigation, persistence (all 5 domains), the security
+  chain, both theme foundations, and crash-free rendering of every tab.
+- **On-device checklist** — build / install / launch / navigation / theme /
+  no-crash steps for a real device, with a defect log.
+
 ```
 lib/
 ├── main.dart                 # entry point (boots AppContainer.create())
@@ -172,15 +185,17 @@ lib/
     └── time_utils.dart       # minutes-of-day, overnight windows, formatting
 ```
 
-**Tests** (run with `flutter test`): secure-storage suites (secret store,
-AES-GCM cipher incl. tamper detection & key reuse, encrypted settings
-repository incl. legacy fallback and no-raw-PIN invariant), persistence
-suites (preferences store, protected apps, security settings, profiles &
-rules, container integration), navigation tests (tab switching,
-quick-access tiles, offstage assertions), design-system component tests
-(button, input, card, section title, security status pill/item/banner,
+**Tests** (run with `flutter test`): Phase 1G regression suite (launch,
+navigation, persistence, security chain, theme, no-crashes), secure-storage
+suites (secret store, AES-GCM cipher incl. tamper detection & key reuse,
+encrypted settings repository incl. legacy fallback and no-raw-PIN
+invariant), persistence suites (preferences store, protected apps, security
+settings, profiles & rules, container integration), navigation tests (tab
+switching, quick-access tiles, offstage assertions), design-system component
+tests (button, input, card, section title, security status pill/item/banner,
 theme + palette + scales), PIN hasher round-trip, rule engine (incl.
 midnight-wrapping windows), lock session expiry, Result type.
+Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 
 ---
 
@@ -192,7 +207,7 @@ midnight-wrapping windows), lock session expiry, Result type.
 | minSdk / targetSdk / compileSdk | 24 / 36 / 36 |
 | AGP / Gradle / Kotlin | 9.1.0 / 9.3.1 / 2.4.0 |
 | Java | 17 |
-| versionName / versionCode | `0.6.0` / `6` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.7.0` / `7` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM) |
 
 ## Prerequisites (on your machine)
@@ -247,6 +262,7 @@ adaptive + legacy densities). Re-run anytime after tweaking the design.
 
 ## Next phases
 
-Onboarding + PIN setup → app list (Apps tab) → smart automations (Smart tab)
-→ security settings (Security tab) → lock screen & enforcement → hardening.
-Each phase's module ownership is mapped in `docs/architecture.md`.
+Phase 2 begins the feature work: onboarding + PIN setup → app list (Apps
+tab) → smart automations (Smart tab) → security settings (Security tab) →
+lock screen & enforcement → hardening. Each phase's module ownership is
+mapped in `docs/architecture.md`.

@@ -138,6 +138,21 @@ Hardening guarantees:
 
 ---
 
+## 1G. Phase 1 regression
+
+Two-tier verification (full record in
+[`docs/regression.md`](regression.md)):
+
+- **Structural** — `tool/verify_structure.py`: imports, balance, pubspec,
+  manifests, icons, version consistency, test inventory, barrel exports.
+  Runs without any SDK (15/15 green at handoff).
+- **Behavioral** — `test/regression/phase1_regression_test.dart`: launch,
+  navigation, persistence round-trips, security chain, theme application,
+  crash-free rendering under both brightnesses; plus the 18 existing
+  suites. Run on-device checklist in `docs/regression.md` before Phase 2.
+
+---
+
 ## 1. The eight modules
 
 ```
