@@ -206,7 +206,13 @@ Security invariants:
 ```
 Choose length (4 / 6) ──► Enter new PIN ──► Confirm PIN ──► Enroll ──► Success
                               ▲                 │
-                              └── mismatch ────┘  (inline error, restart)
+                              │          mismatch (2C)
+                              │                 │
+                              │        ┌────────┴────────┐
+                              │        ▼                 ▼
+                              └── Start over      Re-confirm PIN
+                                  (clear all)      (keep first PIN,
+                                                    redo confirmation)
 ```
 
 - Shared design-system pieces: `DsPinDots` (animated entry dots) and
@@ -220,6 +226,18 @@ Choose length (4 / 6) ──► Enter new PIN ──► Confirm PIN ──► En
 - Navigation: `RouteNames.pinSetup` (`/pin/setup`), opened from the
   Security tab banner; supports `initialLength` for the future change-PIN
   flow.
+
+## 2C. PIN confirmation
+
+- **Saving is gated on confirmation** — `enrollPin` runs only when the
+  second entry matches the first; a mismatch never touches storage.
+- Mismatches open a dedicated `PinSetupStep.mismatch` state:
+  * *Re-confirm PIN* — keeps the first PIN, re-asks only the confirmation;
+  * *Start over* — clears both entries and restarts at the first entry.
+- Feedback: red error dots (`DsPinDots(error: true)`) + a shake animation
+  (`TweenSequence` on a `SlideTransition`).
+- Tests guarantee the no-partial-enrollment invariant and cover repeated
+  mismatches, both recovery paths, and both PIN lengths.
 
 ---
 

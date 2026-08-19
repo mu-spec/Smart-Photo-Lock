@@ -5,15 +5,30 @@ import '../../../design_system/design_system.dart';
 import '../../../security/credentials/credential_manager.dart';
 
 /// Steps of the PIN setup flow.
-enum PinSetupStep { chooseLength, enter, confirm, success }
+enum PinSetupStep {
+  chooseLength,
+  enter,
+  confirm,
 
-/// Initial PIN setup screen (Phase 2B).
+  /// Confirmation did not match (Phase 2C): the user decides whether to
+  /// re-enter only the confirmation or start the PIN over. Nothing is
+  /// saved at this point.
+  mismatch,
+  success,
+}
+
+/// Initial PIN setup screen.
 ///
-/// Supports **4-digit and 6-digit PINs**: length choice → entry → confirm,
-/// then enrolls the credential through [CredentialManager] (PBKDF2 →
-/// encrypted settings). Mismatches and save failures restart the entry with
-/// an inline error. Shared keypad/dots components make this flow reusable
-/// for the future change-PIN and unlock screens.
+/// **Confirmation is mandatory** — enrollment runs only after the second
+/// entry matches the first (Phase 2C). Mismatches land on a dedicated
+/// retry state with two clean choices:
+///
+///  * **Re-confirm PIN** — keeps the first entry and re-asks only the
+///    confirmation (the user suspects a typo in the second entry);
+///  * **Start over** — clears everything and restarts at the first entry.
+///
+/// A shake animation and red error dots make a mismatch impossible to miss,
+/// and no partial credential is ever saved.
 class PinSetupScreen extends StatefulWidget {
   const PinSetupScreen({
     super.key,
@@ -32,7 +47,13 @@ class PinSetupScreen extends StatefulWidget {
   static const String enterPinTitle = 'Enter your new PIN';
   static const String confirmPinTitle = 'Confirm your PIN';
   static const String successTitle = 'PIN is set';
-  static const String mismatchMessage = "PINs don't match. Start again.";
+
+  static const String mismatchTitle = "PINs don't match";
+  static const String mismatchMessage =
+      'The confirmation did not match the PIN you entered. '
+      'Nothing was saved.';
+  static const String reconfirmLabel = 'Re-confirm PIN';
+  static const String startOverLabel = 'Start over';
   static const String saveFailedMessage =
       'Could not save your PIN. Please try again.';
 
@@ -40,7 +61,8 @@ class PinSetupScreen extends StatefulWidget {
   State<PinSetupScreen> createState() => _PinSetupScreenState();
 }
 
-class _PinSetupScreenState extends State<PinSetupScreen> {
+class _PinSetupScreenState extends State<PinSetupScreen>
+    with SingleTickerProviderStateMixin {
   PinSetupStep _step = PinSetupStep.chooseLength;
   int? _length;
   String _entered = '';
@@ -48,14 +70,50 @@ class _PinSetupScreenState extends State<PinSetupScreen> {
   String? _error;
   bool _saving = false;
 
+  late final AnimationController _shakeController;
+  late final Animation<Offset> _shake;
+
   @override
   void initState() {
     super.initState();
+    _shakeController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 420),
+    );
+    _shake = TweenSequence<Offset>(<TweenSequenceItem<Offset>>[
+      TweenSequenceItem<Offset>(
+        tween: Tween<Offset>(begin: Offset.zero, end: const Offset(0.06, 0)),
+        weight: 1,
+      ),
+      TweenSequenceItem<Offset>(
+        tween: Tween<Offset>(begin: const Offset(0.06, 0), end: const Offset(-0.06, 0)),
+        weight: 1,
+      ),
+      TweenSequenceItem<Offset>(
+        tween: Tween<Offset>(begin: const Offset(-0.06, 0), end: const Offset(0.04, 0)),
+        weight: 1,
+      ),
+      TweenSequenceItem<Offset>(
+        tween: Tween<Offset>(begin: const Offset(0.04, 0), end: const Offset(-0.03, 0)),
+        weight: 1,
+      ),
+      TweenSequenceItem<Offset>(
+        tween: Tween<Offset>(begin: const Offset(-0.03, 0), end: Offset.zero),
+        weight: 1,
+      ),
+    ]).animate(_shakeController);
+
     final int? initial = widget.initialLength;
     if (initial != null) {
       _length = initial;
       _step = PinSetupStep.enter;
     }
+  }
+
+  @override
+  void dispose() {
+    _shakeController.dispose();
+    super.dispose();
   }
 
   CredentialManager get _manager =>
@@ -74,6 +132,25 @@ class _PinSetupScreenState extends State<PinSetupScreen> {
   void _goBackToLengthChoice() {
     setState(() {
       _step = PinSetupStep.chooseLength;
+      _entered = '';
+      _firstPin = null;
+      _error = null;
+    });
+  }
+
+  /// Phase 2C: keep the first PIN, only redo the confirmation.
+  void _reconfirm() {
+    setState(() {
+      _step = PinSetupStep.confirm;
+      _entered = '';
+      _error = null;
+    });
+  }
+
+  /// Phase 2C: drop everything and restart from the first entry.
+  void _startOver() {
+    setState(() {
+      _step = PinSetupStep.enter;
       _entered = '';
       _firstPin = null;
       _error = null;
@@ -131,15 +208,14 @@ class _PinSetupScreenState extends State<PinSetupScreen> {
       return;
     }
 
-    // Confirmation step: compare with the first entry.
+    // Confirmation step: nothing is saved unless it matches (Phase 2C).
     if (_entered == _firstPin) {
       await _enroll(_entered);
     } else {
+      _shakeController.forward(from: 0);
       setState(() {
-        _error = PinSetupScreen.mismatchMessage;
-        _step = PinSetupStep.enter;
+        _step = PinSetupStep.mismatch;
         _entered = '';
-        _firstPin = null;
       });
     }
   }
@@ -190,6 +266,7 @@ class _PinSetupScreenState extends State<PinSetupScreen> {
             PinSetupStep.chooseLength => _buildChooseLength(),
             PinSetupStep.enter => _buildEntry(confirming: false),
             PinSetupStep.confirm => _buildEntry(confirming: true),
+            PinSetupStep.mismatch => _buildMismatch(),
             PinSetupStep.success => _buildSuccess(),
           },
         ),
@@ -271,7 +348,10 @@ class _PinSetupScreenState extends State<PinSetupScreen> {
         ],
         const SizedBox(height: DsSpacing.xl),
         Center(
-          child: DsPinDots(filled: _entered.length, total: length),
+          child: SlideTransition(
+            position: _shake,
+            child: DsPinDots(filled: _entered.length, total: length),
+          ),
         ),
         const SizedBox(height: DsSpacing.xl),
         DsPinPad(
@@ -298,6 +378,69 @@ class _PinSetupScreenState extends State<PinSetupScreen> {
             size: DsButtonSize.small,
             onPressed: _saving ? null : _goBackToLengthChoice,
           ),
+        ),
+      ],
+    );
+  }
+
+  /// Phase 2C: dedicated mismatch state — nothing was saved.
+  Widget _buildMismatch() {
+    final ThemeData theme = Theme.of(context);
+    final DsPalette palette = context.dsColors;
+    final int length = _length!;
+    return ListView(
+      key: const ValueKey<String>('mismatch'),
+      padding: DsInsets.screen,
+      children: <Widget>[
+        const SizedBox(height: DsSpacing.lg),
+        Center(
+          child: Container(
+            width: 80,
+            height: 80,
+            decoration: BoxDecoration(
+              color: palette.danger.withValues(alpha: 0.12),
+              shape: BoxShape.circle,
+              border: Border.all(color: palette.danger.withValues(alpha: 0.4)),
+            ),
+            child: Icon(Icons.sync_problem, size: 36, color: palette.danger),
+          ),
+        ),
+        const SizedBox(height: DsSpacing.xl),
+        Center(
+          child: Text(
+            PinSetupScreen.mismatchTitle,
+            style: theme.textTheme.headlineSmall,
+          ),
+        ),
+        const SizedBox(height: DsSpacing.sm),
+        Center(
+          child: Text(
+            PinSetupScreen.mismatchMessage,
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: palette.textSecondary,
+            ),
+          ),
+        ),
+        const SizedBox(height: DsSpacing.xl),
+        Center(
+          child: SlideTransition(
+            position: _shake,
+            child: DsPinDots(filled: 0, total: length, error: true),
+          ),
+        ),
+        const SizedBox(height: DsSpacing.xxl),
+        DsButton(
+          label: PinSetupScreen.reconfirmLabel,
+          expand: true,
+          onPressed: _reconfirm,
+        ),
+        const SizedBox(height: DsSpacing.md),
+        DsButton(
+          label: PinSetupScreen.startOverLabel,
+          variant: DsButtonVariant.outline,
+          expand: true,
+          onPressed: _startOver,
         ),
       ],
     );
@@ -372,9 +515,7 @@ class _LengthCard extends StatelessWidget {
     return DsCard(
       title: '$length-digit PIN',
       subtitle: subtitle,
-      color: selected
-          ? palette.primary.withValues(alpha: 0.12)
-          : null,
+      color: selected ? palette.primary.withValues(alpha: 0.12) : null,
       trailing: Icon(
         selected ? Icons.check_circle : Icons.radio_button_unchecked,
         color: selected ? palette.primary : palette.border,

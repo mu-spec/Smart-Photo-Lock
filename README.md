@@ -24,6 +24,7 @@ setup screen. Locking is not implemented yet.
 | 1G | Phase 1 regression (structure + test suites + on-device checklist) | ✅ |
 | 2A | Authentication data model (PIN, pattern, biometric + credential state) | ✅ |
 | 2B | PIN setup screen (4-digit & 6-digit flow) | ✅ |
+| 2C | PIN confirmation (mandatory confirm, clean mismatch handling) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -163,6 +164,20 @@ Initial PIN setup (`lib/ui/screens/pin/pin_setup_screen.dart`), supporting
   the Security tab's "Set up PIN" banner now opens this flow
   (`RouteNames.pinSetup`).
 
+### Phase 2C ✅ — Confirm PIN
+
+Confirmation is **mandatory before saving** — enrollment runs only after the
+second entry matches the first. Mismatches land on a dedicated state with
+two clean choices:
+
+- **Re-confirm PIN** — keeps the first entry and re-asks only the
+  confirmation (for a typo in the second entry).
+- **Start over** — clears everything and restarts at the first entry.
+
+A shake animation + red error dots make mismatches unmissable, and nothing
+is ever partially saved (tests assert the credential store stays empty after
+a mismatch).
+
 ```
 lib/
 ├── main.dart                 # entry point (boots AppContainer.create())
@@ -241,8 +256,9 @@ lib/
 ```
 
 **Tests** (run with `flutter test`): PIN setup flow (4-digit happy path,
-6-digit happy path, mismatch recovery, backspace/long-press clear,
-initialLength, length change), PIN pad + PIN dots component suites,
+6-digit happy path, mismatch state incl. re-confirm / repeated mismatch /
+start-over and no-partial-enrollment guarantees, backspace/long-press
+clear, initialLength, length change), PIN pad + PIN dots component suites,
 credential suites (auth types, pattern codec & policy, pattern hasher,
 biometric options, credential state, state machine, credential manager
 incl. lockout persistence), Phase 1G regression suite (launch, navigation,
@@ -267,7 +283,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.1.0 / 9.3.1 / 2.4.0 |
 | Java | 17 |
-| versionName / versionCode | `0.9.0` / `10` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.10.0` / `11` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM) |
 
 ## Prerequisites (on your machine)
