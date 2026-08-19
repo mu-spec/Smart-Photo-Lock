@@ -4,8 +4,9 @@ Privacy-first Android app locker built with **Flutter**.
 Development follows the PRD phase plan; this repository is the production
 Android project.
 
-**Current status: Phase 1A + 1B + 1C complete** — production project scaffold,
-core architecture, and five-tab navigation. Locking is not implemented yet.
+**Current status: Phase 1A + 1B + 1C + 1D complete** — production project
+scaffold, core architecture, five-tab navigation, and base design system.
+Locking is not implemented yet.
 
 ---
 
@@ -16,6 +17,7 @@ core architecture, and five-tab navigation. Locking is not implemented yet.
 | 1A | Create production Android project | ✅ |
 | 1B | Core project architecture (8 modules) | ✅ |
 | 1C | Navigation foundation (5-tab shell + placeholder screens) | ✅ |
+| 1D | Base design system (tokens, components, light/dark, security status) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -43,20 +45,51 @@ feature tabs use the shared `PlaceholderScreen` widget and will be swapped for
 real UI in their feature phases. Home has quick-access tiles that jump to the
 other tabs. Widget tests cover tab switching and the quick-access wiring.
 
+### Phase 1D ✅ — Base Design System
+
+A complete design system in `lib/design_system/`:
+
+- **Tokens** — `DsPalette` (semantic light/dark colors), `DsSpacing`/`DsInsets`
+  (4pt grid), `DsRadii`, `DsTypography` (full Material text scale), `DsTone`.
+- **Light/dark foundations** — `AppTheme.light` + `AppTheme.dark` generated
+  from the same tokens; the app follows `ThemeMode.system`.
+- **Components** — `DsButton` (5 variants × 3 sizes, icons, loading),
+  `DsCard`, `DsTextField` (labels, helper/error, password toggle),
+  `DsStatusPill`, `DsSectionTitle`.
+- **Security status components** — `SecurityLevel` →
+  `SecurityStatusPill` / `SecurityStatusItem` / `SecurityStatusBanner`.
+  The Security tab is now real UI built from them (static "not set" states
+  until the PIN phase).
+
+Screens use `context.dsColors` for colors; hard-coded values are banned
+outside `lib/design_system/`.
+
 ```
 lib/
 ├── main.dart                 # entry point
 ├── app/                      # app shell: router, theme
-│   ├── app.dart              # SmartAppLockApp (root widget)
+│   ├── app.dart              # SmartAppLockApp (root widget, ThemeMode.system)
 │   ├── router.dart           # central route registry (RouteNames + AppRouter)
-│   └── theme/                # AppColors, AppTheme (dark navy + teal)
+│   └── theme/                # AppColors (brand), AppTheme (light + dark)
+├── design_system/            # base design system (Phase 1D)
+│   ├── ds_palette.dart       # semantic light/dark color tokens
+│   ├── ds_spacing.dart       # spacing scale + EdgeInsets presets
+│   ├── ds_radii.dart         # corner radius scale
+│   ├── ds_typography.dart    # full Material text scale
+│   ├── ds_tone.dart          # neutral/success/warning/danger/info
+│   ├── ds_theme.dart         # light/dark ThemeData builders
+│   ├── ds_context.dart       # context.dsColors extension
+│   ├── design_system.dart    # barrel export
+│   ├── widgets/              # DsButton, DsCard, DsTextField, DsStatusPill,
+│   │                         # DsSectionTitle
+│   └── security/             # SecurityLevel, SecurityStatusPill/Item/Banner
 ├── ui/                       # screens & shared widgets
 │   ├── shell/                # MainShell: bottom NavigationBar + IndexedStack
 │   ├── screens/
 │   │   ├── home/             # Home tab (welcome, status, quick access)
 │   │   ├── apps/             # Apps tab (placeholder)
 │   │   ├── smart/            # Smart tab (placeholder)
-│   │   ├── security/         # Security tab (placeholder)
+│   │   ├── security/         # Security tab (status banner + control list)
 │   │   └── settings/         # Settings tab (placeholder)
 │   └── widgets/              # PlaceholderScreen (shared by feature tabs)
 ├── data/                     # models + repository contracts
@@ -87,8 +120,10 @@ lib/
 ```
 
 **Tests** (run with `flutter test`): navigation tests (tab switching,
-quick-access tiles, offstage assertions), PIN hasher round-trip, rule engine
-(incl. midnight-wrapping windows), lock session expiry, Result type.
+quick-access tiles, offstage assertions), design-system component tests
+(button, input, card, section title, security status pill/item/banner,
+theme + palette + scales), PIN hasher round-trip, rule engine (incl.
+midnight-wrapping windows), lock session expiry, Result type.
 
 ---
 
@@ -100,7 +135,7 @@ quick-access tiles, offstage assertions), PIN hasher round-trip, rule engine
 | minSdk / targetSdk / compileSdk | 24 / 36 / 36 |
 | AGP / Gradle / Kotlin | 9.1.0 / 9.3.1 / 2.4.0 |
 | Java | 17 |
-| versionName / versionCode | `0.3.0` / `3` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.4.0` / `4` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing) |
 
 ## Prerequisites (on your machine)

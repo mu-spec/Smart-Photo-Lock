@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../app/theme/app_colors.dart';
+import '../../design_system/design_system.dart';
 
 /// Shared scaffold for feature screens that are not implemented yet.
 ///
@@ -31,88 +31,60 @@ class PlaceholderScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
+    final DsPalette palette = context.dsColors;
     return SafeArea(
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
+        padding: DsInsets.screen,
         children: <Widget>[
           Center(
             child: Container(
               width: 88,
               height: 88,
               decoration: BoxDecoration(
-                color: AppColors.accent.withValues(alpha: 0.10),
+                color: palette.primary.withValues(alpha: 0.10),
                 shape: BoxShape.circle,
                 border: Border.all(
-                  color: AppColors.accent.withValues(alpha: 0.35),
+                  color: palette.primary.withValues(alpha: 0.35),
                 ),
               ),
-              child: Icon(icon, size: 40, color: AppColors.accent),
+              child: Icon(icon, size: 40, color: palette.primary),
             ),
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: DsSpacing.xl),
           Center(child: Text(title, style: theme.textTheme.headlineSmall)),
-          const SizedBox(height: 8),
+          const SizedBox(height: DsSpacing.sm),
           Center(
             child: Text(
               description,
               textAlign: TextAlign.center,
               style: theme.textTheme.bodyMedium?.copyWith(
-                color: AppColors.textSecondary,
+                color: palette.textSecondary,
               ),
             ),
           ),
-          const SizedBox(height: 16),
-          Center(child: _Badge(label: badge)),
-          const SizedBox(height: 32),
-          Text('Planned features', style: theme.textTheme.titleMedium),
-          const SizedBox(height: 12),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 6),
-              child: Column(
-                children: <Widget>[
-                  for (final String feature in features)
-                    ListTile(
-                      dense: true,
-                      leading: const Icon(
-                        Icons.check_circle_outline,
-                        color: AppColors.accent,
-                        size: 20,
-                      ),
-                      title: Text(feature, style: theme.textTheme.bodyMedium),
+          const SizedBox(height: DsSpacing.lg),
+          Center(child: DsStatusPill(label: badge)),
+          const SizedBox(height: DsSpacing.xxl),
+          const DsSectionTitle('Planned features'),
+          const SizedBox(height: DsSpacing.md),
+          DsCard(
+            padding: const EdgeInsets.symmetric(vertical: DsSpacing.xs + 2),
+            child: Column(
+              children: <Widget>[
+                for (final String feature in features)
+                  ListTile(
+                    dense: true,
+                    leading: Icon(
+                      Icons.check_circle_outline,
+                      color: palette.primary,
+                      size: 20,
                     ),
-                ],
-              ),
+                    title: Text(feature, style: theme.textTheme.bodyMedium),
+                  ),
+              ],
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-/// Rounded status pill (shared style with the home screen chips).
-class _Badge extends StatelessWidget {
-  const _Badge({required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-      decoration: BoxDecoration(
-        color: AppColors.accent.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: AppColors.accent.withValues(alpha: 0.35)),
-      ),
-      child: Text(
-        label,
-        style: const TextStyle(
-          color: AppColors.accent,
-          fontSize: 12,
-          fontWeight: FontWeight.w600,
-        ),
       ),
     );
   }

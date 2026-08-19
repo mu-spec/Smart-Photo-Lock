@@ -5,8 +5,8 @@ import 'theme/app_theme.dart';
 
 /// Root widget: owns global theme and navigation for Smart App Lock.
 ///
-/// Every feature screen registers itself in [AppRouter]; this widget stays
-/// intentionally thin and only wires theme + routing.
+/// Follows the system light/dark setting via [ThemeMode.system]; both
+/// foundations come from the design system.
 class SmartAppLockApp extends StatelessWidget {
   const SmartAppLockApp({super.key});
 
@@ -15,7 +15,9 @@ class SmartAppLockApp extends StatelessWidget {
     return MaterialApp(
       title: 'Smart App Lock',
       debugShowCheckedModeBanner: false,
-      theme: AppTheme.dark,
+      theme: AppTheme.light,
+      darkTheme: AppTheme.dark,
+      themeMode: ThemeMode.system,
       initialRoute: RouteNames.home,
       routes: AppRouter.routes,
     );
