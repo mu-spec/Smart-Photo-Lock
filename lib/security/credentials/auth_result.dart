@@ -44,11 +44,19 @@ final class AuthFailure extends AuthAttemptResult {
 
 /// Authentication is blocked until [retryAt] (lockout cooldown).
 final class AuthLockedOut extends AuthAttemptResult {
-  const AuthLockedOut({required this.retryAt, this.attemptsMade});
+  const AuthLockedOut({
+    required this.retryAt,
+    this.attemptsMade,
+    this.lockoutStreak = 0,
+  });
 
   final DateTime retryAt;
 
   /// How many failed attempts triggered this lockout (null when the
   /// lockout was already active before the attempt).
   final int? attemptsMade;
+
+  /// Consecutive lockout count (1 = first). Drives the escalating cooldown
+  /// schedule (Phase 2F).
+  final int lockoutStreak;
 }

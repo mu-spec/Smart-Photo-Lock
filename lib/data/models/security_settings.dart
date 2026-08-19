@@ -27,6 +27,8 @@ class SecuritySettings {
     this.unlockSessionWindow = const Duration(minutes: 2),
     this.failedAttempts = 0,
     this.lockedOutUntil,
+    this.pinLength,
+    this.lockoutStreak = 0,
   });
 
   /// Factory-default settings (nothing configured yet).
@@ -78,6 +80,10 @@ class SecuritySettings {
   /// stored hash.
   final int? pinLength;
 
+  /// Consecutive lockout count (0 = none). Drives the escalating cooldown
+  /// schedule (Phase 2F); persists so restarts do not reset it.
+  final int lockoutStreak;
+
   /// True once a PIN credential exists (the original primary secret).
   bool get hasPin => pinHash != null;
 
@@ -108,6 +114,7 @@ class SecuritySettings {
     bool clearLockout = false,
     int? pinLength,
     bool clearPinLength = false,
+    int? lockoutStreak,
   }) {
     return SecuritySettings(
       pinHash: clearPin ? null : (pinHash ?? this.pinHash),
@@ -131,6 +138,7 @@ class SecuritySettings {
           clearLockout ? null : (lockedOutUntil ?? this.lockedOutUntil),
       pinLength:
           clearPinLength ? null : (pinLength ?? this.pinLength),
+      lockoutStreak: lockoutStreak ?? this.lockoutStreak,
     );
   }
 
@@ -149,6 +157,7 @@ class SecuritySettings {
         'failedAttempts': failedAttempts,
         'lockedOutUntilEpochMs': lockedOutUntil?.millisecondsSinceEpoch,
         'pinLength': pinLength,
+        'lockoutStreak': lockoutStreak,
       };
 
   factory SecuritySettings.fromJson(Map<String, dynamic> json) =>
@@ -192,6 +201,7 @@ class SecuritySettings {
                 json['lockedOutUntilEpochMs'] as int,
               ),
         pinLength: json['pinLength'] as int?,
+        lockoutStreak: json['lockoutStreak'] as int? ?? 0,
       );
 
   @override

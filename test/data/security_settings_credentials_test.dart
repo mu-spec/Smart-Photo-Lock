@@ -55,6 +55,18 @@ void main() {
     expect(settings.copyWith(clearPinLength: true).pinLength, isNull);
   });
 
+  test('lockoutStreak round-trips and defaults to zero', () {
+    expect(SecuritySettings.defaults.lockoutStreak, 0);
+    final SecuritySettings settings =
+        SecuritySettings.defaults.copyWith(lockoutStreak: 3);
+    expect(SecuritySettings.fromJson(settings.toJson()).lockoutStreak, 3);
+    // Legacy JSON (Phase 2E) has no field -> defaults to zero.
+    final SecuritySettings legacy = SecuritySettings.fromJson(
+      <String, dynamic>{'pinLength': 4},
+    );
+    expect(legacy.lockoutStreak, 0);
+  });
+
   test('legacy JSON (Phase 1) still parses with the new defaults', () {
     final SecuritySettings restored = SecuritySettings.fromJson(
       <String, dynamic>{

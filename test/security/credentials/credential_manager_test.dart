@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:smart_app_lock/data/models/security_settings.dart';
 import 'package:smart_app_lock/data/repositories/impl/security_settings_repository_impl.dart';
 import 'package:smart_app_lock/data/repositories/security_settings_repository.dart';
 import 'package:smart_app_lock/data/storage/impl/in_memory_local_database.dart';
@@ -195,5 +196,58 @@ void main() {
         (await manager.authenticatePin('1234')).valueOrNull!;
     expect(ok, isA<AuthSuccess>());
     expect((await manager.status()).valueOrNull!.failedAttempts, 0);
+  });
+
+  // -------------------------------------------------------------------
+  // Phase 2F — failed-attempt tracking & escalating cooldown persistence
+  // -------------------------------------------------------------------
+  test('a lockout carries its streak and persists it', () async {
+    await manager.enrollPin('1234');
+
+    await manager.authenticatePin('0000');
+    await manager.authenticatePin('0000');
+    final AuthAttemptResult r3 =
+        (await manager.authenticatePin('0000')).valueOrNull!;
+    expect(r3, isA<AuthLockedOut>());
+    expect((r3 as AuthLockedOut).lockoutStreak, 1);
+
+    final CredentialState state = (await manager.status()).valueOrNull!;
+    expect(state.lockoutStreak, 1);
+  });
+
+  test('the lockout streak survives a simulated app restart', () async {
+    await manager.enrollPin('1234');
+    await manager.authenticatePin('0000');
+    await manager.authenticatePin('0000');
+    await manager.authenticatePin('0000');
+
+    final CredentialManager restarted = DefaultCredentialManager(
+      settings: settings,
+      pinHasher: Pbkdf2PinHasher(iterations: 200),
+      patternHasher: Pbkdf2PatternHasher(iterations: 200),
+    );
+    final CredentialState state = (await restarted.status()).valueOrNull!;
+    expect(state.lockoutStreak, 1);
+    expect(state.status, CredentialStatus.lockedOut);
+  });
+
+  test('a successful authentication resets the persisted streak', () async {
+    await manager.enrollPin('1234');
+    await manager.authenticatePin('0000');
+    await manager.authenticatePin('0000');
+    await manager.authenticatePin('0000');
+    expect((await manager.status()).valueOrNull!.lockoutStreak, 1);
+
+    // Wait out the 30s lockout by clearing it through settings (the
+    // manager has no clock seam), then succeed.
+    final SecuritySettings cleared = (await settings.getSettings())
+        .valueOrNull!
+        .copyWith(clearLockout: true);
+    await settings.saveSettings(cleared);
+
+    final AuthAttemptResult ok =
+        (await manager.authenticatePin('1234')).valueOrNull!;
+    expect(ok, isA<AuthSuccess>());
+    expect((await manager.status()).valueOrNull!.lockoutStreak, 0);
   });
 }

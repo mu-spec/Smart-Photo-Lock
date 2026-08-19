@@ -22,6 +22,7 @@ class CredentialState {
     this.failedAttempts = 0,
     this.lockedOutUntil,
     this.pinLength,
+    this.lockoutStreak = 0,
   });
 
   /// Every enrolled credential type.
@@ -40,6 +41,10 @@ class CredentialState {
   /// Length of the enrolled PIN (4 or 6), mirrored from settings so the
   /// unlock screen can size its entry dots.
   final int? pinLength;
+
+  /// Consecutive lockout count (0 = never locked out in this failure
+  /// sequence). Drives the escalating cooldown schedule (Phase 2F).
+  final int lockoutStreak;
 
   /// Status resolved against [now].
   CredentialStatus statusAt(DateTime now) {
@@ -66,6 +71,7 @@ class CredentialState {
     DateTime? lockedOutUntil,
     bool clearLockout = false,
     int? pinLength,
+    int? lockoutStreak,
   }) {
     return CredentialState(
       enrolled: enrolled ?? this.enrolled,
@@ -74,6 +80,7 @@ class CredentialState {
       lockedOutUntil:
           clearLockout ? null : (lockedOutUntil ?? this.lockedOutUntil),
       pinLength: pinLength ?? this.pinLength,
+      lockoutStreak: lockoutStreak ?? this.lockoutStreak,
     );
   }
 
@@ -83,6 +90,7 @@ class CredentialState {
         'failedAttempts': failedAttempts,
         'lockedOutUntilEpochMs': lockedOutUntil?.millisecondsSinceEpoch,
         'pinLength': pinLength,
+        'lockoutStreak': lockoutStreak,
       };
 
   factory CredentialState.fromJson(Map<String, dynamic> json) =>
@@ -100,6 +108,7 @@ class CredentialState {
                 json['lockedOutUntilEpochMs'] as int,
               ),
         pinLength: json['pinLength'] as int?,
+        lockoutStreak: json['lockoutStreak'] as int? ?? 0,
       );
 
   @override

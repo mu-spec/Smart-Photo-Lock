@@ -27,6 +27,7 @@ setup screen. Locking is not implemented yet.
 | 2C | PIN confirmation (mandatory confirm, clean mismatch handling) | ✅ |
 | 2D | Secure PIN storage (derived/verifiable material only, never raw PIN) | ✅ |
 | 2E | PIN unlock screen (authentication with the configured PIN) | ✅ |
+| 2F | Failed PIN attempts (tracking + increasing cooldown) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -217,6 +218,22 @@ Full-screen authentication using the **configured PIN**
 - The Security tab's "Unlock PIN" row opens the screen (snackbar hint when
   nothing is enrolled; "Authenticated ✓" on success).
 
+### Phase 2F ✅ — Failed PIN Attempts
+
+Failed attempts are tracked per credential state, and the lockout cooldown
+**increases with repeated failures**:
+
+- **Escalating schedule** — `EscalatingCooldownPolicy`: 30s → 1m → 2m → 4m
+  → 8m → 10m cap (base × factor^streak, configurable; factor 1 opts out).
+- **Persisted streak** — `lockoutStreak` lives in the encrypted settings and
+  `CredentialState`, so restarts don't reset the escalation.
+- **Fair retry semantics** — after a cooldown expires the attempt counter
+  restarts fresh (a fresh set of tries), while the streak — and therefore
+  the next, longer cooldown — stays until a successful authentication.
+- **UI** — the unlock screen's lockout countdown reflects the escalated
+  duration and shows "Cooldown increases with repeated failures." from the
+  second lockout onward.
+
 ```
 lib/
 ├── main.dart                 # entry point (boots AppContainer.create())
@@ -273,6 +290,7 @@ lib/
 │       ├── auth_result.dart      # AuthSuccess / AuthFailure / AuthLockedOut
 │       ├── credential_state.dart # enrolled/primary/attempts/lockout snapshot
 │       ├── credential_state_machine.dart # pure attempt & cooldown logic
+│       ├── cooldown_policy.dart      # 2F: escalating cooldown schedule
 │       ├── credential_manager.dart# lifecycle contract
 │       ├── pin_storage.dart      # 2D: secure PIN storage boundary
 │       └── impl/             # DefaultCredentialManager (persistent counters),
@@ -301,7 +319,10 @@ lib/
 **Tests** (run with `flutter test`): PIN unlock suites (configured-length
 dots 4/6, correct PIN pops true, wrong PIN error + remaining attempts,
 lockout view + disabled pad, pre-existing lockout on open, countdown expiry
-via injected clock, no-credential recovery), PIN storage suites (hash
+via injected clock, no-credential recovery, escalating second lockout with
+60s countdown + notice), cooldown policy suite (schedule, cap, custom
+factor, opt-out), state machine escalation tests (streak increments,
+success resets, expired-lockout semantics), PIN storage suites (hash
 policy violations, save/load round-trip, raw-PIN-never-in-storage byte
 inspection, fail-closed corrupted records, manager integration), PIN setup
 flow (4-digit happy path, 6-digit happy path, mismatch state incl.
@@ -332,7 +353,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.1.0 / 9.3.1 / 2.4.0 |
 | Java | 17 |
-| versionName / versionCode | `0.12.0` / `13` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.13.0` / `14` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM) |
 
 ## Prerequisites (on your machine)

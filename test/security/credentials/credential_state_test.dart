@@ -58,6 +58,7 @@ void main() {
       failedAttempts: 3,
       lockedOutUntil: lockoutEnd,
       pinLength: 6,
+      lockoutStreak: 2,
     );
     final CredentialState restored = CredentialState.fromJson(state.toJson());
     expect(restored.enrolled, state.enrolled);
@@ -65,6 +66,20 @@ void main() {
     expect(restored.failedAttempts, 3);
     expect(restored.lockedOutUntil, lockoutEnd);
     expect(restored.pinLength, 6);
+    expect(restored.lockoutStreak, 2);
+  });
+
+  test('lockoutStreak defaults to zero and survives copyWith', () {
+    const CredentialState fresh =
+        CredentialState(enrolled: <AuthType>{AuthType.pin});
+    expect(fresh.lockoutStreak, 0);
+
+    final CredentialState updated = fresh.copyWith(
+      failedAttempts: 1,
+      lockoutStreak: 3,
+    );
+    expect(updated.lockoutStreak, 3);
+    expect(updated.copyWith(failedAttempts: 2).lockoutStreak, 3);
   });
 
   test('copyWith preserves pinLength when updating counters', () {

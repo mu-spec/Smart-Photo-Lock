@@ -126,4 +126,107 @@ void main() {
     expect((r2 as AuthLockedOut).retryAt,
         start.add(const Duration(minutes: 5)));
   });
+
+  // -------------------------------------------------------------------
+  // Phase 2F — escalating cooldowns
+  // -------------------------------------------------------------------
+  test('second consecutive lockout escalates the cooldown', () {
+    // Simulate a prior lockout cycle: streak 1, attempts just reset.
+    final CredentialState afterFirstCycle = state.copyWith(
+      failedAttempts: 0,
+      lockoutStreak: 1,
+    );
+
+    final (CredentialState s1, AuthAttemptResult _) = attempt(
+      matches: false,
+      now: start,
+      from: afterFirstCycle,
+    );
+    final (CredentialState s2, AuthAttemptResult _) = attempt(
+      matches: false,
+      now: start,
+      from: s1,
+    );
+    final (CredentialState s3, AuthAttemptResult r3) = attempt(
+      matches: false,
+      now: start,
+      from: s2,
+    );
+
+    expect(r3, isA<AuthLockedOut>());
+    final AuthLockedOut lockout = r3 as AuthLockedOut;
+    // Streak 2 -> base 30s x 2 = 60s.
+    expect(lockout.retryAt, start.add(const Duration(seconds: 60)));
+    expect(lockout.lockoutStreak, 2);
+    expect(s3.lockoutStreak, 2);
+  });
+
+  test('third consecutive lockout doubles again (2 minutes)', () {
+    final CredentialState afterSecondCycle = state.copyWith(
+      lockoutStreak: 2,
+    );
+    final (CredentialState s1, AuthAttemptResult _) = attempt(
+      matches: false,
+      now: start,
+      from: afterSecondCycle,
+    );
+    final (CredentialState s2, AuthAttemptResult _) = attempt(
+      matches: false,
+      now: start,
+      from: s1,
+    );
+    final (_, AuthAttemptResult r3) = attempt(
+      matches: false,
+      now: start,
+      from: s2,
+    );
+    final AuthLockedOut lockout = r3 as AuthLockedOut;
+    expect(lockout.retryAt, start.add(const Duration(minutes: 2)));
+    expect(lockout.lockoutStreak, 3);
+  });
+
+  test('a successful authentication resets the lockout streak', () {
+    final CredentialState afterTwoLockouts =
+        state.copyWith(failedAttempts: 2, lockoutStreak: 2);
+    final (CredentialState next, AuthAttemptResult result) = attempt(
+      matches: true,
+      now: start,
+      from: afterTwoLockouts,
+    );
+    expect(result, isA<AuthSuccess>());
+    expect(next.lockoutStreak, 0);
+    expect(next.failedAttempts, 0);
+  });
+
+  test('ordinary failures (no lockout) leave the streak untouched', () {
+    final CredentialState withStreak =
+        state.copyWith(lockoutStreak: 1);
+    final (CredentialState next, AuthAttemptResult result) = attempt(
+      matches: false,
+      now: start,
+      from: withStreak,
+    );
+    expect(result, isA<AuthFailure>());
+    expect(next.lockoutStreak, 1);
+  });
+
+  test('expired lockout restarts the attempt counter but keeps the streak',
+      () {
+    final CredentialState expired = state.copyWith(
+      failedAttempts: 3,
+      lockedOutUntil: start.subtract(const Duration(seconds: 1)),
+      lockoutStreak: 1,
+    );
+    final (CredentialState next, AuthAttemptResult result) = attempt(
+      matches: false,
+      now: start,
+      from: expired,
+    );
+    expect(result, isA<AuthFailure>());
+    // Fresh cycle: 1 of 3 used -> 2 remaining; no immediate re-lockout.
+    expect((result as AuthFailure).remainingAttempts, 2);
+    expect(next.failedAttempts, 1);
+    expect(next.lockedOutUntil, isNull); // expired lockout cleared
+    expect(next.lockoutStreak, 1); // streak persists until a success
+  });
 }

@@ -176,7 +176,13 @@ void main() {
     await _ManagerResults.manager.authenticatePin('8888');
     await _ManagerResults.manager.authenticatePin('7777');
 
-    await openUnlock(tester);
+    // Open with bounded pumps: pumpAndSettle would fast-forward the fake
+    // clock straight through the 30s countdown timer.
+    await tester.tap(find.byKey(const Key('open_unlock')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400)); // route transition
+    await tester.pump(); // async status load
+
     expect(find.text(PinUnlockScreen.lockedOutTitle), findsOneWidget);
     expect(find.textContaining(PinUnlockScreen.lockedOutMessage),
         findsOneWidget);
@@ -195,14 +201,60 @@ void main() {
     await tapDigits(tester, '7777');
     expect(find.text(PinUnlockScreen.lockedOutTitle), findsOneWidget);
 
-    // Advance past the 30s lockout and let the periodic tick fire.
-    fakeNow = fakeNow.add(const Duration(seconds: 31));
+    // Advance well past the 30s lockout (fake time runs ahead of real
+    // time during test pumps) and let the periodic tick fire.
+    fakeNow = fakeNow.add(const Duration(seconds: 60));
     await tester.pump(const Duration(seconds: 1));
 
     expect(find.text(PinUnlockScreen.lockedOutTitle), findsNothing);
     expect(find.text('Enter your 4-digit PIN'), findsOneWidget);
 
     // Teardown (a new timer no longer exists, but stay safe).
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('repeated lockouts escalate the cooldown (Phase 2F)',
+      (WidgetTester tester) async {
+    DateTime fakeNow = DateTime.now();
+    await pumpHosted(tester, now: () => fakeNow);
+    await enrollPin(tester, '1234');
+    await openUnlock(tester);
+
+    // First lockout: streak 1 -> base 30s cooldown, no escalation notice.
+    await tapDigits(tester, '9999');
+    await tapDigits(tester, '8888');
+    await tapDigits(tester, '7777');
+    expect(find.text(PinUnlockScreen.lockedOutTitle), findsOneWidget);
+    expect(find.text('Cooldown increases with repeated failures.'),
+        findsNothing);
+
+    // The manager records the streak and a ~30s cooldown (real clock).
+    final state1 = (await _ManagerResults.manager.status()).valueOrNull!;
+    expect(state1.lockoutStreak, 1);
+    final int cooldown1 =
+        state1.lockedOutUntil!.difference(DateTime.now()).inSeconds;
+    expect(cooldown1, inInclusiveRange(25, 30));
+
+    // Wait the lockout out (screen countdown uses the injected clock;
+    // advance well past the cooldown to cover fake/real clock drift).
+    fakeNow = fakeNow.add(const Duration(seconds: 60));
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.text('Enter your 4-digit PIN'), findsOneWidget);
+
+    // Second lockout: streak 2 -> doubled cooldown + escalation notice.
+    await tapDigits(tester, '1111');
+    await tapDigits(tester, '2222');
+    await tapDigits(tester, '3333');
+    expect(find.text(PinUnlockScreen.lockedOutTitle), findsOneWidget);
+    expect(find.text('Cooldown increases with repeated failures.'),
+        findsOneWidget);
+
+    final state2 = (await _ManagerResults.manager.status()).valueOrNull!;
+    expect(state2.lockoutStreak, 2);
+    final int cooldown2 =
+        state2.lockedOutUntil!.difference(DateTime.now()).inSeconds;
+    expect(cooldown2, inInclusiveRange(50, 60));
+
     await tester.pumpWidget(const SizedBox.shrink());
   });
 

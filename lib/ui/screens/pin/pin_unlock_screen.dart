@@ -68,6 +68,7 @@ class _PinUnlockScreenState extends State<PinUnlockScreen>
   int _remainingAttempts = 0;
   DateTime? _lockoutUntil;
   Duration _lockoutRemaining = Duration.zero;
+  int _lockoutStreak = 0;
   Timer? _timer;
 
   CredentialManager get _manager =>
@@ -106,7 +107,7 @@ class _PinUnlockScreenState extends State<PinUnlockScreen>
     _pinLength = length;
     final DateTime? lockout = state.lockedOutUntil;
     if (lockout != null && _now().isBefore(lockout)) {
-      _startLockout(lockout);
+      _startLockout(lockout, streak: state.lockoutStreak);
     } else {
       setState(() => _view = _UnlockView.ready);
     }
@@ -160,7 +161,7 @@ class _PinUnlockScreenState extends State<PinUnlockScreen>
       return;
     }
     if (outcome is AuthLockedOut) {
-      _startLockout(outcome.retryAt);
+      _startLockout(outcome.retryAt, streak: outcome.lockoutStreak);
       return;
     }
     if (outcome is AuthFailure) {
@@ -196,12 +197,13 @@ class _PinUnlockScreenState extends State<PinUnlockScreen>
 
   // -- lockout -------------------------------------------------------------
 
-  void _startLockout(DateTime until) {
+  void _startLockout(DateTime until, {int streak = 0}) {
     _timer?.cancel();
     setState(() {
       _view = _UnlockView.lockedOut;
       _lockoutUntil = until;
       _lockoutRemaining = until.difference(_now());
+      _lockoutStreak = streak;
       _entered = '';
       _verifying = false;
       _error = null;
@@ -341,6 +343,17 @@ class _PinUnlockScreenState extends State<PinUnlockScreen>
             ),
           ),
         ),
+        if (_lockoutStreak >= 2) ...<Widget>[
+          const SizedBox(height: DsSpacing.sm),
+          Center(
+            child: Text(
+              'Cooldown increases with repeated failures.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: palette.warning,
+              ),
+            ),
+          ),
+        ],
         const SizedBox(height: DsSpacing.xl),
         Center(child: DsPinDots(filled: 0, total: length, error: true)),
         const SizedBox(height: DsSpacing.xl),

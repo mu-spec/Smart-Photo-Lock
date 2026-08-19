@@ -232,6 +232,7 @@ class DefaultCredentialManager implements CredentialManager {
       failedAttempts: s.failedAttempts,
       lockedOutUntil: s.lockedOutUntil,
       pinLength: s.pinLength,
+      lockoutStreak: s.lockoutStreak,
     );
   }
 
@@ -240,7 +241,7 @@ class DefaultCredentialManager implements CredentialManager {
   AuthLockedOut? _activeLockout(CredentialState state, DateTime now) {
     final DateTime? until = state.lockedOutUntil;
     if (until != null && now.isBefore(until)) {
-      return AuthLockedOut(retryAt: until);
+      return AuthLockedOut(retryAt: until, lockoutStreak: state.lockoutStreak);
     }
     return null;
   }
@@ -263,6 +264,7 @@ class DefaultCredentialManager implements CredentialManager {
         failedAttempts: next.failedAttempts,
         lockedOutUntil: next.lockedOutUntil,
         clearLockout: next.lockedOutUntil == null,
+        lockoutStreak: next.lockoutStreak,
       ),
     );
     if (saved.isFailure) {

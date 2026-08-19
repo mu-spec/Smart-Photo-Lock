@@ -297,6 +297,28 @@ open ──► status(): enrolled length (4/6) recorded at enrollment
 - The Security tab's "Unlock PIN" row now opens this screen (snackbar hint
   when no PIN is enrolled; "Authenticated ✓" on success).
 
+## 2F. Failed PIN attempts & escalating cooldowns
+
+Failed attempts were already counted (2A); this phase adds the **increasing
+cooldown** behaviour:
+
+```
+wrong PIN ×3 ──► lockout #1: 30s
+(wait, fail again)
+wrong PIN ×3 ──► lockout #2: 1m      ← streak 2, doubled
+wrong PIN ×3 ──► lockout #3: 2m      ← streak 3, doubled again
+... capped at 10 minutes
+correct PIN   ──► everything resets (attempts AND streak)
+```
+
+| Piece | Behaviour |
+| ----- | --------- |
+| `EscalatingCooldownPolicy` | `base × factor^(streak-1)`, capped; defaults 30s × 2 → 10m max; factor 1 opts out |
+| `CredentialStateMachine` | lockout applies `cooldownForStreak(streak+1)`; success resets streak; ordinary failures don't touch it; **expired lockout restarts the attempt counter but keeps the streak** |
+| `CredentialState` + `SecuritySettings` | persist `lockoutStreak` (survives app restarts) |
+| `AuthLockedOut` | carries `lockoutStreak` for the UI |
+| Unlock screen | lockout countdown shows the escalated duration; streak ≥ 2 shows "Cooldown increases with repeated failures." |
+
 ---
 
 ## 1. The eight modules
