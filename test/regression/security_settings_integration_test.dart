@@ -12,7 +12,6 @@ import 'package:smart_app_lock/design_system/design_system.dart';
 import 'package:smart_app_lock/security/credentials/auth_result.dart';
 import 'package:smart_app_lock/security/credentials/auth_type.dart';
 import 'package:smart_app_lock/security/credentials/biometric_options.dart';
-import 'package:smart_app_lock/security/credentials/credential_manager.dart';
 import 'package:smart_app_lock/security/credentials/credential_state.dart';
 import 'package:smart_app_lock/security/credentials/credential_state_machine.dart';
 import 'package:smart_app_lock/security/credentials/impl/default_credential_manager.dart';
@@ -40,7 +39,7 @@ void main() {
         settings: settings,
         pinHasher: Pbkdf2PinHasher(iterations: 200),
         patternHasher: Pbkdf2PatternHasher(iterations: 200),
-        stateMachine: const CredentialStateMachine(
+        stateMachine: CredentialStateMachine(
           maxFailedAttempts: 3,
           lockoutDuration: Duration(seconds: 30),
         ),
