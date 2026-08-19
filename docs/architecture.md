@@ -153,6 +153,52 @@ Two-tier verification (full record in
 
 ---
 
+## 2A. Authentication data model
+
+Three authentication methods with one shared credential-state architecture
+(`lib/security/credentials/`):
+
+```
+                    ┌─────────────────────────────────────────────┐
+  PIN    ──► PinHasher (PBKDF2) ──┐                               │
+  Pattern ──► PatternHasher (PBKDF2 over canonical shape) ├─► CredentialHash ──► SecuritySettings (encrypted at rest)
+  Biometric ──► OS-owned; app stores only BiometricOptions ────────┘
+                    └─────────────────────────────────────────────┘
+
+  CredentialManager (enroll / status / authenticate / clear)
+        │  every attempt
+        ▼
+  CredentialStateMachine (pure: attempts, lockout cooldown)
+        │  persists
+        ▼
+  SecuritySettings.failedAttempts / lockedOutUntil  (survives restarts)
+```
+
+| Piece | File | Notes |
+| ----- | ---- | ----- |
+| `AuthType` | `auth_type.dart` | pin/pattern/biometric; only pin & pattern can be primary secrets |
+| `CredentialHash` | `credential_hash.dart` | shared hash container; `PinHash` is a back-compat typedef |
+| PBKDF2 core | `pbkdf2.dart` | single key-derivation implementation for all hashers |
+| Pattern model | `pattern_codec.dart` + `pattern_policy.dart` | 3x3 grid, min 4 nodes, direction canonicalization (shape matters, not direction) |
+| `PatternHasher` | `pattern_hasher.dart` | PBKDF2 over the canonical serialization |
+| `BiometricOptions` | `biometric_options.dart` | configuration only — **no biometric secrets are ever stored** |
+| `AuthAttemptResult` | `auth_result.dart` | sealed: success / failure(reason, remaining) / lockedOut(retryAt) |
+| `CredentialState` | `credential_state.dart` | enrolled set, primary, attempts, lockout; status unset/enrolled/lockedOut |
+| `CredentialStateMachine` | `credential_state_machine.dart` | pure; identical behaviour for every credential type |
+| `CredentialManager` | `credential_manager.dart` + `impl/` | working default impl; counters persist via encrypted settings |
+| `BiometricService` | `services/biometric_service.dart` | platform prompt contract (implementation in a later phase) |
+
+Security invariants:
+
+- Only derived hashes are stored (never raw PIN/pattern), and they are
+  encrypted at rest (Phase 1F chain).
+- Lockouts are enforced by persisted counters — restarting the app does not
+  reset them.
+- Biometric can never be the primary credential: it is an accelerator, and
+  the app stores nothing of the OS's biometric material.
+
+---
+
 ## 1. The eight modules
 
 ```
@@ -178,7 +224,7 @@ Two-tier verification (full record in
 | UI | `lib/ui` | Screens, shared widgets | `shell/main_shell.dart`, `screens/{home,apps,smart,security,settings}/`, `widgets/placeholder_screen.dart` | 1C (tab shell + placeholders) |
 | Design System | `lib/design_system` | Visual tokens + base components + security status widgets | `ds_palette.dart`, `ds_theme.dart`, `ds_spacing.dart`, `ds_typography.dart`, `widgets/`, `security/` | 1D (implemented) |
 | Data | `lib/data` | Models, storage (prefs + SQLite), repository contracts + impls | `models/`, `storage/`, `repositories/` | 1E (implemented) |
-| Security | `lib/security` | PIN hashing & policy, secret store, settings encryption | `pin_hasher.dart` ✅, `pin_policy.dart` ✅, `storage/` ✅, `encryption/` ✅ | **working (1F: Keystore-backed)** |
+| Security | `lib/security` | PIN hashing & policy, secret store, settings encryption, credentials (Phase 2A) | `pin_hasher.dart` ✅, `pin_policy.dart` ✅, `storage/` ✅, `encryption/` ✅, `credentials/` ✅ | **working** |
 | Protection | `lib/protection` | Lock engine, access control, unlock sessions | `lock_engine.dart`, `access_controller.dart`, `lock_session.dart` | contracts (+session model) |
 | Rules | `lib/rules` | Lock rule model + pure evaluation | `lock_rule.dart`, `rule_engine.dart` ✅ | **working pure logic** |
 | Profiles | `lib/profiles` | Lock profiles (groups of locked apps) | `lock_profile.dart`, `profile_manager.dart` | contracts (+model) |
@@ -234,7 +280,7 @@ implementation is deferred.
 
 | Upcoming phase | Modules it will implement |
 | -------------- | ------------------------- |
-| Onboarding / PIN setup | `ui` (screens), `security` (verify via hasher), `data` (SecuritySettingsRepository — ready in 1E) |
+| Onboarding / PIN setup | `ui` (screens), `security/credentials` (manager ready in 2A), `data` (SecuritySettingsRepository — ready in 1E) |
 | App list | `ui` (list screen — replaces Apps placeholder), `services/installed_apps_service` (native impl), `data/installed_apps_repository` (cache impl), `ProtectedAppsRepository` (ready in 1E) |
 | Smart automations | `ui` (replaces Smart placeholder), `rules` (already done), `data` (ready in 1E) |
 | Security settings | `ui` (PIN flows on the Security tab), `security` (encryption-at-rest ready in 1F) |

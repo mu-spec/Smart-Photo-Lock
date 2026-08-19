@@ -16,6 +16,8 @@ import '../data/storage/local_database.dart';
 import '../data/storage/preferences_store.dart';
 import '../security/encryption/settings_cipher.dart';
 import '../security/encryption/settings_cipher_impl.dart';
+import '../security/credentials/credential_manager.dart';
+import '../security/credentials/impl/default_credential_manager.dart';
 import '../security/storage/impl/flutter_secure_secret_store.dart';
 import '../security/storage/impl/in_memory_secret_store.dart';
 import '../security/storage/secret_store.dart';
@@ -45,6 +47,7 @@ class AppContainer {
       cipher: settingsCipher,
     );
     lockSettings = LockSettingsRepositoryImpl(_database);
+    auth = DefaultCredentialManager(settings: securitySettings);
   }
 
   /// Production container: real on-device persistence with
@@ -88,4 +91,8 @@ class AppContainer {
 
   /// Lock profiles and rules.
   late final LockSettingsRepository lockSettings;
+
+  /// Credential lifecycle (Phase 2A): enroll / status / authenticate /
+  /// clear for PIN, pattern and biometric.
+  late final CredentialManager auth;
 }

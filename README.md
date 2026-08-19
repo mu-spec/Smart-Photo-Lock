@@ -4,9 +4,10 @@ Privacy-first Android app locker built with **Flutter**.
 Development follows the PRD phase plan; this repository is the production
 Android project.
 
-**Current status: Phase 1 complete (1A–1G)** — production project scaffold,
-core architecture, five-tab navigation, base design system, local persistence,
-secure storage, and a full regression pass. Locking is not implemented yet.
+**Current status: Phase 1 complete (1A–1G), Phase 2 underway (2A done)** —
+production scaffold, architecture, navigation, design system, persistence,
+secure storage, regression pass, and the authentication data model. Locking
+is not implemented yet.
 
 ---
 
@@ -21,6 +22,7 @@ secure storage, and a full regression pass. Locking is not implemented yet.
 | 1E | Local persistence foundation (preferences, protected apps, security settings, profiles, rules) | ✅ |
 | 1F | Secure storage foundation (Android Keystore-backed encryption, no raw PINs) | ✅ |
 | 1G | Phase 1 regression (structure + test suites + on-device checklist) | ✅ |
+| 2A | Authentication data model (PIN, pattern, biometric + credential state) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -123,6 +125,26 @@ Full verification pass — see **docs/regression.md** for the complete record:
 - **On-device checklist** — build / install / launch / navigation / theme /
   no-crash steps for a real device, with a defect log.
 
+### Phase 2A ✅ — Authentication Data Model
+
+Authentication types and the credential-state architecture, in
+`lib/security/credentials/`:
+
+- **Types** — `AuthType` (pin / pattern / biometric, with primary-secret
+  eligibility), `PatternPolicy` + `PatternCodec` (3x3 grid, direction
+  canonicalization), `BiometricOptions` + `BiometricKind`.
+- **Hashing** — shared `CredentialHash` container (the old `PinHash` is a
+  back-compatible alias), shared PBKDF2-HMAC-SHA256 core, `PatternHasher`
+  beside the existing `PinHasher`.
+- **State architecture** — `CredentialState` / `CredentialStatus`
+  (unset / enrolled / lockedOut), `AuthAttemptResult` (success / failure /
+  lockout), pure `CredentialStateMachine` (attempts + cooldown), and
+  `CredentialManager` (enroll / status / authenticate / clear) with a
+  working `DefaultCredentialManager` that persists counters through the
+  encrypted settings — lockouts survive app restarts.
+- **Biometric** — `BiometricService` platform contract (no secrets stored;
+  the OS owns biometric material). Wired to `AppContainer.auth`.
+
 ```
 lib/
 ├── main.dart                 # entry point (boots AppContainer.create())
@@ -158,12 +180,25 @@ lib/
 │   │   └── impl/             # shared_preferences, sqflite, in-memory stores
 │   └── repositories/         # contracts + impls (protected apps, security
 │                             # settings, profiles & rules)
-├── security/                 # PIN hashing, secret store, settings encryption
-│   ├── pin_hasher.dart       # PBKDF2-HMAC-SHA256 (crypto package)
+├── security/                 # PIN hashing, secret store, credentials
+│   ├── pin_hasher.dart       # PBKDF2-HMAC-SHA256 (PinHash = CredentialHash)
 │   ├── pin_policy.dart       # 4-6 digit PIN validation
 │   ├── storage/              # SecretStore + FlutterSecureSecretStore
 │   │                         # (Android Keystore-backed) + in-memory impl
-│   └── encryption/           # SettingsCipher + AES-256-GCM implementation
+│   ├── encryption/           # SettingsCipher + AES-256-GCM implementation
+│   └── credentials/          # Phase 2A: authentication data model
+│       ├── auth_type.dart    # PIN / pattern / biometric
+│       ├── credential_hash.dart  # shared hash container (PinHash alias)
+│       ├── pbkdf2.dart       # shared PBKDF2-HMAC-SHA256 core
+│       ├── pattern_codec.dart    # 3x3 grid model + direction canonicalization
+│       ├── pattern_policy.dart   # pattern validation rules
+│       ├── pattern_hasher.dart   # PBKDF2 pattern hashing
+│       ├── biometric_options.dart# biometric configuration (no secrets stored)
+│       ├── auth_result.dart      # AuthSuccess / AuthFailure / AuthLockedOut
+│       ├── credential_state.dart # enrolled/primary/attempts/lockout snapshot
+│       ├── credential_state_machine.dart # pure attempt & cooldown logic
+│       ├── credential_manager.dart# lifecycle contract
+│       └── impl/             # DefaultCredentialManager (persistent counters)
 ├── protection/               # lock enforcement contracts
 │   ├── lock_engine.dart      # LockEngine interface (overlay/accessibility/admin)
 │   ├── access_controller.dart# AccessDecision: allow / challenge / deny
@@ -185,16 +220,19 @@ lib/
     └── time_utils.dart       # minutes-of-day, overnight windows, formatting
 ```
 
-**Tests** (run with `flutter test`): Phase 1G regression suite (launch,
-navigation, persistence, security chain, theme, no-crashes), secure-storage
-suites (secret store, AES-GCM cipher incl. tamper detection & key reuse,
-encrypted settings repository incl. legacy fallback and no-raw-PIN
-invariant), persistence suites (preferences store, protected apps, security
-settings, profiles & rules, container integration), navigation tests (tab
-switching, quick-access tiles, offstage assertions), design-system component
-tests (button, input, card, section title, security status pill/item/banner,
-theme + palette + scales), PIN hasher round-trip, rule engine (incl.
-midnight-wrapping windows), lock session expiry, Result type.
+**Tests** (run with `flutter test`): credential suites (auth types, pattern
+codec & policy, pattern hasher, biometric options, credential state, state
+machine, credential manager incl. lockout persistence), Phase 1G regression
+suite (launch, navigation, persistence, security chain, theme, no-crashes),
+secure-storage suites (secret store, AES-GCM cipher incl. tamper detection &
+key reuse, encrypted settings repository incl. legacy fallback and
+no-raw-PIN invariant), persistence suites (preferences store, protected
+apps, security settings, profiles & rules, container integration),
+navigation tests (tab switching, quick-access tiles, offstage assertions),
+design-system component tests (button, input, card, section title, security
+status pill/item/banner, theme + palette + scales), PIN hasher round-trip,
+rule engine (incl. midnight-wrapping windows), lock session expiry, Result
+type.
 Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 
 ---
@@ -207,7 +245,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.1.0 / 9.3.1 / 2.4.0 |
 | Java | 17 |
-| versionName / versionCode | `0.7.1` / `8` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.8.0` / `9` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM) |
 
 ## Prerequisites (on your machine)
@@ -262,7 +300,6 @@ adaptive + legacy densities). Re-run anytime after tweaking the design.
 
 ## Next phases
 
-Phase 2 begins the feature work: onboarding + PIN setup → app list (Apps
-tab) → smart automations (Smart tab) → security settings (Security tab) →
-lock screen & enforcement → hardening. Each phase's module ownership is
-mapped in `docs/architecture.md`.
+Phase 2 continues: PIN/pattern/biometric setup flows → app list (Apps tab)
+→ smart automations (Smart tab) → lock screen & enforcement → hardening.
+Each phase's module ownership is mapped in `docs/architecture.md`.
