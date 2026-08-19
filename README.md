@@ -29,7 +29,7 @@ secure storage, and a full regression pass. Locking is not implemented yet.
 | Application ID / package | `com.smartapplock.app` | `android/app/build.gradle.kts` |
 | Minimum Android SDK | **24** (Android 7.0) — floor for app-lock APIs | `android/app/build.gradle.kts` |
 | Target Android SDK | **36** (Android 16) — Play requirement from Aug 31, 2026 | `android/app/build.gradle.kts` |
-| Compile SDK / NDK | **36** / **28.2.13676358** (official Flutter template) | `android/app/build.gradle.kts` |
+| Compile SDK / NDK | **37** / **28.2.13676358** (36 template + 37 for flutter_secure_storage) | `android/app/build.gradle.kts` |
 | Debug / release structure | `src/{main,debug,profile}/` + `buildTypes` (debug gets `.debug` suffix) | `android/app/` |
 | Release signing | `key.properties` (git-ignored) + debug-signing fallback so builds always compile | `android/` |
 | Toolchain | AGP 9.1.0 · Kotlin 2.4.0 · Gradle 9.3.1 · Java 17 | `android/settings.gradle.kts` |
@@ -204,10 +204,10 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | Setting | Value |
 | ------- | ----- |
 | Application ID | `com.smartapplock.app` (debug builds: `com.smartapplock.app.debug`) |
-| minSdk / targetSdk / compileSdk | 24 / 36 / 36 |
+| minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.1.0 / 9.3.1 / 2.4.0 |
 | Java | 17 |
-| versionName / versionCode | `0.7.0` / `7` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.7.1` / `8` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM) |
 
 ## Prerequisites (on your machine)

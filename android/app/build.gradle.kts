@@ -25,10 +25,12 @@ android {
     // Java/Kotlin package used for generated classes (R, BuildConfig).
     namespace = "com.smartapplock.app"
 
-    // SDK levels — match the current official Flutter stable template
-    // (compileSdk/targetSdk 36 = Android 16, required by Google Play for new
-    // submissions after Aug 31, 2026; minSdk 24 = Android 7.0).
-    compileSdk = 36
+    // SDK levels:
+    //  * compileSdk 37 — required by flutter_secure_storage 11.x; the SDK
+    //    platform is backward compatible so nothing else changes.
+    //  * targetSdk 36 (Android 16) — Google Play requirement from Aug 31, 2026.
+    //  * minSdk 24 (Android 7.0) — floor for app-lock APIs.
+    compileSdk = 37
     ndkVersion = "28.2.13676358"
 
     compileOptions {
