@@ -14,6 +14,8 @@ export 'ds_typography.dart';
 
 export 'widgets/ds_button.dart';
 export 'widgets/ds_card.dart';
+export 'widgets/ds_pin_dots.dart';
+export 'widgets/ds_pin_pad.dart';
 export 'widgets/ds_section_title.dart';
 export 'widgets/ds_status_pill.dart';
 export 'widgets/ds_text_field.dart';

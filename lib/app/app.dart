@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'app_container.dart';
+import 'app_scope.dart';
 import 'router.dart';
 import 'theme/app_theme.dart';
 
@@ -8,9 +9,9 @@ import 'theme/app_theme.dart';
 /// for Smart App Lock.
 ///
 /// Follows the system light/dark setting via [ThemeMode.system]; both
-/// foundations come from the design system. [container] is nullable so
-/// widget tests can pump the app without booting platform plugins — feature
-/// phases will consume repositories through it.
+/// foundations come from the design system. When [container] is provided it
+/// is published to the tree through [AppScope] so screens can resolve
+/// repositories and the credential manager.
 class SmartAppLockApp extends StatelessWidget {
   const SmartAppLockApp({super.key, this.container});
 
@@ -19,7 +20,7 @@ class SmartAppLockApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
+    final Widget app = MaterialApp(
       title: 'Smart App Lock',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
@@ -28,5 +29,10 @@ class SmartAppLockApp extends StatelessWidget {
       initialRoute: RouteNames.home,
       routes: AppRouter.routes,
     );
+
+    final AppContainer? container = this.container;
+    return container == null
+        ? app
+        : AppScope(container: container, child: app);
   }
 }

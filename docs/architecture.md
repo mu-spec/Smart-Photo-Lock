@@ -199,6 +199,30 @@ Security invariants:
 
 ---
 
+## 2B. PIN setup screen
+
+`ui/screens/pin/pin_setup_screen.dart` implements the initial PIN setup:
+
+```
+Choose length (4 / 6) ──► Enter new PIN ──► Confirm PIN ──► Enroll ──► Success
+                              ▲                 │
+                              └── mismatch ────┘  (inline error, restart)
+```
+
+- Shared design-system pieces: `DsPinDots` (animated entry dots) and
+  `DsPinPad` (numeric keypad with backspace, long-press clear, optional
+  biometric slot) — both reused by the upcoming unlock screen.
+- Enrollment goes through `CredentialManager.enrollPin` (policy validation
+  → PBKDF2 → encrypted settings); the success step pops with `true`.
+- `AppScope` (inherited widget) publishes the `AppContainer` to screens:
+  `AppScope.read(context)!.auth` resolves the manager without constructor
+  drilling; tests inject `AppContainer.inMemory()`.
+- Navigation: `RouteNames.pinSetup` (`/pin/setup`), opened from the
+  Security tab banner; supports `initialLength` for the future change-PIN
+  flow.
+
+---
+
 ## 1. The eight modules
 
 ```
@@ -221,7 +245,7 @@ Security invariants:
 
 | Module | Path | Responsibility | Key files | Implemented |
 | ------ | ---- | -------------- | --------- | ----------- |
-| UI | `lib/ui` | Screens, shared widgets | `shell/main_shell.dart`, `screens/{home,apps,smart,security,settings}/`, `widgets/placeholder_screen.dart` | 1C (tab shell + placeholders) |
+| UI | `lib/ui` | Screens, shared widgets | `shell/main_shell.dart`, `screens/{home,apps,smart,security,settings,pin}/`, `widgets/placeholder_screen.dart` | 1C shell + placeholders, 2B PIN setup |
 | Design System | `lib/design_system` | Visual tokens + base components + security status widgets | `ds_palette.dart`, `ds_theme.dart`, `ds_spacing.dart`, `ds_typography.dart`, `widgets/`, `security/` | 1D (implemented) |
 | Data | `lib/data` | Models, storage (prefs + SQLite), repository contracts + impls | `models/`, `storage/`, `repositories/` | 1E (implemented) |
 | Security | `lib/security` | PIN hashing & policy, secret store, settings encryption, credentials (Phase 2A) | `pin_hasher.dart` ✅, `pin_policy.dart` ✅, `storage/` ✅, `encryption/` ✅, `credentials/` ✅ | **working** |
@@ -280,7 +304,8 @@ implementation is deferred.
 
 | Upcoming phase | Modules it will implement |
 | -------------- | ------------------------- |
-| Onboarding / PIN setup | `ui` (screens), `security/credentials` (manager ready in 2A), `data` (SecuritySettingsRepository — ready in 1E) |
+| PIN setup | `ui` (setup screen ready in 2B), `security/credentials` (manager ready in 2A), `data` (SecuritySettingsRepository — ready in 1E) |
+| Pattern & biometric setup | `ui` (screens), `security/credentials` (hashers/options ready in 2A), `services/biometric_service` impl |
 | App list | `ui` (list screen — replaces Apps placeholder), `services/installed_apps_service` (native impl), `data/installed_apps_repository` (cache impl), `ProtectedAppsRepository` (ready in 1E) |
 | Smart automations | `ui` (replaces Smart placeholder), `rules` (already done), `data` (ready in 1E) |
 | Security settings | `ui` (PIN flows on the Security tab), `security` (encryption-at-rest ready in 1F) |

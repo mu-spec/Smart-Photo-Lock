@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:smart_app_lock/app/app.dart';
 import 'package:smart_app_lock/app/app_container.dart';
+import 'package:smart_app_lock/app/router.dart';
 import 'package:smart_app_lock/app/theme/app_colors.dart';
 import 'package:smart_app_lock/app/theme/app_theme.dart';
 import 'package:smart_app_lock/data/models/protected_app.dart';
@@ -15,6 +16,7 @@ import 'package:smart_app_lock/security/pin_hasher.dart';
 import 'package:smart_app_lock/security/storage/impl/in_memory_secret_store.dart';
 import 'package:smart_app_lock/ui/screens/apps/apps_screen.dart';
 import 'package:smart_app_lock/ui/screens/home/home_screen.dart';
+import 'package:smart_app_lock/ui/screens/pin/pin_setup_screen.dart';
 import 'package:smart_app_lock/ui/screens/security/security_screen.dart';
 import 'package:smart_app_lock/ui/screens/settings/settings_screen.dart';
 import 'package:smart_app_lock/ui/screens/smart/smart_screen.dart';
@@ -291,19 +293,23 @@ void main() {
       });
     }
 
-    testWidgets('security screen actions respond without crashing',
+    testWidgets('security screen actions navigate to PIN setup without crashing',
         (tester) async {
       await tester.pumpWidget(
         MaterialApp(
           theme: AppTheme.dark,
-          home: const Scaffold(body: SecurityScreen()),
+          initialRoute: '/security-test',
+          routes: <String, WidgetBuilder>{
+            '/security-test': (_) => const Scaffold(body: SecurityScreen()),
+            RouteNames.pinSetup: (_) => const PinSetupScreen(),
+          },
         ),
       );
 
-      // Tap the banner action -> snackbar, no exceptions.
+      // Tap the banner action -> the PIN setup flow opens, no exceptions.
       await tester.tap(find.text('Set up PIN'));
       await tester.pumpAndSettle();
-      expect(find.byType(SnackBar), findsOneWidget);
+      expect(find.text(PinSetupScreen.chooseLengthTitle), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
 

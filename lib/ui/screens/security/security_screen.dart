@@ -1,13 +1,13 @@
 import 'package:flutter/material.dart';
 
+import '../../../app/router.dart';
 import '../../../design_system/design_system.dart';
 
 /// Security tab — real UI built on the design system's security status
 /// components.
 ///
-/// States are static placeholders for now (nothing is configured yet);
-/// the PIN and enforcement phases will feed real [SecurityLevel]s and wire
-/// the "Set up PIN" action.
+/// The "Set up PIN" banner action opens the Phase 2B PIN setup flow; the
+/// control rows stay static until their feature phases wire real status.
 class SecurityScreen extends StatelessWidget {
   const SecurityScreen({super.key});
 
@@ -27,13 +27,8 @@ class SecurityScreen extends StatelessWidget {
             title: 'Protection is not fully set up',
             message: description,
             actionLabel: 'Set up PIN',
-            onAction: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('PIN setup arrives in the next phase.'),
-                ),
-              );
-            },
+            onAction: () =>
+                Navigator.of(context).pushNamed(RouteNames.pinSetup),
           ),
           const SizedBox(height: DsSpacing.xl),
           const DsSectionTitle('Protection controls'),

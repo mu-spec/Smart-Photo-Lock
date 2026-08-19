@@ -4,10 +4,10 @@ Privacy-first Android app locker built with **Flutter**.
 Development follows the PRD phase plan; this repository is the production
 Android project.
 
-**Current status: Phase 1 complete (1A–1G), Phase 2 underway (2A done)** —
+**Current status: Phase 1 complete (1A–1G), Phase 2 underway (2A–2B done)** —
 production scaffold, architecture, navigation, design system, persistence,
-secure storage, regression pass, and the authentication data model. Locking
-is not implemented yet.
+secure storage, regression pass, authentication data model, and the PIN
+setup screen. Locking is not implemented yet.
 
 ---
 
@@ -23,6 +23,7 @@ is not implemented yet.
 | 1F | Secure storage foundation (Android Keystore-backed encryption, no raw PINs) | ✅ |
 | 1G | Phase 1 regression (structure + test suites + on-device checklist) | ✅ |
 | 2A | Authentication data model (PIN, pattern, biometric + credential state) | ✅ |
+| 2B | PIN setup screen (4-digit & 6-digit flow) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -145,12 +146,30 @@ Authentication types and the credential-state architecture, in
 - **Biometric** — `BiometricService` platform contract (no secrets stored;
   the OS owns biometric material). Wired to `AppContainer.auth`.
 
+### Phase 2B ✅ — PIN Setup Screen
+
+Initial PIN setup (`lib/ui/screens/pin/pin_setup_screen.dart`), supporting
+**4-digit and 6-digit PINs**:
+
+- Length choice → entry → confirmation, with animated PIN dots and a shared
+  numeric keypad (`DsPinDots` + `DsPinPad` in the design system — reused by
+  the future unlock screen).
+- Backspace + long-press clear; mismatches and save failures show an inline
+  error banner and restart the entry.
+- Enrolls through `CredentialManager` (PBKDF2 → encrypted settings) and
+  marks onboarding complete; success screen with a Done action that pops
+  with `true`.
+- `AppScope` (inherited widget) publishes the `AppContainer` to screens;
+  the Security tab's "Set up PIN" banner now opens this flow
+  (`RouteNames.pinSetup`).
+
 ```
 lib/
 ├── main.dart                 # entry point (boots AppContainer.create())
 ├── app/                      # app shell: router, theme, DI container
 │   ├── app.dart              # SmartAppLockApp (root widget, ThemeMode.system)
 │   ├── app_container.dart    # single wiring point for all persistence
+│   ├── app_scope.dart        # InheritedWidget exposing the container
 │   ├── router.dart           # central route registry (RouteNames + AppRouter)
 │   └── theme/                # AppColors (brand), AppTheme (light + dark)
 ├── design_system/            # base design system (Phase 1D)
@@ -163,7 +182,7 @@ lib/
 │   ├── ds_context.dart       # context.dsColors extension
 │   ├── design_system.dart    # barrel export
 │   ├── widgets/              # DsButton, DsCard, DsTextField, DsStatusPill,
-│   │                         # DsSectionTitle
+│   │                         # DsSectionTitle, DsPinDots, DsPinPad
 │   └── security/             # SecurityLevel, SecurityStatusPill/Item/Banner
 ├── ui/                       # screens & shared widgets
 │   ├── shell/                # MainShell: bottom NavigationBar + IndexedStack
@@ -172,7 +191,8 @@ lib/
 │   │   ├── apps/             # Apps tab (placeholder)
 │   │   ├── smart/            # Smart tab (placeholder)
 │   │   ├── security/         # Security tab (status banner + control list)
-│   │   └── settings/         # Settings tab (placeholder)
+│   │   ├── settings/         # Settings tab (placeholder)
+│   │   └── pin/              # PIN setup flow (4/6-digit, Phase 2B)
 │   └── widgets/              # PlaceholderScreen (shared by feature tabs)
 ├── data/                     # persistence (Phase 1E)
 │   ├── models/               # AppEntry, ProtectedApp, SecuritySettings
@@ -220,19 +240,21 @@ lib/
     └── time_utils.dart       # minutes-of-day, overnight windows, formatting
 ```
 
-**Tests** (run with `flutter test`): credential suites (auth types, pattern
-codec & policy, pattern hasher, biometric options, credential state, state
-machine, credential manager incl. lockout persistence), Phase 1G regression
-suite (launch, navigation, persistence, security chain, theme, no-crashes),
-secure-storage suites (secret store, AES-GCM cipher incl. tamper detection &
-key reuse, encrypted settings repository incl. legacy fallback and
-no-raw-PIN invariant), persistence suites (preferences store, protected
-apps, security settings, profiles & rules, container integration),
-navigation tests (tab switching, quick-access tiles, offstage assertions),
-design-system component tests (button, input, card, section title, security
-status pill/item/banner, theme + palette + scales), PIN hasher round-trip,
-rule engine (incl. midnight-wrapping windows), lock session expiry, Result
-type.
+**Tests** (run with `flutter test`): PIN setup flow (4-digit happy path,
+6-digit happy path, mismatch recovery, backspace/long-press clear,
+initialLength, length change), PIN pad + PIN dots component suites,
+credential suites (auth types, pattern codec & policy, pattern hasher,
+biometric options, credential state, state machine, credential manager
+incl. lockout persistence), Phase 1G regression suite (launch, navigation,
+persistence, security chain, theme, no-crashes), secure-storage suites
+(secret store, AES-GCM cipher incl. tamper detection & key reuse, encrypted
+settings repository incl. legacy fallback and no-raw-PIN invariant),
+persistence suites (preferences store, protected apps, security settings,
+profiles & rules, container integration), navigation tests (tab switching,
+quick-access tiles, offstage assertions), design-system component tests
+(button, input, card, section title, security status pill/item/banner,
+theme + palette + scales), PIN hasher round-trip, rule engine (incl.
+midnight-wrapping windows), lock session expiry, Result type.
 Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 
 ---
@@ -245,7 +267,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.1.0 / 9.3.1 / 2.4.0 |
 | Java | 17 |
-| versionName / versionCode | `0.8.0` / `9` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.9.0` / `10` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM) |
 
 ## Prerequisites (on your machine)
@@ -300,6 +322,6 @@ adaptive + legacy densities). Re-run anytime after tweaking the design.
 
 ## Next phases
 
-Phase 2 continues: PIN/pattern/biometric setup flows → app list (Apps tab)
-→ smart automations (Smart tab) → lock screen & enforcement → hardening.
-Each phase's module ownership is mapped in `docs/architecture.md`.
+Phase 2 continues: pattern & biometric setup → app list (Apps tab) → smart
+automations (Smart tab) → lock screen & enforcement → hardening. Each
+phase's module ownership is mapped in `docs/architecture.md`.
