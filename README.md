@@ -4,8 +4,8 @@ Privacy-first Android app locker built with **Flutter**.
 Development follows the PRD phase plan; this repository is the production
 Android project.
 
-**Current status: Phase 1A + 1B complete** — production project scaffold +
-core architecture. Locking is not implemented yet.
+**Current status: Phase 1A + 1B + 1C complete** — production project scaffold,
+core architecture, and five-tab navigation. Locking is not implemented yet.
 
 ---
 
@@ -15,6 +15,7 @@ core architecture. Locking is not implemented yet.
 | ----- | ----------- | ------ |
 | 1A | Create production Android project | ✅ |
 | 1B | Core project architecture (8 modules) | ✅ |
+| 1C | Navigation foundation (5-tab shell + placeholder screens) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -34,6 +35,14 @@ Eight modules, layered with strict dependency rules. Contracts are stubs
 until their feature phase; pure logic (rules, PIN hashing) is implemented
 and unit-tested. See **docs/architecture.md** for the full design.
 
+### Phase 1C ✅ — Navigation Foundation
+
+Five-tab bottom-navigation shell (Material 3 `NavigationBar` + `IndexedStack`):
+**Home · Apps · Smart · Security · Settings**. Each tab is a real screen file;
+feature tabs use the shared `PlaceholderScreen` widget and will be swapped for
+real UI in their feature phases. Home has quick-access tiles that jump to the
+other tabs. Widget tests cover tab switching and the quick-access wiring.
+
 ```
 lib/
 ├── main.dart                 # entry point
@@ -42,8 +51,14 @@ lib/
 │   ├── router.dart           # central route registry (RouteNames + AppRouter)
 │   └── theme/                # AppColors, AppTheme (dark navy + teal)
 ├── ui/                       # screens & shared widgets
-│   ├── screens/home/         # Phase 1B architecture dashboard
-│   └── widgets/              # ModuleCard etc.
+│   ├── shell/                # MainShell: bottom NavigationBar + IndexedStack
+│   ├── screens/
+│   │   ├── home/             # Home tab (welcome, status, quick access)
+│   │   ├── apps/             # Apps tab (placeholder)
+│   │   ├── smart/            # Smart tab (placeholder)
+│   │   ├── security/         # Security tab (placeholder)
+│   │   └── settings/         # Settings tab (placeholder)
+│   └── widgets/              # PlaceholderScreen (shared by feature tabs)
 ├── data/                     # models + repository contracts
 │   ├── models/               # AppEntry (pure Dart)
 │   └── repositories/         # InstalledAppsRepository, LockSettingsRepository
@@ -71,9 +86,9 @@ lib/
     └── time_utils.dart       # minutes-of-day, overnight windows, formatting
 ```
 
-**Tests** (run with `flutter test`): widget smoke test, PIN hasher
-round-trip, rule engine (incl. midnight-wrapping windows), lock session
-expiry, Result type.
+**Tests** (run with `flutter test`): navigation tests (tab switching,
+quick-access tiles, offstage assertions), PIN hasher round-trip, rule engine
+(incl. midnight-wrapping windows), lock session expiry, Result type.
 
 ---
 
@@ -85,7 +100,7 @@ expiry, Result type.
 | minSdk / targetSdk / compileSdk | 24 / 36 / 36 |
 | AGP / Gradle / Kotlin | 9.1.0 / 9.3.1 / 2.4.0 |
 | Java | 17 |
-| versionName / versionCode | `0.2.0` / `2` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.3.0` / `3` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing) |
 
 ## Prerequisites (on your machine)
@@ -140,6 +155,6 @@ adaptive + legacy densities). Re-run anytime after tweaking the design.
 
 ## Next phases
 
-Onboarding + PIN setup → app list → rules editor → profiles → lock screen &
-enforcement → hardening. Each phase's module ownership is mapped in
-`docs/architecture.md`.
+Onboarding + PIN setup → app list (Apps tab) → smart automations (Smart tab)
+→ security settings (Security tab) → lock screen & enforcement → hardening.
+Each phase's module ownership is mapped in `docs/architecture.md`.

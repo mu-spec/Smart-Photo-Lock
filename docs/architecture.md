@@ -1,8 +1,37 @@
-# Smart App Lock — Architecture (Phase 1B)
+# Smart App Lock — Architecture
 
-This document describes the layered architecture introduced in **Phase 1B**.
-Locking behaviour is **not** implemented yet; this phase establishes the
+This document describes the layered architecture introduced in **Phase 1B**,
+extended with the navigation foundation of **Phase 1C**.
+Locking behaviour is **not** implemented yet; these phases establish the
 folders, contracts, and rules that every later phase must follow.
+
+---
+
+## 1C. Navigation foundation
+
+The app opens into a **five-tab shell** ([`MainShell`](../lib/ui/shell/main_shell.dart))
+built on Material 3's `NavigationBar` + `IndexedStack` (tab state is kept
+alive when switching).
+
+| Tab | Index | Screen | Status |
+| --- | ----- | ------ | ------ |
+| Home | 0 | [`ui/screens/home/home_screen.dart`](../lib/ui/screens/home/home_screen.dart) | Welcome + status + quick-access tiles |
+| Apps | 1 | [`ui/screens/apps/apps_screen.dart`](../lib/ui/screens/apps/apps_screen.dart) | Placeholder (app-list phase) |
+| Smart | 2 | [`ui/screens/smart/smart_screen.dart`](../lib/ui/screens/smart/smart_screen.dart) | Placeholder (automation phase) |
+| Security | 3 | [`ui/screens/security/security_screen.dart`](../lib/ui/screens/security/security_screen.dart) | Placeholder (PIN phase) |
+| Settings | 4 | [`ui/screens/settings/settings_screen.dart`](../lib/ui/screens/settings/settings_screen.dart) | Placeholder (preferences phase) |
+
+Rules for navigation:
+
+- Tab order is defined once in `MainShell` (titles + destinations + screens
+  must stay in sync).
+- Full-screen flows (onboarding, PIN setup, lock challenge) are pushed as
+  **named routes** on top of the shell — reserved names live in
+  [`app/router.dart`](../lib/app/router.dart).
+- Every placeholder screen uses the shared
+  [`PlaceholderScreen`](../lib/ui/widgets/placeholder_screen.dart) widget and
+  keeps its own file + static `description` (used by widget tests to assert
+  which tab is visible).
 
 ---
 
@@ -27,7 +56,7 @@ folders, contracts, and rules that every later phase must follow.
 
 | Module | Path | Responsibility | Key files | Implemented |
 | ------ | ---- | -------------- | --------- | ----------- |
-| UI | `lib/ui` | Screens, shared widgets | `screens/home/home_screen.dart`, `widgets/module_card.dart` | 1B (dashboard only) |
+| UI | `lib/ui` | Screens, shared widgets | `shell/main_shell.dart`, `screens/{home,apps,smart,security,settings}/`, `widgets/placeholder_screen.dart` | 1C (tab shell + placeholders) |
 | Data | `lib/data` | Domain models, repository contracts | `models/app_entry.dart`, `repositories/*.dart` | contracts |
 | Security | `lib/security` | PIN hashing & strength policy | `pin_hasher.dart` ✅, `pin_policy.dart` ✅ | **working primitives** |
 | Protection | `lib/protection` | Lock engine, access control, unlock sessions | `lock_engine.dart`, `access_controller.dart`, `lock_session.dart` | contracts (+session model) |
@@ -86,8 +115,8 @@ implementation is deferred.
 | Upcoming phase | Modules it will implement |
 | -------------- | ------------------------- |
 | Onboarding / PIN setup | `ui` (screens), `security` (verify via hasher), `data` (storage impl) |
-| App list | `ui` (list screen), `services/installed_apps_service` (native impl), `data/installed_apps_repository` (cache impl) |
-| Rules editor | `ui` (rule UI), `rules` (already done), `data/lock_settings_repository` impl |
-| Profiles | `ui` (profile picker), `profiles/profile_manager` impl |
+| App list | `ui` (list screen — replaces Apps placeholder), `services/installed_apps_service` (native impl), `data/installed_apps_repository` (cache impl) |
+| Smart automations | `ui` (replaces Smart placeholder), `rules` (already done), `data/lock_settings_repository` impl |
+| Security settings | `ui` (replaces Security placeholder), `security` (Keystore hardening) |
 | Lock screen & enforcement | `ui` (challenge screen), `protection` (engine + controller impls), `services` (overlay/accessibility impls) |
 | Hardening | `services/device_admin_service` impl, Keystore-backed secrets, R8 keep-rules |
