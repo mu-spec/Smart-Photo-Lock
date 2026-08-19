@@ -5,7 +5,7 @@ publish_to: "none"
 
 # App version. versionCode (left of '+') and versionName (right of '+')
 # are consumed by the Android Gradle config (see android/app/build.gradle.kts).
-version: 0.4.0+4
+version: 0.5.0+5
 
 environment:
   sdk: ">=3.5.0 <4.0.0"
@@ -17,6 +17,12 @@ dependencies:
   cupertino_icons: ^1.0.8
   # Cryptographic primitives for the security module (PBKDF2/HMAC-SHA256).
   crypto: ^3.0.6
+  # Lightweight preferences tier (KeyValueStore production implementation).
+  shared_preferences: ^2.5.0
+  # Relational persistence: protected apps, security settings, profiles, rules.
+  sqflite: ^2.4.0
+  # Path utilities used by the SQLite store.
+  path: ^1.9.0
 
 dev_dependencies:
   flutter_test:

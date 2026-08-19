@@ -1,13 +1,15 @@
 import 'package:flutter/material.dart';
 
 import 'app/app.dart';
+import 'app/app_container.dart';
 
 /// Smart App Lock — application entry point.
 ///
-/// Phase 1B: wires up the core project architecture (app shell, router,
-/// theme, feature modules). No locking behaviour is implemented yet —
-/// enforcement arrives in the later protection/service phases.
-void main() {
+/// Boots the persistence layer (Phase 1E: shared_preferences + SQLite)
+/// before the first frame, then hands the container to the widget tree so
+/// later phases can resolve repositories anywhere.
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(const SmartAppLockApp());
+  final AppContainer container = await AppContainer.create();
+  runApp(SmartAppLockApp(container: container));
 }

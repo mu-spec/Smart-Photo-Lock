@@ -4,9 +4,9 @@ Privacy-first Android app locker built with **Flutter**.
 Development follows the PRD phase plan; this repository is the production
 Android project.
 
-**Current status: Phase 1A + 1B + 1C + 1D complete** — production project
-scaffold, core architecture, five-tab navigation, and base design system.
-Locking is not implemented yet.
+**Current status: Phase 1A + 1B + 1C + 1D + 1E complete** — production project
+scaffold, core architecture, five-tab navigation, base design system, and
+local persistence. Locking is not implemented yet.
 
 ---
 
@@ -18,6 +18,7 @@ Locking is not implemented yet.
 | 1B | Core project architecture (8 modules) | ✅ |
 | 1C | Navigation foundation (5-tab shell + placeholder screens) | ✅ |
 | 1D | Base design system (tokens, components, light/dark, security status) | ✅ |
+| 1E | Local persistence foundation (preferences, protected apps, security settings, profiles, rules) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -64,11 +65,30 @@ A complete design system in `lib/design_system/`:
 Screens use `context.dsColors` for colors; hard-coded values are banned
 outside `lib/design_system/`.
 
+### Phase 1E ✅ — Local Persistence Foundation
+
+Two storage tiers behind interfaces, wired through a single dependency
+container (`lib/app/app_container.dart`):
+
+| Tier | Interface | Production | In-memory (tests) |
+| ---- | --------- | ---------- | ----------------- |
+| Preferences | `KeyValueStore` → typed `PreferencesStore` | `shared_preferences` | `InMemoryKeyValueStore` |
+| Database | `LocalDatabase` | SQLite via `sqflite` (schema v1) | `InMemoryLocalDatabase` |
+
+Persisted domains: **preferences** (onboarding, theme, language,
+notifications), **protected applications** (upsert, order, remove),
+**security settings** (one JSON doc incl. the PIN credential hash),
+**profiles** (single-active invariant), **rules** (replace-as-a-set).
+Repositories return `Result<T>`; screens get them from `AppContainer`
+(`create()` in `main()`, `inMemory()` in tests). No protection logic yet —
+this layer only stores and retrieves.
+
 ```
 lib/
-├── main.dart                 # entry point
-├── app/                      # app shell: router, theme
+├── main.dart                 # entry point (boots AppContainer.create())
+├── app/                      # app shell: router, theme, DI container
 │   ├── app.dart              # SmartAppLockApp (root widget, ThemeMode.system)
+│   ├── app_container.dart    # single wiring point for all persistence
 │   ├── router.dart           # central route registry (RouteNames + AppRouter)
 │   └── theme/                # AppColors (brand), AppTheme (light + dark)
 ├── design_system/            # base design system (Phase 1D)
@@ -92,9 +112,12 @@ lib/
 │   │   ├── security/         # Security tab (status banner + control list)
 │   │   └── settings/         # Settings tab (placeholder)
 │   └── widgets/              # PlaceholderScreen (shared by feature tabs)
-├── data/                     # models + repository contracts
-│   ├── models/               # AppEntry (pure Dart)
-│   └── repositories/         # InstalledAppsRepository, LockSettingsRepository
+├── data/                     # persistence (Phase 1E)
+│   ├── models/               # AppEntry, ProtectedApp, SecuritySettings
+│   ├── storage/              # KeyValueStore, LocalDatabase, PreferencesStore
+│   │   └── impl/             # shared_preferences, sqflite, in-memory stores
+│   └── repositories/         # contracts + impls (protected apps, security
+│                             # settings, profiles & rules)
 ├── security/                 # PIN hashing & policy (working)
 │   ├── pin_hasher.dart       # PBKDF2-HMAC-SHA256 (crypto package)
 │   └── pin_policy.dart       # 4-6 digit PIN validation
@@ -119,11 +142,13 @@ lib/
     └── time_utils.dart       # minutes-of-day, overnight windows, formatting
 ```
 
-**Tests** (run with `flutter test`): navigation tests (tab switching,
-quick-access tiles, offstage assertions), design-system component tests
-(button, input, card, section title, security status pill/item/banner,
-theme + palette + scales), PIN hasher round-trip, rule engine (incl.
-midnight-wrapping windows), lock session expiry, Result type.
+**Tests** (run with `flutter test`): persistence suites (preferences store,
+protected apps, security settings incl. PIN round-trip, profiles & rules,
+container integration), navigation tests (tab switching, quick-access tiles,
+offstage assertions), design-system component tests (button, input, card,
+section title, security status pill/item/banner, theme + palette + scales),
+PIN hasher round-trip, rule engine (incl. midnight-wrapping windows), lock
+session expiry, Result type.
 
 ---
 
@@ -135,8 +160,8 @@ midnight-wrapping windows), lock session expiry, Result type.
 | minSdk / targetSdk / compileSdk | 24 / 36 / 36 |
 | AGP / Gradle / Kotlin | 9.1.0 / 9.3.1 / 2.4.0 |
 | Java | 17 |
-| versionName / versionCode | `0.4.0` / `4` (in `pubspec.yaml`) |
-| Dependencies | `crypto` (PIN hashing) |
+| versionName / versionCode | `0.5.0` / `5` (in `pubspec.yaml`) |
+| Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database) |
 
 ## Prerequisites (on your machine)
 

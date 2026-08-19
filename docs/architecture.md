@@ -1,8 +1,8 @@
 # Smart App Lock — Architecture
 
 This document describes the layered architecture introduced in **Phase 1B**,
-the navigation foundation of **Phase 1C**, and the base design system of
-**Phase 1D**.
+the navigation foundation of **Phase 1C**, the base design system of
+**Phase 1D**, and the local persistence foundation of **Phase 1E**.
 Locking behaviour is **not** implemented yet; these phases establish the
 folders, contracts, and rules that every later phase must follow.
 
@@ -57,6 +57,47 @@ Rules:
 
 ---
 
+## 1E. Local persistence foundation
+
+Two storage tiers, both behind interfaces (production + in-memory
+implementations):
+
+| Tier | Interface | Production impl | What it stores |
+| ---- | --------- | --------------- | -------------- |
+| Preferences | `KeyValueStore` → `PreferencesStore` (typed facade) | `shared_preferences` | onboarding, theme, language, notifications, last profile |
+| Database | `LocalDatabase` | SQLite (`sqflite`, schema v1) | protected apps, security settings, profiles, rules |
+
+SQLite schema (v1, migrations bump the version in `SqfliteLocalDatabase`):
+
+```
+protected_apps(package_name PK, label, added_at, sort_order)
+security_settings(key PK, value, updated_at)
+profiles(id PK, name, description, is_active, locked_packages JSON)
+lock_rules(id PK, type, package_name, start_minute, end_minute,
+           max_launches, enabled)
+```
+
+Repositories exposed by the container (`app/app_container.dart`):
+
+| Repository | Persists | Key rule |
+| ---------- | -------- | -------- |
+| `PreferencesStore` | lightweight prefs | fire-and-forget values only |
+| `ProtectedAppsRepository` | `ProtectedApp` list | upsert by package name; ordered by sortOrder/label |
+| `SecuritySettingsRepository` | one `SecuritySettings` JSON doc (incl. `PinHash` credential) | storage only — no logic |
+| `LockSettingsRepository` | `LockProfile`s + `LockRule`s | exactly one active profile; rules replace-as-a-set |
+
+Rules:
+
+- Screens never touch `shared_preferences`/`sqflite` directly — they consume
+  repositories from `AppContainer` (single wiring point; `main()` uses
+  `AppContainer.create()`, tests use `AppContainer.inMemory()`).
+- All repository calls return `Result<T>`; preference calls are plain
+  Futures (tiny, best-effort values).
+- No protection logic lives in this layer — the lock phases read these
+  stores and act elsewhere (`protection/`).
+
+---
+
 ## 1. The eight modules
 
 ```
@@ -81,7 +122,7 @@ Rules:
 | ------ | ---- | -------------- | --------- | ----------- |
 | UI | `lib/ui` | Screens, shared widgets | `shell/main_shell.dart`, `screens/{home,apps,smart,security,settings}/`, `widgets/placeholder_screen.dart` | 1C (tab shell + placeholders) |
 | Design System | `lib/design_system` | Visual tokens + base components + security status widgets | `ds_palette.dart`, `ds_theme.dart`, `ds_spacing.dart`, `ds_typography.dart`, `widgets/`, `security/` | 1D (implemented) |
-| Data | `lib/data` | Domain models, repository contracts | `models/app_entry.dart`, `repositories/*.dart` | contracts |
+| Data | `lib/data` | Models, storage (prefs + SQLite), repository contracts + impls | `models/`, `storage/`, `repositories/` | 1E (implemented) |
 | Security | `lib/security` | PIN hashing & strength policy | `pin_hasher.dart` ✅, `pin_policy.dart` ✅ | **working primitives** |
 | Protection | `lib/protection` | Lock engine, access control, unlock sessions | `lock_engine.dart`, `access_controller.dart`, `lock_session.dart` | contracts (+session model) |
 | Rules | `lib/rules` | Lock rule model + pure evaluation | `lock_rule.dart`, `rule_engine.dart` ✅ | **working pure logic** |
@@ -138,8 +179,8 @@ implementation is deferred.
 
 | Upcoming phase | Modules it will implement |
 | -------------- | ------------------------- |
-| Onboarding / PIN setup | `ui` (screens), `security` (verify via hasher), `data` (storage impl) |
-| App list | `ui` (list screen — replaces Apps placeholder), `services/installed_apps_service` (native impl), `data/installed_apps_repository` (cache impl) |
+| Onboarding / PIN setup | `ui` (screens), `security` (verify via hasher), `data` (SecuritySettingsRepository — ready in 1E) |
+| App list | `ui` (list screen — replaces Apps placeholder), `services/installed_apps_service` (native impl), `data/installed_apps_repository` (cache impl), `ProtectedAppsRepository` (ready in 1E) |
 | Smart automations | `ui` (replaces Smart placeholder), `rules` (already done), `data/lock_settings_repository` impl |
 | Security settings | `ui` (PIN flows on the Security tab), `security` (Keystore hardening) |
 | Lock screen & enforcement | `ui` (challenge screen), `protection` (engine + controller impls), `services` (overlay/accessibility impls) |
