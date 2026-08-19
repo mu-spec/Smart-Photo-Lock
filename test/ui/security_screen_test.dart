@@ -21,31 +21,18 @@ import 'package:smart_app_lock/ui/screens/security/security_screen.dart';
 
 /// Routes the Security tab can push into. Deliberately excludes '/'
 /// (MainShell) — a MaterialApp with `home:` may not also define '/'.
-const Map<String, WidgetBuilder> kSecurityTabRoutes = <String, WidgetBuilder>{
-  RouteNames.pinSetup: _pinSetupBuilder,
-  RouteNames.pinUnlock: _pinUnlockBuilder,
-  RouteNames.pinChange: _pinChangeBuilder,
-  RouteNames.patternSetup: _patternSetupBuilder,
-  RouteNames.patternUnlock: _patternUnlockBuilder,
-  RouteNames.patternChange: _patternChangeBuilder,
+/// Every value is a proper WidgetBuilder closure — `(context) => Widget`.
+final Map<String, WidgetBuilder> kSecurityTabRoutes = <String, WidgetBuilder>{
+  RouteNames.pinSetup: (BuildContext context) => const PinSetupScreen(),
+  RouteNames.pinUnlock: (BuildContext context) => const PinUnlockScreen(),
+  RouteNames.pinChange: (BuildContext context) => const PinChangeScreen(),
+  RouteNames.patternSetup:
+      (BuildContext context) => const PatternSetupScreen(),
+  RouteNames.patternUnlock:
+      (BuildContext context) => const PatternUnlockScreen(),
+  RouteNames.patternChange:
+      (BuildContext context) => const PatternChangeScreen(),
 };
-
-// WidgetBuilders as plain functions: constructor tear-offs don't match
-// WidgetBuilder when the constructors take optional named parameters.
-Widget _pinSetupBuilder(BuildContext context) => const PinSetupScreen();
-
-Widget _pinUnlockBuilder(BuildContext context) => const PinUnlockScreen();
-
-Widget _pinChangeBuilder(BuildContext context) => const PinChangeScreen();
-
-Widget _patternSetupBuilder(BuildContext context) =>
-    const PatternSetupScreen();
-
-Widget _patternUnlockBuilder(BuildContext context) =>
-    const PatternUnlockScreen();
-
-Widget _patternChangeBuilder(BuildContext context) =>
-    const PatternChangeScreen();
 
 void main() {
   /// Pumps the Security tab inside an [AppScope]. Pass an existing
