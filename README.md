@@ -29,6 +29,7 @@ setup screen. Locking is not implemented yet.
 | 2E | PIN unlock screen (authentication with the configured PIN) | ✅ |
 | 2F | Failed PIN attempts (tracking + increasing cooldown) | ✅ |
 | 2G | Randomized keypad (optional, default off for accessibility) | ✅ |
+| 2H | Pattern setup (creation + confirmation) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -252,6 +253,23 @@ until the user enables it:
 - A live toggle lives on the **Security tab** (first functional option
   there).
 
+### Phase 2H ✅ — Pattern Setup
+
+Pattern creation and confirmation (`RouteNames.patternSetup`), mirroring
+the PIN flow's UX:
+
+- New design-system widget **`DsPatternGrid`** — a controlled, draggable 3x3
+  grid (row-major nodes matching `PatternCodec`), with `onNodeAdded` while
+  dragging and `onDragEnd` for validation; error tint and disabled states.
+- Flow: draw (min 4 dots, enforced inline) → **confirm by redrawing** →
+  enroll → success. Confirmation is direction-independent — the same shape
+  drawn in reverse counts.
+- Mismatches land on a dedicated state (Re-confirm pattern / Start over)
+  with shake feedback; nothing is saved until a confirmed match.
+- Enrollment uses `CredentialManager.enrollPattern` (PBKDF2 over the
+  canonical shape, encrypted at rest); the Security tab's "Pattern unlock"
+  row opens the setup when no pattern is enrolled.
+
 ```
 lib/
 ├── main.dart                 # entry point (boots AppContainer.create())
@@ -271,7 +289,8 @@ lib/
 │   ├── ds_context.dart       # context.dsColors extension
 │   ├── design_system.dart    # barrel export
 │   ├── widgets/              # DsButton, DsCard, DsTextField, DsStatusPill,
-│   │                         # DsSectionTitle, DsPinDots, DsPinPad
+│   │                         # DsSectionTitle, DsPinDots, DsPinPad,
+│   │                         # DsPatternGrid (3x3 draggable, 2H)
 │   └── security/             # SecurityLevel, SecurityStatusPill/Item/Banner
 ├── ui/                       # screens & shared widgets
 │   ├── shell/                # MainShell: bottom NavigationBar + IndexedStack
@@ -281,7 +300,8 @@ lib/
 │   │   ├── smart/            # Smart tab (placeholder)
 │   │   ├── security/         # Security tab (status banner + control list)
 │   │   ├── settings/         # Settings tab (placeholder)
-│   │   └── pin/              # PIN setup (2B) + unlock (2E) flows
+│   │   ├── pin/              # PIN setup (2B) + unlock (2E) flows
+│   │   └── pattern/          # Pattern setup flow (2H)
 │   └── widgets/              # PlaceholderScreen, EntryShakeMixin (shared
 │                             # PIN-entry shake feedback)
 ├── data/                     # persistence (Phase 1E)
@@ -334,7 +354,12 @@ lib/
     └── time_utils.dart       # minutes-of-day, overnight windows, formatting
 ```
 
-**Tests** (run with `flutter test`): randomized keypad suites (pad digit
+**Tests** (run with `flutter test`): pattern setup suites (draw → confirm →
+enroll with direction independence, mismatch state + nothing-saved,
+re-confirm, start-over, too-short inline error, clear, enrollment-failure
+recovery, route reachability), pattern grid component suites (hit-testing,
+stroke sequences, no-repeat, disabled, error painter state, geometry),
+Security tab pattern-row navigation, randomized keypad suites (pad digit
 order rendering, deterministic seeded shuffle, opt-in unlock behavior with
 reshuffle-on-failure, Security tab toggle persistence + disabled-without-
 container), PIN unlock suites (configured-length dots 4/6, correct PIN pops
@@ -374,7 +399,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.1.0 / 9.3.1 / 2.4.0 |
 | Java | 17 |
-| versionName / versionCode | `0.14.0` / `15` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.15.0` / `16` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM) |
 
 ## Prerequisites (on your machine)

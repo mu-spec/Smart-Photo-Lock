@@ -333,6 +333,35 @@ accessible 1-9 layout** — randomization is off until the user enables it.
 | Security tab | live switch row (first functional option on that tab) |
 | Setup screen | intentionally **not** randomized — creating a PIN needs the predictable layout |
 
+## 2H. Pattern setup
+
+`ui/screens/pattern/pattern_setup_screen.dart` — pattern creation and
+confirmation (RouteNames.patternSetup):
+
+```
+Draw pattern (min 4 dots) ──► Confirm (redraw) ──► Enroll ──► Success
+        ▲                          │
+        │                    shape mismatch
+        │                          │
+        │              ┌───────────┴────────────┐
+        │              ▼                        ▼
+        └──── Start over              Re-confirm pattern
+             (clear all)              (keep first, redo confirm)
+```
+
+- New design-system widget `DsPatternGrid`: controlled draggable 3x3 grid
+  (nodes numbered row-major 1-9, matching `PatternCodec`); parent owns the
+  sequence via `onNodeAdded`, validates on `onDragEnd`; error tint +
+  disabled states.
+- Confirmation is **direction-independent**: `PatternCodec.sameShape`
+  accepts the same shape drawn in reverse.
+- Mirrors the PIN flow UX: dedicated mismatch state (Re-confirm / Start
+  over), shake feedback via the shared `EntryShakeMixin`, nothing saved
+  until a confirmed match; minimum 4 dots enforced inline.
+- Enrollment goes through `CredentialManager.enrollPattern` (policy →
+  PBKDF2 over canonical shape → encrypted settings); the Security tab's
+  "Pattern unlock" row opens the setup when no pattern is enrolled.
+
 ---
 
 ## 1. The eight modules

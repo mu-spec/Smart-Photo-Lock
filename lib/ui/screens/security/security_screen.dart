@@ -68,6 +68,26 @@ class _SecurityScreenState extends State<SecurityScreen> {
     }
   }
 
+  /// Handles the "Pattern unlock" row: opens pattern setup when nothing is
+  /// enrolled; otherwise hints at the upcoming unlock screen (next phase).
+  Future<void> _onPatternTap() async {
+    final auth = AppScope.read(context)?.auth;
+    if (auth == null) {
+      return;
+    }
+    final state = (await auth.status()).valueOrNull;
+    if (!mounted) {
+      return;
+    }
+    if (state == null || !state.hasEnrolled(AuthType.pattern)) {
+      await Navigator.of(context).pushNamed(RouteNames.patternSetup);
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Pattern unlock arrives in the next phase.')),
+    );
+  }
+
   /// Handles the "Unlock PIN" row: routes to setup when nothing is
   /// enrolled, otherwise opens the unlock challenge.
   Future<void> _onUnlockPinTap() async {
@@ -124,6 +144,14 @@ class _SecurityScreenState extends State<SecurityScreen> {
                   subtitle: 'Required to open protected apps',
                   level: SecurityLevel.notSet,
                   onTap: _onUnlockPinTap,
+                ),
+                const Divider(),
+                SecurityStatusItem(
+                  icon: Icons.gesture,
+                  title: 'Pattern unlock',
+                  subtitle: 'Alternative to PIN — draw on a 3x3 grid',
+                  level: SecurityLevel.notSet,
+                  onTap: _onPatternTap,
                 ),
                 const Divider(),
                 _SwitchRow(

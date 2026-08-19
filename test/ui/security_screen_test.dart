@@ -3,7 +3,9 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:smart_app_lock/app/app_scope.dart';
 import 'package:smart_app_lock/app/app_container.dart';
+import 'package:smart_app_lock/app/router.dart';
 import 'package:smart_app_lock/app/theme/app_theme.dart';
+import 'package:smart_app_lock/ui/screens/pattern/pattern_setup_screen.dart';
 import 'package:smart_app_lock/ui/screens/security/security_screen.dart';
 
 /// Phase 2G: the Security tab's randomized-keypad toggle reflects and
@@ -70,6 +72,32 @@ void main() {
 
     final Switch toggle = tester.widget<Switch>(find.byType(Switch));
     expect(toggle.onChanged, isNull);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('pattern row opens the pattern setup route when not enrolled',
+      (WidgetTester tester) async {
+    final AppContainer container = AppContainer.inMemory();
+    await tester.pumpWidget(
+      AppScope(
+        container: container,
+        child: MaterialApp(
+          theme: AppTheme.dark,
+          routes: <String, WidgetBuilder>{
+            RouteNames.patternSetup: (_) => const PatternSetupScreen(),
+          },
+          home: const Scaffold(body: SecurityScreen()),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Pattern unlock'), findsOneWidget);
+    await tester.tap(find.text('Pattern unlock'));
+    await tester.pumpAndSettle();
+
+    // No pattern enrolled -> the setup flow opens.
+    expect(find.text(PatternSetupScreen.enterTitle), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }
