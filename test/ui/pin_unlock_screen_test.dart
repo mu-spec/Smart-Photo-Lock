@@ -95,6 +95,10 @@ void main() {
   }
 
   Future<void> tapDigits(WidgetTester tester, String digits) async {
+    // Let any pending AnimatedSwitcher transition finish (e.g. the
+    // lockout view's disabled pad being removed) so exactly one keypad
+    // is mounted when the taps land.
+    await tester.pump(const Duration(milliseconds: 250));
     for (final String d in digits.split('')) {
       await tester.tap(find.byKey(Key('pin_key_$d')));
       await tester.pump(const Duration(milliseconds: 50));
@@ -111,7 +115,8 @@ void main() {
   int dotsTotal(WidgetTester tester) =>
       tester.widget<DsPinDots>(find.byType(DsPinDots)).total;
 
-  /// The ten digit labels rendered by the pad, in visual order.
+  /// The ten digit labels rendered by the pad, in visual order. Layout
+  /// spacers (no label) are excluded — only numeric keys count.
   List<String> padOrder(WidgetTester tester) => tester
       .widgetList<Text>(
         find.descendant(
@@ -119,7 +124,8 @@ void main() {
           matching: find.byType(Text),
         ),
       )
-      .map((Text t) => t.data!)
+      .map((Text t) => t.data ?? '')
+      .where((String label) => label.isNotEmpty)
       .toList();
 
   testWidgets('dots match the configured PIN length (4 and 6)',
@@ -179,7 +185,9 @@ void main() {
     expect(find.textContaining(PinUnlockScreen.lockedOutMessage),
         findsOneWidget);
 
-    // The pad is disabled: further taps change nothing.
+    // The pad is disabled: further taps change nothing. (Settle the
+    // switcher first so the outgoing ready pad is gone.)
+    await tester.pump(const Duration(milliseconds: 250));
     await tester.tap(find.byKey(const Key('pin_key_1')));
     await tester.pump(const Duration(milliseconds: 100));
     expect(find.text(PinUnlockScreen.lockedOutTitle), findsOneWidget);

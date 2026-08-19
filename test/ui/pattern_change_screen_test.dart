@@ -65,6 +65,8 @@ void main() {
   }
 
   Future<void> drawPattern(WidgetTester tester, List<int> nodes) async {
+    // Settle any pending screen transition so exactly one grid is mounted.
+    await tester.pump(const Duration(milliseconds: 250));
     final Offset origin = tester.getTopLeft(find.byType(DsPatternGrid));
     final TestGesture gesture =
         await tester.startGesture(origin + nodeCenter(nodes.first));

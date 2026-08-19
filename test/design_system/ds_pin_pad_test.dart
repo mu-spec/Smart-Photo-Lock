@@ -107,7 +107,8 @@ void main() {
             matching: find.byType(Text),
           ),
         )
-        .map((Text t) => t.data!)
+        .map((Text t) => t.data ?? '')
+        .where((String label) => label.isNotEmpty)
         .toList();
 
     testWidgets('default digitOrder keeps the accessible 1-9 layout',

@@ -58,6 +58,8 @@ void main() {
   }
 
   Future<void> tapDigits(WidgetTester tester, String digits) async {
+    // Settle any pending screen transition so exactly one keypad exists.
+    await tester.pump(const Duration(milliseconds: 250));
     for (final String d in digits.split('')) {
       await tester.tap(find.byKey(Key('pin_key_$d')));
       await tester.pump(const Duration(milliseconds: 50));

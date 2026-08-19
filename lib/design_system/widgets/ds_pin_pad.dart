@@ -85,14 +85,18 @@ class DsPinPad extends StatelessWidget {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           children: <Widget>[
-            _PinKey(
-              key: const Key('pin_key_biometric'),
-              label: '',
-              icon: showBiometric ? Icons.fingerprint : null,
-              onTap: (showBiometric && enabled && onBiometric != null)
-                  ? onBiometric
-                  : null,
-            ),
+            if (showBiometric)
+              _PinKey(
+                key: const Key('pin_key_biometric'),
+                label: '',
+                icon: Icons.fingerprint,
+                onTap: (enabled && onBiometric != null) ? onBiometric : null,
+              )
+            else
+              // Inert layout spacer for keypad symmetry. Deliberately has
+              // NO biometric key/icon — it must not masquerade as an
+              // actionable biometric control when biometrics are off.
+              const _PinKey(label: ''),
             _PinKey(
               key: Key('pin_key_$bottomCenter'),
               label: bottomCenter,
@@ -158,15 +162,17 @@ class _PinKey extends StatelessWidget {
           customBorder: const CircleBorder(),
           onTap: onTap,
           onLongPress: onLongPress,
-          child: Center(
-            child: icon != null
-                ? Icon(
-                    icon,
-                    size: 24,
-                    color: inert
-                        ? palette.textSecondary.withValues(alpha: 0.4)
-                        : palette.textPrimary,
-                  )
+      child: Center(
+        child: icon != null
+            ? Icon(
+                icon,
+                size: 24,
+                color: inert
+                    ? palette.textSecondary.withValues(alpha: 0.4)
+                    : palette.textPrimary,
+              )
+            : label.isEmpty
+                ? const SizedBox.shrink()
                 : Text(
                     label,
                     style: theme.textTheme.headlineMedium?.copyWith(
@@ -176,7 +182,7 @@ class _PinKey extends StatelessWidget {
                           : palette.textPrimary,
                     ),
                   ),
-          ),
+      ),
         ),
       ),
     );

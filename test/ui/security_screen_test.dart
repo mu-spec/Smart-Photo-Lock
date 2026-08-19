@@ -7,13 +7,30 @@ import 'package:smart_app_lock/app/router.dart';
 import 'package:smart_app_lock/app/theme/app_theme.dart';
 import 'package:smart_app_lock/security/credentials/auth_type.dart';
 import 'package:smart_app_lock/security/credentials/biometric_options.dart';
+import 'package:smart_app_lock/ui/screens/pattern/pattern_change_screen.dart';
 import 'package:smart_app_lock/ui/screens/pattern/pattern_setup_screen.dart';
+import 'package:smart_app_lock/ui/screens/pattern/pattern_unlock_screen.dart';
+import 'package:smart_app_lock/ui/screens/pin/pin_change_screen.dart';
+import 'package:smart_app_lock/ui/screens/pin/pin_setup_screen.dart';
+import 'package:smart_app_lock/ui/screens/pin/pin_unlock_screen.dart';
 import 'package:smart_app_lock/ui/screens/security/security_screen.dart';
 
 /// Phase 2K: the authentication settings surface — dynamic PIN/pattern
 /// rows (set up vs change), the pattern-visibility toggle, plus the
 /// randomized-keypad and biometric rows from earlier phases.
 void main() {
+  /// Routes the Security tab can push into. Deliberately excludes '/'
+  /// (MainShell) — a MaterialApp with `home:` may not also define '/'.
+  const Map<String, WidgetBuilder> kSecurityTabRoutes =
+      <String, WidgetBuilder>{
+        RouteNames.pinSetup: PinSetupScreen.new,
+        RouteNames.pinUnlock: PinUnlockScreen.new,
+        RouteNames.pinChange: PinChangeScreen.new,
+        RouteNames.patternSetup: PatternSetupScreen.new,
+        RouteNames.patternUnlock: PatternUnlockScreen.new,
+        RouteNames.patternChange: PatternChangeScreen.new,
+      };
+
   /// Pumps the Security tab inside an [AppScope]. Pass an existing
   /// [container] to re-pump with the same state (e.g. after enrolling).
   Future<AppContainer> pumpWithScope(
@@ -26,7 +43,7 @@ void main() {
         container: c,
         child: MaterialApp(
           theme: AppTheme.dark,
-          routes: AppRouter.routes,
+          routes: kSecurityTabRoutes,
           home: const Scaffold(body: SecurityScreen()),
         ),
       ),
