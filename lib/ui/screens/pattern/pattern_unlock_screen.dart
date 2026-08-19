@@ -281,11 +281,17 @@ class _PatternUnlockScreenState extends State<PatternUnlockScreen>
             ),
           ),
         ),
-        if (_error != null) ...<Widget>[
-          const SizedBox(height: DsSpacing.lg),
-          _ErrorBanner(message: _error!),
-        ],
-        const SizedBox(height: DsSpacing.xl),
+        // Fixed-height error slot: the banner must NEVER shift the grid
+        // mid-stroke. Without this, the first node of the next attempt
+        // clears the error, the banner collapses, the grid jumps, and
+        // the rest of the stroke misses every node.
+        SizedBox(
+          height: 56,
+          child: _error == null
+              ? null
+              : Center(child: _ErrorBanner(message: _error!)),
+        ),
+        const SizedBox(height: DsSpacing.md),
         Center(
           child: shakeWrap(
             SizedBox(

@@ -144,7 +144,12 @@ class _PatternSetupScreenState extends State<PatternSetupScreen>
     if (_saving) {
       return;
     }
-    setState(() => _nodes = <int>[]);
+    // Clear resets the drawing AND any validation/error state — the
+    // screen returns to the pristine first-draw state.
+    setState(() {
+      _nodes = <int>[];
+      _error = null;
+    });
   }
 
   Future<void> _enroll(List<int> nodes) async {
@@ -216,11 +221,15 @@ class _PatternSetupScreenState extends State<PatternSetupScreen>
             ),
           ),
         ),
-        if (_error != null) ...<Widget>[
-          const SizedBox(height: DsSpacing.lg),
-          _ErrorBanner(message: _error!),
-        ],
-        const SizedBox(height: DsSpacing.xl),
+        // Fixed-height error slot: the banner must NEVER shift the grid
+        // mid-stroke when it appears or clears between attempts.
+        SizedBox(
+          height: 56,
+          child: _error == null
+              ? null
+              : Center(child: _ErrorBanner(message: _error!)),
+        ),
+        const SizedBox(height: DsSpacing.md),
         Center(
           child: shakeWrap(
             SizedBox(

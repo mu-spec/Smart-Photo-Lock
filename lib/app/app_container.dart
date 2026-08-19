@@ -40,6 +40,7 @@ class AppContainer {
     required KeyValueStore keyValueStore,
     required LocalDatabase database,
     required SecretStore secretStore,
+    BiometricService? biometricsOverride,
   })  : _keyValueStore = keyValueStore,
         _database = database,
         secretStore = secretStore {
@@ -52,7 +53,9 @@ class AppContainer {
     );
     lockSettings = LockSettingsRepositoryImpl(_database);
     // Biometric foundation (Phase 2J): platform BiometricPrompt bridge.
-    biometrics = LocalAuthBiometricService();
+    // Tests may override it with a fake for deterministic availability
+    // states; production always uses the real local_auth service.
+    biometrics = biometricsOverride ?? LocalAuthBiometricService();
     auth = DefaultCredentialManager(
       settings: securitySettings,
       // Production PIN storage: strict hash policy (PBKDF2 work factor,
@@ -80,10 +83,13 @@ class AppContainer {
   }
 
   /// Volatile container for tests and previews (no platform plugins).
-  static AppContainer inMemory() => AppContainer._(
+  /// [biometrics] overrides the real platform service (test fakes).
+  static AppContainer inMemory({BiometricService? biometrics}) =>
+      AppContainer._(
         keyValueStore: InMemoryKeyValueStore(),
         database: InMemoryLocalDatabase(),
         secretStore: InMemorySecretStore(),
+        biometricsOverride: biometrics,
       );
 
   final KeyValueStore _keyValueStore;

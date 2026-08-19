@@ -8,6 +8,7 @@ import 'package:smart_app_lock/app/theme/app_theme.dart';
 import 'package:smart_app_lock/design_system/design_system.dart';
 import 'package:smart_app_lock/security/credentials/auth_type.dart';
 import 'package:smart_app_lock/security/credentials/biometric_options.dart';
+import 'package:smart_app_lock/services/biometric_service.dart';
 import 'package:smart_app_lock/ui/screens/pattern/pattern_change_screen.dart';
 import 'package:smart_app_lock/ui/screens/pattern/pattern_setup_screen.dart';
 import 'package:smart_app_lock/ui/screens/pattern/pattern_unlock_screen.dart';
@@ -15,6 +16,7 @@ import 'package:smart_app_lock/ui/screens/pin/pin_change_screen.dart';
 import 'package:smart_app_lock/ui/screens/pin/pin_setup_screen.dart';
 import 'package:smart_app_lock/ui/screens/pin/pin_unlock_screen.dart';
 import 'package:smart_app_lock/ui/screens/security/security_screen.dart';
+import 'package:smart_app_lock/utilities/result.dart';
 
 /// Phase 2K: the authentication settings surface — dynamic PIN/pattern
 /// rows (set up vs change), the pattern-visibility toggle, plus the
@@ -283,15 +285,17 @@ void main() {
 
   testWidgets('biometric row reports unsupported hardware without a platform',
       (WidgetTester tester) async {
-    final AppContainer container = await pumpWithScope(tester);
+    // Deterministic unavailable platform: the container's biometrics (and
+    // therefore the manager's service) is a fake that reports no hardware,
+    // injected BEFORE enrollment so the initial status load sees the PIN.
+    final AppContainer container = AppContainer.inMemory(
+      biometrics: const _UnavailableBiometricService(),
+    );
     await container.auth.enrollPin('1234');
-    // Tear down so the next pump creates a FRESH SecurityScreen State:
-    // identical widget types update elements in place and would keep the
-    // pre-enrollment state (initState would never re-run).
-    await tester.pumpWidget(const SizedBox.shrink());
     await pumpWithScope(tester, container: container);
 
-    final Finder biometricRow = find.text('Biometric unlock');
+    final Finder biometricRow =
+        find.widgetWithText(SecurityStatusItem, 'Biometric unlock');
     await tester.ensureVisible(biometricRow);
     await tester.pumpAndSettle();
     await tester.tap(biometricRow);
@@ -301,4 +305,29 @@ void main() {
       findsOneWidget,
     );
   });
+}
+
+
+/// Deterministic fake: the platform reports biometric hardware unavailable.
+class _UnavailableBiometricService implements BiometricService {
+  const _UnavailableBiometricService();
+
+  static const BiometricAuthException _unavailable = BiometricAuthException(
+    code: 'noBiometricHardware',
+    message: 'Biometric hardware is not available.',
+  );
+
+  @override
+  Future<Result<bool>> isSupported() async => Result.failure(_unavailable);
+
+  @override
+  Future<Result<Set<BiometricKind>>> availableKinds() async =>
+      Result.success(const <BiometricKind>{});
+
+  @override
+  Future<Result<bool>> authenticate({
+    required String reason,
+    BiometricOptions? options,
+  }) async =>
+      Result.failure(_unavailable);
 }
