@@ -18,6 +18,14 @@ import 'package:smart_app_lock/utilities/result.dart';
 /// Phase 2H: pattern creation + confirmation flow.
 void main() {
   Future<AppContainer> pumpHosted(WidgetTester tester) async {
+
+    // Taller test surface: the default 800x600 viewport pushes pattern
+    // action buttons (Re-confirm / Start over / Clear / Done) off-screen
+    // and taps silently miss. Real phones are much taller than 600 logical
+    // pixels, so this matches production aspect behavior.
+    tester.view.physicalSize = const Size(800, 1400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
     final AppContainer container = AppContainer.inMemory();
     await tester.pumpWidget(
       AppScope(
@@ -48,9 +56,12 @@ void main() {
   }
 
   Future<void> drawPattern(WidgetTester tester, List<int> nodes) async {
-    // Settle any pending step/view transition so exactly one grid is
-    // mounted (getRect throws when the switcher still holds two).
-    await tester.pump(const Duration(milliseconds: 300));
+    // Settle ALL pending animations before reading bounds: the shake
+    // feedback from a previous wrong attempt runs 420ms and the view
+    // switcher fades 200ms. Reading getRect mid-shake computes node
+    // centers on a MOVING grid, so every hit test misses and strokes
+    // register only their first node.
+    await tester.pump(const Duration(milliseconds: 450));
     final Finder gridFinder = find.byType(DsPatternGrid);
     expect(gridFinder, findsOneWidget);
     final Rect bounds = tester.getRect(gridFinder);

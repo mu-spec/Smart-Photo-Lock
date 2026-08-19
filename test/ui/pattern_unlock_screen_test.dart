@@ -21,6 +21,14 @@ void main() {
     WidgetTester tester, {
     DateTime Function()? now,
   }) async {
+    
+    // Taller test surface: the default 800x600 viewport pushes pattern
+    // action buttons (Re-confirm / Start over / Clear / Done) off-screen
+    // and taps silently miss. Real phones are much taller than 600 logical
+    // pixels, so this matches production aspect behavior.
+    tester.view.physicalSize = const Size(800, 1400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
     final AppContainer container = AppContainer.inMemory();
     final DefaultCredentialManager manager = DefaultCredentialManager(
       settings: container.securitySettings,
@@ -77,9 +85,12 @@ void main() {
   }
 
   Future<void> drawPattern(WidgetTester tester, List<int> nodes) async {
-    // Settle any pending step/view transition so exactly one grid is
-    // mounted (getRect throws when the switcher still holds two).
-    await tester.pump(const Duration(milliseconds: 300));
+    // Settle ALL pending animations before reading bounds: the shake
+    // feedback from a previous wrong attempt runs 420ms and the view
+    // switcher fades 200ms. Reading getRect mid-shake computes node
+    // centers on a MOVING grid, so every hit test misses and strokes
+    // register only their first node.
+    await tester.pump(const Duration(milliseconds: 450));
     final Finder gridFinder = find.byType(DsPatternGrid);
     expect(gridFinder, findsOneWidget);
     final Rect bounds = tester.getRect(gridFinder);
@@ -173,8 +184,11 @@ void main() {
     await enrollPattern(tester, const <int>[1, 2, 3, 6]);
     await openUnlock(tester);
 
-    // Same nodes, different order: 1-3-2-6 must fail.
-    await drawPattern(tester, const <int>[1, 3, 2, 6]);
+    // Same set of nodes in a different, drawable order. (A straight
+    // 1->3 stroke would pass through node 2 and register 1-2-3-6 — the
+    // saved pattern — so the attempt must use legs that visit no
+    // intermediate nodes: 3-6-9-8.)
+    await drawPattern(tester, const <int>[3, 6, 9, 8]);
 
     expect(find.textContaining('Incorrect pattern'), findsOneWidget);
     expect(find.byKey(const Key('open_unlock')), findsNothing);

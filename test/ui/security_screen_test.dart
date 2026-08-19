@@ -43,12 +43,30 @@ void main() {
     AppContainer? container,
   }) async {
     final AppContainer c = container ?? AppContainer.inMemory();
+    // Taller test surface: the authentication rows (Biometric unlock sits
+    // fifth) land off-screen at the default 800x600 and taps miss.
+    tester.view.physicalSize = const Size(800, 1600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
     await tester.pumpWidget(
       AppScope(
         container: c,
         child: MaterialApp(
           theme: AppTheme.dark,
-          routes: kSecurityTabRoutes,
+          // onGenerateRoute returns Route<bool> so SecurityScreen's
+          // pushNamed<bool>(pinChange/patternChange) satisfies its type
+          // parameter. (The plain `routes:` map would produce
+          // MaterialPageRoute<dynamic> and crash the cast.)
+          onGenerateRoute: (RouteSettings settings) {
+            final WidgetBuilder? builder = kSecurityTabRoutes[settings.name];
+            if (builder == null) {
+              return null;
+            }
+            return MaterialPageRoute<bool>(
+              settings: settings,
+              builder: builder,
+            );
+          },
           home: const Scaffold(body: SecurityScreen()),
         ),
       ),
@@ -230,7 +248,10 @@ void main() {
       (WidgetTester tester) async {
     await pumpWithScope(tester);
 
-    await tester.tap(find.text('Biometric unlock'));
+    final Finder biometricRow = find.text('Biometric unlock');
+    await tester.ensureVisible(biometricRow);
+    await tester.pumpAndSettle();
+    await tester.tap(biometricRow);
     await tester.pumpAndSettle();
     expect(find.text('Set up a PIN or pattern first.'), findsOneWidget);
   });
@@ -248,7 +269,10 @@ void main() {
 
     expect(find.text('Enabled'), findsOneWidget);
 
-    await tester.tap(find.text('Biometric unlock'));
+    final Finder biometricRow = find.text('Biometric unlock');
+    await tester.ensureVisible(biometricRow);
+    await tester.pumpAndSettle();
+    await tester.tap(biometricRow);
     await tester.pumpAndSettle();
 
     expect(find.text('Biometric unlock disabled.'), findsOneWidget);
@@ -267,7 +291,10 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     await pumpWithScope(tester, container: container);
 
-    await tester.tap(find.text('Biometric unlock'));
+    final Finder biometricRow = find.text('Biometric unlock');
+    await tester.ensureVisible(biometricRow);
+    await tester.pumpAndSettle();
+    await tester.tap(biometricRow);
     await tester.pumpAndSettle();
     expect(
       find.text('Biometric authentication is not available on this device.'),
