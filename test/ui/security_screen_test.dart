@@ -18,19 +18,36 @@ import 'package:smart_app_lock/ui/screens/security/security_screen.dart';
 /// Phase 2K: the authentication settings surface — dynamic PIN/pattern
 /// rows (set up vs change), the pattern-visibility toggle, plus the
 /// randomized-keypad and biometric rows from earlier phases.
-void main() {
-  /// Routes the Security tab can push into. Deliberately excludes '/'
-  /// (MainShell) — a MaterialApp with `home:` may not also define '/'.
-  const Map<String, WidgetBuilder> kSecurityTabRoutes =
-      <String, WidgetBuilder>{
-        RouteNames.pinSetup: PinSetupScreen.new,
-        RouteNames.pinUnlock: PinUnlockScreen.new,
-        RouteNames.pinChange: PinChangeScreen.new,
-        RouteNames.patternSetup: PatternSetupScreen.new,
-        RouteNames.patternUnlock: PatternUnlockScreen.new,
-        RouteNames.patternChange: PatternChangeScreen.new,
-      };
 
+/// Routes the Security tab can push into. Deliberately excludes '/'
+/// (MainShell) — a MaterialApp with `home:` may not also define '/'.
+const Map<String, WidgetBuilder> kSecurityTabRoutes = <String, WidgetBuilder>{
+  RouteNames.pinSetup: _pinSetupBuilder,
+  RouteNames.pinUnlock: _pinUnlockBuilder,
+  RouteNames.pinChange: _pinChangeBuilder,
+  RouteNames.patternSetup: _patternSetupBuilder,
+  RouteNames.patternUnlock: _patternUnlockBuilder,
+  RouteNames.patternChange: _patternChangeBuilder,
+};
+
+// WidgetBuilders as plain functions: constructor tear-offs don't match
+// WidgetBuilder when the constructors take optional named parameters.
+Widget _pinSetupBuilder(BuildContext context) => const PinSetupScreen();
+
+Widget _pinUnlockBuilder(BuildContext context) => const PinUnlockScreen();
+
+Widget _pinChangeBuilder(BuildContext context) => const PinChangeScreen();
+
+Widget _patternSetupBuilder(BuildContext context) =>
+    const PatternSetupScreen();
+
+Widget _patternUnlockBuilder(BuildContext context) =>
+    const PatternUnlockScreen();
+
+Widget _patternChangeBuilder(BuildContext context) =>
+    const PatternChangeScreen();
+
+void main() {
   /// Pumps the Security tab inside an [AppScope]. Pass an existing
   /// [container] to re-pump with the same state (e.g. after enrolling).
   Future<AppContainer> pumpWithScope(
