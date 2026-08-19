@@ -128,6 +128,7 @@ class SecuritySettings {
     bool clearPinLength = false,
     int? lockoutStreak,
     bool? randomizedKeypadEnabled,
+    bool? patternVisibilityEnabled,
   }) {
     return SecuritySettings(
       pinHash: clearPin ? null : (pinHash ?? this.pinHash),

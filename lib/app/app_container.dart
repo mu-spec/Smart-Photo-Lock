@@ -56,9 +56,10 @@ class AppContainer {
     auth = DefaultCredentialManager(
       settings: securitySettings,
       // Production PIN storage: strict hash policy (PBKDF2 work factor,
-      // key/salt/digest sizes) + fail-closed reads.
+      // key/salt/digest sizes) + fail-closed reads. The store takes the
+      // settings repository positionally.
       pinStore: DefaultPinCredentialStore(
-        settings: securitySettings,
+        securitySettings,
         policy: CredentialHashPolicy.strict,
       ),
       biometricService: biometrics,

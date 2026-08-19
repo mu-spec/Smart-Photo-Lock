@@ -4,7 +4,6 @@ import 'package:smart_app_lock/data/models/security_settings.dart';
 import 'package:smart_app_lock/data/repositories/impl/security_settings_repository_impl.dart';
 import 'package:smart_app_lock/data/repositories/security_settings_repository.dart';
 import 'package:smart_app_lock/data/storage/impl/in_memory_local_database.dart';
-import 'package:smart_app_lock/data/storage/local_database.dart';
 import 'package:smart_app_lock/security/encryption/settings_cipher_impl.dart';
 import 'package:smart_app_lock/security/pin_hasher.dart';
 import 'package:smart_app_lock/security/storage/impl/in_memory_secret_store.dart';

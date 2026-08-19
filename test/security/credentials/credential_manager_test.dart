@@ -14,7 +14,6 @@ import 'package:smart_app_lock/security/credentials/credential_state_machine.dar
 import 'package:smart_app_lock/security/credentials/impl/default_credential_manager.dart';
 import 'package:smart_app_lock/security/credentials/pattern_hasher.dart';
 import 'package:smart_app_lock/security/pin_hasher.dart';
-import 'package:smart_app_lock/security/pin_policy.dart';
 import 'package:smart_app_lock/services/biometric_service.dart';
 import 'package:smart_app_lock/services/impl/local_auth_biometric_service.dart';
 import 'package:smart_app_lock/utilities/result.dart';

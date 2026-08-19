@@ -3,7 +3,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:smart_app_lock/data/repositories/impl/security_settings_repository_impl.dart';
 import 'package:smart_app_lock/data/repositories/security_settings_repository.dart';
 import 'package:smart_app_lock/data/storage/impl/in_memory_local_database.dart';
-import 'package:smart_app_lock/security/credentials/credential_hash.dart';
 import 'package:smart_app_lock/security/credentials/credential_hash_policy.dart';
 import 'package:smart_app_lock/security/credentials/impl/default_credential_manager.dart';
 import 'package:smart_app_lock/security/credentials/impl/default_pin_credential_store.dart';

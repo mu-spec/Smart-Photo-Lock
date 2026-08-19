@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import '../../../app/app_scope.dart';
-import '../../../design_system/design_system.dart';
 import '../../../security/credentials/auth_type.dart';
 import '../../../security/credentials/credential_manager.dart';
 import '../pattern/pattern_setup_screen.dart';
