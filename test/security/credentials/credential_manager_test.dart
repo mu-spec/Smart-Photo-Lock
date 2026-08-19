@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:local_auth/local_auth.dart';
 
 import 'package:smart_app_lock/data/models/security_settings.dart';
 import 'package:smart_app_lock/data/repositories/impl/security_settings_repository_impl.dart';
@@ -15,6 +16,7 @@ import 'package:smart_app_lock/security/credentials/pattern_hasher.dart';
 import 'package:smart_app_lock/security/pin_hasher.dart';
 import 'package:smart_app_lock/security/pin_policy.dart';
 import 'package:smart_app_lock/services/biometric_service.dart';
+import 'package:smart_app_lock/services/impl/local_auth_biometric_service.dart';
 import 'package:smart_app_lock/utilities/result.dart';
 
 void main() {
@@ -394,6 +396,77 @@ void main() {
   });
 
   // -------------------------------------------------------------------
+  // Phase 2J QA — platform error handling
+  // -------------------------------------------------------------------
+  Future<DefaultCredentialManager> managerWithFailingBio(Object failure) async {
+    final DefaultCredentialManager m = DefaultCredentialManager(
+      settings: settings,
+      pinHasher: Pbkdf2PinHasher(iterations: 200),
+      patternHasher: Pbkdf2PatternHasher(iterations: 200),
+      biometricService: _FakeBiometricService(
+        supported: true,
+        passes: false,
+        failure: failure,
+      ),
+    );
+    await m.enrollPin('1234');
+    await m.updateBiometricOptions(BiometricOptions.defaults);
+    return m;
+  }
+
+  test('not-enrolled platform error -> notAvailable, no attempt counted',
+      () async {
+    final DefaultCredentialManager m = await managerWithFailingBio(
+      mapBiometricError(
+        const LocalAuthException(code: LocalAuthExceptionCode.noBiometricsEnrolled),
+      ),
+    );
+    final AuthAttemptResult result =
+        (await m.authenticateBiometric()).valueOrNull!;
+    expect(result, isA<AuthFailure>());
+    expect((result as AuthFailure).reason, AuthFailureReason.notAvailable);
+    expect((await m.status()).valueOrNull!.failedAttempts, 0);
+  });
+
+  test('temporary lockout platform error -> notAvailable, no count', () async {
+    final DefaultCredentialManager m = await managerWithFailingBio(
+      mapBiometricError(
+        const LocalAuthException(code: LocalAuthExceptionCode.temporaryLockout),
+      ),
+    );
+    final AuthAttemptResult result =
+        (await m.authenticateBiometric()).valueOrNull!;
+    expect((result as AuthFailure).reason, AuthFailureReason.notAvailable);
+    expect((await m.status()).valueOrNull!.failedAttempts, 0);
+  });
+
+  test('user cancellation still counts as a failed attempt (2L policy)',
+      () async {
+    final DefaultCredentialManager m = await managerWithFailingBio(
+      mapBiometricError(
+        const LocalAuthException(code: LocalAuthExceptionCode.userCanceled),
+      ),
+    );
+    final AuthAttemptResult result =
+        (await m.authenticateBiometric()).valueOrNull!;
+    expect(result, isA<AuthFailure>());
+    expect((result as AuthFailure).reason, AuthFailureReason.wrongCredential);
+    expect((await m.status()).valueOrNull!.failedAttempts, 1);
+  });
+
+  test('device-level platform errors count and never unlock', () async {
+    final DefaultCredentialManager m = await managerWithFailingBio(
+      mapBiometricError(
+        const LocalAuthException(code: LocalAuthExceptionCode.deviceError),
+      ),
+    );
+    final AuthAttemptResult result =
+        (await m.authenticateBiometric()).valueOrNull!;
+    expect(result, isA<AuthFailure>());
+    expect((await m.status()).valueOrNull!.failedAttempts, 1);
+  });
+
+  // -------------------------------------------------------------------
   // Phase 2K — pattern visibility setting
   // -------------------------------------------------------------------
   test('setPatternVisibilityEnabled persists through status and settings',
@@ -421,10 +494,18 @@ void main() {
 
 /// Test double for the platform biometric bridge.
 class _FakeBiometricService implements BiometricService {
-  const _FakeBiometricService({required this.supported, required this.passes});
+  const _FakeBiometricService({
+    required this.supported,
+    required this.passes,
+    this.failure,
+  });
 
   final bool supported;
   final bool passes;
+
+  /// When non-null, [authenticate] fails with this error (used by the
+  /// Phase 2J QA error-handling tests).
+  final Object? failure;
 
   @override
   Future<Result<bool>> isSupported() async => Result.success(supported);
@@ -441,5 +522,5 @@ class _FakeBiometricService implements BiometricService {
     required String reason,
     BiometricOptions? options,
   }) async =>
-      Result.success(passes);
+      failure == null ? Result.success(passes) : Result.failure(failure!);
 }

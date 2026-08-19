@@ -307,6 +307,15 @@ via the `local_auth` plugin:
   contract and fails closed (platform errors → `Failure`, never fake
   success). Maps `BiometricOptions` onto the prompt (device-credential
   fallback, confirmation requirement).
+- **Android host** — `MainActivity` extends `FlutterFragmentActivity`
+  (required by BiometricPrompt through local_auth); `USE_BIOMETRIC`
+  permission declared for API < 28.
+- **Safe platform errors** — every `LocalAuthExceptionCode` maps to a
+  user-safe `BiometricAuthException` (stable code + presentable message;
+  raw traces never reach the UI). Availability problems (no hardware,
+  nothing enrolled, temporary/permanent lockout, ...) surface as
+  `notAvailable` **without counting** as failed attempts; rejections and
+  cancellations still count (2L policy, cancel-loop protection).
 - **`CredentialManager.authenticateBiometric`** now performs real
   authentication: requires opt-in *and* an enrolled primary credential,
   respects lockouts, counts failures toward the escalating cooldown, and
@@ -503,7 +512,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.1.0 / 9.3.1 / 2.4.0 |
 | Java | 17 |
-| versionName / versionCode | `0.19.1` / `21` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.19.2` / `22` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM), `local_auth` (biometrics) |
 
 ## Prerequisites (on your machine)

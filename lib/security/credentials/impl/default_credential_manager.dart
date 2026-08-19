@@ -1,8 +1,7 @@
 import '../../../data/models/security_settings.dart';
 import '../../../data/repositories/security_settings_repository.dart';
 import '../../../services/biometric_service.dart';
-import '../../../utilities/result.dart';
-import '../../pin_hasher.dart';
+import '../../../utilities/result.dart';import '../../pin_hasher.dart';
 import '../../pin_policy.dart';
 import '../auth_result.dart';
 import '../auth_type.dart';
@@ -279,8 +278,19 @@ class DefaultCredentialManager implements CredentialManager {
     final Result<bool> outcome =
         await service.authenticate(reason: reason, options: options);
     if (outcome.isFailure) {
-      // Platform rejection (canceled, not enrolled, ...) counts as a
-      // failed attempt so brute-forcing prompts cannot bypass lockouts.
+      final Object? error = outcome.errorOrNull;
+      // Availability problems (no hardware, nothing enrolled, lockouts, ...)
+      // are NOT authentication rejections — surface them without counting.
+      if (error is BiometricAuthException && error.isAvailabilityError) {
+        return Result.success(
+          const AuthFailure(
+            reason: AuthFailureReason.notAvailable,
+            remainingAttempts: 0,
+          ),
+        );
+      }
+      // Rejections and cancellations count as failed attempts so
+      // prompt-spamming cannot bypass the escalating lockout (2L policy).
       return _evaluateAndPersist(s, state, false, AuthType.biometric);
     }
 

@@ -155,6 +155,51 @@ def run():
                 missing.append(f"{d}/{name}")
     check("launcher icons present in all densities", not missing, "; ".join(missing))
 
+    # 5b. Android biometric integration (Phase 2J QA)
+    main_activity_path = os.path.join(
+        ROOT, "android/app/src/main/kotlin/com/smartapplock/app/MainActivity.kt"
+    )
+    if os.path.exists(main_activity_path):
+        activity_src = open(main_activity_path).read()
+        check(
+            "MainActivity extends FlutterFragmentActivity (biometric host)",
+            "FlutterFragmentActivity" in activity_src,
+        )
+        check(
+            "MainActivity keeps the com.smartapplock.app package",
+            "package com.smartapplock.app" in activity_src,
+        )
+        # Code-only view (comments stripped) for the no-custom-biometric
+        # check — doc mentions of BiometricPrompt are fine.
+        code_lines = [
+            l for l in activity_src.splitlines()
+            if not l.strip().startswith("*")
+            and not l.strip().startswith("//")
+            and not l.strip().startswith("/*")
+        ]
+        activity_code = "\n".join(code_lines)
+        check(
+            "no custom legacy biometric code in MainActivity",
+            "FingerprintManager" not in activity_code
+            and "android.hardware.biometrics" not in activity_code
+            and "BiometricPrompt(" not in activity_code,
+        )
+    else:
+        check("MainActivity extends FlutterFragmentActivity (biometric host)",
+              False, "MainActivity.kt missing")
+    manifest_text = open(
+        os.path.join(ROOT, "android/app/src/main/AndroidManifest.xml")
+    ).read()
+    check(
+        "manifest declares USE_BIOMETRIC",
+        'android.permission.USE_BIOMETRIC' in manifest_text,
+    )
+    check(
+        "manifest declares exactly one activity",
+        manifest_text.count("<activity") == 1,
+        f"found {manifest_text.count('<activity')}",
+    )
+
     # 6. Version consistency
     if vm:
         vname, vcode = f"{vm.group(1)}.{vm.group(2)}.{vm.group(3)}", vm.group(4)

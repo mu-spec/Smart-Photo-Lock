@@ -16,7 +16,8 @@ import '../biometric_service.dart';
 ///    (PIN/pattern/password) as a prompt fallback
 ///
 /// Fails closed: every platform error surfaces as a [Failure] — the caller
-/// never receives a fabricated success.
+/// never receives a fabricated success. Platform exceptions are mapped to
+/// user-safe [BiometricAuthException]s; raw traces never leave this layer.
 class LocalAuthBiometricService implements BiometricService {
   LocalAuthBiometricService({LocalAuthentication? auth})
       : _auth = auth ?? LocalAuthentication();
@@ -27,8 +28,10 @@ class LocalAuthBiometricService implements BiometricService {
   Future<Result<bool>> isSupported() async {
     try {
       return Result.success(await _auth.canCheckBiometrics);
+    } on LocalAuthException catch (e) {
+      return Result.failure(mapBiometricError(e));
     } catch (e) {
-      return Result.failure(e);
+      return Result.failure(mapBiometricError(e));
     }
   }
 
@@ -44,8 +47,10 @@ class LocalAuthBiometricService implements BiometricService {
         kinds.add(BiometricKind.deviceCredential);
       }
       return Result.success(kinds);
+    } on LocalAuthException catch (e) {
+      return Result.failure(mapBiometricError(e));
     } catch (e) {
-      return Result.failure(e);
+      return Result.failure(mapBiometricError(e));
     }
   }
 
@@ -64,10 +69,94 @@ class LocalAuthBiometricService implements BiometricService {
         sensitiveTransaction: opts.requireConfirmation,
       );
       return Result.success(ok);
+    } on LocalAuthException catch (e) {
+      // Canceled / not-enrolled / locked-out / ... — all fail closed, with
+      // a user-safe, code-carrying error.
+      return Result.failure(mapBiometricError(e));
     } catch (e) {
-      // MissingPluginException (tests), LocalAuthException (canceled,
-      // not-enrolled, locked-out, ...) — all fail closed.
-      return Result.failure(e);
+      // MissingPluginException (tests), unexpected platform errors.
+      return Result.failure(mapBiometricError(e));
     }
   }
+}
+
+/// Maps a platform biometric error into a user-safe [BiometricAuthException].
+///
+/// Every [LocalAuthExceptionCode] gets a stable `code` and a presentable
+/// message; unknown errors collapse to `unknown` with a generic message.
+/// Raw descriptions/details are deliberately dropped.
+BiometricAuthException mapBiometricError(Object error) {
+  if (error is BiometricAuthException) {
+    return error;
+  }
+  if (error is LocalAuthException) {
+    final (String code, String message) = switch (error.code) {
+      LocalAuthExceptionCode.authInProgress => (
+          'authInProgress',
+          'An authentication is already in progress.',
+        ),
+      LocalAuthExceptionCode.uiUnavailable => (
+          'uiUnavailable',
+          'The biometric prompt is unavailable right now.',
+        ),
+      LocalAuthExceptionCode.userCanceled => (
+          'userCanceled',
+          'Biometric authentication was cancelled.',
+        ),
+      LocalAuthExceptionCode.timeout => (
+          'timeout',
+          'Biometric authentication timed out.',
+        ),
+      LocalAuthExceptionCode.systemCanceled => (
+          'systemCanceled',
+          'Biometric authentication was cancelled by the system.',
+        ),
+      LocalAuthExceptionCode.noCredentialsSet => (
+          'noCredentialsSet',
+          'No device credential is configured.',
+        ),
+      LocalAuthExceptionCode.noBiometricsEnrolled => (
+          'noBiometricsEnrolled',
+          'No biometric credential is enrolled on this device.',
+        ),
+      LocalAuthExceptionCode.noBiometricHardware => (
+          'noBiometricHardware',
+          'Biometric hardware is not available.',
+        ),
+      LocalAuthExceptionCode.biometricHardwareTemporarilyUnavailable => (
+          'biometricHardwareTemporarilyUnavailable',
+          'Biometric hardware is temporarily unavailable.',
+        ),
+      LocalAuthExceptionCode.temporaryLockout => (
+          'temporaryLockout',
+          'Biometric authentication is temporarily locked out.',
+        ),
+      LocalAuthExceptionCode.biometricLockout => (
+          'biometricLockout',
+          'Biometric authentication is locked. Unlock with another method.',
+        ),
+      LocalAuthExceptionCode.userRequestedFallback => (
+          'userRequestedFallback',
+          'Use your PIN or pattern instead.',
+        ),
+      LocalAuthExceptionCode.deviceError => (
+          'deviceError',
+          'Biometric authentication failed on this device.',
+        ),
+      LocalAuthExceptionCode.unknownError => (
+          'unknownError',
+          'Biometric authentication failed.',
+        ),
+      // Future platform-interface codes collapse to the generic mapping.
+      _ => (
+          'unknownError',
+          'Biometric authentication failed.',
+        ),
+    };
+    return BiometricAuthException(code: code, message: message);
+  }
+  return const BiometricAuthException(
+    code: 'unknown',
+    message: 'Biometric authentication failed.',
+  );
 }

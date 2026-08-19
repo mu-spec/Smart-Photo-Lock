@@ -110,3 +110,27 @@ Design notes recorded for the record:
   `biometricOptions` returns `notConfigured`.
 - The raw PIN is absent from the persisted store across restarts
   (`enc:v1:` ciphertext only).
+
+---
+
+# Phase 2J QA — Physical Device Biometric Verification
+
+Automated tests (unit/regression) are green; this milestone additionally
+requires manual verification on a real Android phone with biometrics
+enrolled.
+
+| # | Test | Steps | Expected |
+| - | ---- | ----- | -------- |
+| 1 | Biometric success | Enable biometric unlock → trigger authentication → authenticate | Smart App Lock reports success |
+| 2 | Wrong biometric | Use an unrecognized fingerprint where retry is allowed | Remains locked |
+| 3 | Cancel | Open the system prompt, cancel it | No authentication success |
+| 4 | Reopen prompt | Cancel once, then authenticate again | Prompt opens normally; success works |
+| 5 | Disable biometrics | Remove enrolled biometrics in Android settings, reopen the app | App reports biometric unavailable gracefully, no crash |
+| 6 | PIN/Pattern fallback | With biometrics configured, use the PIN/pattern path | PIN/Pattern still authenticates normally |
+
+How to run: `flutter build apk --debug --target-platform=android-arm64`,
+install on the device, then walk the table and log any deviation here.
+
+| # | Defect | Severity | Status |
+| - | ------ | -------- | ------ |
+| — | None found at handoff | — | — |

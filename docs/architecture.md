@@ -428,7 +428,9 @@ BiometricService (contract, 2A)
 | Piece | Behaviour |
 | ----- | --------- |
 | `LocalAuthBiometricService` | fails closed — platform errors surface as `Failure`, never fabricated success; maps `BiometricOptions` (allowDeviceCredential → `biometricOnly`, requireConfirmation → `sensitiveTransaction`) |
-| `CredentialManager.authenticateBiometric` | gates: opt-in required (`biometricOptions` set) + a primary credential enrolled; lockout blocks biometrics too; failures count toward the escalating cooldown; success resets counters |
+| `BiometricAuthException` + `mapBiometricError` | user-safe mapping of every `LocalAuthExceptionCode` (stable code + presentable message; `toString()` = safe text only); availability codes are distinguishable from rejections |
+| Android host | `MainActivity` extends **FlutterFragmentActivity** (BiometricPrompt is fragment-hosted via local_auth); `USE_BIOMETRIC` declared (API < 28) |
+| `CredentialManager.authenticateBiometric` | gates: opt-in required (`biometricOptions` set) + a primary credential enrolled; lockout blocks biometrics too; **availability failures (hardware/enrollment/lockout) → `notAvailable` without counting**; rejections and cancellations count toward the escalating cooldown; success resets counters |
 | `updateBiometricOptions(null)` | disables biometric unlock (contract changed to nullable) |
 | PIN unlock screen | fingerprint slot appears when biometric is enabled (keypad bottom-left + "Or use your fingerprint" hint); outcomes: success pops `true`, failures show reason-specific errors, lockouts reuse the countdown |
 | Security tab | live "Biometric unlock" row — enables (with real device-capability checks, tailoring allowed kinds) or disables; guides when no primary credential exists or the device is unsupported |

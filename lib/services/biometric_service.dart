@@ -1,6 +1,41 @@
 import '../security/credentials/biometric_options.dart';
 import '../utilities/result.dart';
 
+/// User-safe error wrapper for biometric platform failures (Phase 2J QA).
+///
+/// Carries a stable machine-readable [code] (for logs/tests) and a
+/// user-facing [message]. [toString] returns ONLY the safe message — raw
+/// exception traces are never exposed to the UI.
+class BiometricAuthException implements Exception {
+  const BiometricAuthException({required this.code, required this.message});
+
+  /// Platform-level availability problems. When a failure carries one of
+  /// these codes, it is NOT an authentication rejection and must not count
+  /// as a failed attempt (see CredentialManager).
+  static const Set<String> availabilityCodes = <String>{
+    'notAvailable',
+    'noBiometricHardware',
+    'biometricHardwareTemporarilyUnavailable',
+    'noBiometricsEnrolled',
+    'noCredentialsSet',
+    'temporaryLockout',
+    'biometricLockout',
+    'uiUnavailable',
+    'authInProgress',
+  };
+
+  /// Stable, non-localized code (e.g. `userCanceled`, `temporaryLockout`).
+  final String code;
+
+  /// Safe, user-presentable description.
+  final String message;
+
+  bool get isAvailabilityError => availabilityCodes.contains(code);
+
+  @override
+  String toString() => message;
+}
+
 /// Bridge to the platform biometric prompt (BiometricPrompt / BiometricManager).
 ///
 /// Contract only — implemented in the biometric phase (backed by a native
