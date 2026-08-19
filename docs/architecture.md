@@ -239,6 +239,37 @@ Choose length (4 / 6) ──► Enter new PIN ──► Confirm PIN ──► En
 - Tests guarantee the no-partial-enrollment invariant and cover repeated
   mismatches, both recovery paths, and both PIN lengths.
 
+## 2D. Secure PIN storage
+
+Only **derived, verifiable credential material** is ever persisted — the raw
+PIN exists transiently in memory during hashing and nothing else.
+
+```
+PIN (in memory, transient)
+  │ PBKDF2-HMAC-SHA256 · 50k iterations · 16-byte random salt
+  ▼
+PinHash (salt + digest + parameters)  ── the ONLY thing that crosses
+  │                                       the storage boundary
+  ▼
+SecuritySettings.pinHash ──► AES-256-GCM (Keystore-backed master key)
+                              ──► enc:v1:<ciphertext> ──► SQLite
+```
+
+| Piece | File | Guarantee |
+| ----- | ---- | --------- |
+| `PinCredentialStore` | `security/credentials/pin_storage.dart` | boundary: accepts/returns hashes only — the raw PIN never crosses it |
+| `DefaultPinCredentialStore` | `.../impl/default_pin_credential_store.dart` | persists via encrypted settings; **refuses to save** sub-policy hashes |
+| `CredentialHashPolicy` | `.../credential_hash_policy.dart` | validates work factor, key length, salt entropy, digest size, encodings |
+| Manager integration | `default_credential_manager.dart` | `enrollPin` hashes then stores via the boundary; `authenticatePin` loads via the boundary and **fails closed** on a corrupted/weakened record |
+| Screen hygiene | `pin_setup_screen.dart` | drops the raw PIN from widget state the moment enrollment completes |
+| Production wiring | `app_container.dart` | strict policy (`minIterations: 10000`, 32-byte keys, 16-byte salts) |
+
+- The hash record carries its own parameters (salt, iterations, key length),
+  so verification is self-contained and verifiable.
+- Tests assert — against the exact bytes the repository persisted — that the
+  raw PIN appears nowhere in storage, and that corrupted or weakened records
+  are rejected on both save and load paths.
+
 ---
 
 ## 1. The eight modules
@@ -266,7 +297,7 @@ Choose length (4 / 6) ──► Enter new PIN ──► Confirm PIN ──► En
 | UI | `lib/ui` | Screens, shared widgets | `shell/main_shell.dart`, `screens/{home,apps,smart,security,settings,pin}/`, `widgets/placeholder_screen.dart` | 1C shell + placeholders, 2B PIN setup |
 | Design System | `lib/design_system` | Visual tokens + base components + security status widgets | `ds_palette.dart`, `ds_theme.dart`, `ds_spacing.dart`, `ds_typography.dart`, `widgets/`, `security/` | 1D (implemented) |
 | Data | `lib/data` | Models, storage (prefs + SQLite), repository contracts + impls | `models/`, `storage/`, `repositories/` | 1E (implemented) |
-| Security | `lib/security` | PIN hashing & policy, secret store, settings encryption, credentials (Phase 2A) | `pin_hasher.dart` ✅, `pin_policy.dart` ✅, `storage/` ✅, `encryption/` ✅, `credentials/` ✅ | **working** |
+| Security | `lib/security` | PIN hashing & policy, secret store, settings encryption, credentials (2A), secure PIN storage (2D) | `pin_hasher.dart` ✅, `pin_policy.dart` ✅, `storage/` ✅, `encryption/` ✅, `credentials/` ✅ | **working** |
 | Protection | `lib/protection` | Lock engine, access control, unlock sessions | `lock_engine.dart`, `access_controller.dart`, `lock_session.dart` | contracts (+session model) |
 | Rules | `lib/rules` | Lock rule model + pure evaluation | `lock_rule.dart`, `rule_engine.dart` ✅ | **working pure logic** |
 | Profiles | `lib/profiles` | Lock profiles (groups of locked apps) | `lock_profile.dart`, `profile_manager.dart` | contracts (+model) |

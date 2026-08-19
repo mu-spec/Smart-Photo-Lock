@@ -11,6 +11,8 @@ import '../credential_state_machine.dart';
 import '../credential_manager.dart';
 import '../pattern_hasher.dart';
 import '../pattern_policy.dart';
+import '../pin_storage.dart';
+import 'default_pin_credential_store.dart';
 
 /// Production [CredentialManager].
 ///
@@ -20,21 +22,28 @@ import '../pattern_policy.dart';
 /// restarts. Biometric authentication is delegated to a platform service
 /// (wired in a later phase; until then attempts fail with
 /// [AuthFailureReason.notAvailable]).
+///
+/// PIN credential material flows exclusively through the [PinCredentialStore]
+/// (Phase 2D): the raw PIN is hashed in memory and only the derived hash
+/// reaches persistence — never the PIN itself.
 class DefaultCredentialManager implements CredentialManager {
   DefaultCredentialManager({
     required SecuritySettingsRepository settings,
     PinHasher? pinHasher,
     PatternHasher? patternHasher,
     CredentialStateMachine? stateMachine,
+    PinCredentialStore? pinStore,
   })  : _settings = settings,
         _pinHasher = pinHasher ?? Pbkdf2PinHasher(),
         _patternHasher = patternHasher ?? Pbkdf2PatternHasher(),
-        _machine = stateMachine ?? const CredentialStateMachine();
+        _machine = stateMachine ?? const CredentialStateMachine(),
+        _pinStore = pinStore ?? DefaultPinCredentialStore(settings);
 
   final SecuritySettingsRepository _settings;
   final PinHasher _pinHasher;
   final PatternHasher _patternHasher;
   final CredentialStateMachine _machine;
+  final PinCredentialStore _pinStore;
 
   // -- status -------------------------------------------------------------
 
@@ -61,18 +70,24 @@ class DefaultCredentialManager implements CredentialManager {
       );
     }
     final PinHash hash = await _pinHasher.hash(pin);
+
+    // Reset counters/primary first (benign if the credential write fails),
+    // then persist ONLY the derived hash through the secure store.
     final Result<SecuritySettings> loaded = await _settings.getSettings();
-    return loaded.fold(
-      (SecuritySettings s) => _settings.saveSettings(
-        s.copyWith(
-          pinHash: hash,
-          primaryAuthType: AuthType.pin,
-          failedAttempts: 0,
-          clearLockout: true,
-        ),
+    if (loaded.isFailure) {
+      return Result.failure(loaded.errorOrNull!);
+    }
+    final Result<void> reset = await _settings.saveSettings(
+      loaded.valueOrNull!.copyWith(
+        primaryAuthType: AuthType.pin,
+        failedAttempts: 0,
+        clearLockout: true,
       ),
-      Result.failure,
     );
+    if (reset.isFailure) {
+      return Result.failure(reset.errorOrNull!);
+    }
+    return _pinStore.save(hash);
   }
 
   @override
@@ -116,12 +131,13 @@ class DefaultCredentialManager implements CredentialManager {
 
   @override
   Future<Result<AuthAttemptResult>> authenticatePin(String pin) async {
-    final Result<SecuritySettings> loaded = await _settings.getSettings();
-    if (loaded.isFailure) {
-      return Result.failure(loaded.errorOrNull!);
+    final Result<PinHash?> loadedHash = await _pinStore.load();
+    if (loadedHash.isFailure) {
+      // Fail closed: corrupted/weakened stored credential.
+      return Result.failure(loadedHash.errorOrNull!);
     }
-    final SecuritySettings s = loaded.valueOrNull!;
-    if (s.pinHash == null) {
+    final PinHash? stored = loadedHash.valueOrNull;
+    if (stored == null) {
       return Result.success(
         const AuthFailure(
           reason: AuthFailureReason.noCredentialEnrolled,
@@ -130,13 +146,19 @@ class DefaultCredentialManager implements CredentialManager {
       );
     }
 
+    final Result<SecuritySettings> loaded = await _settings.getSettings();
+    if (loaded.isFailure) {
+      return Result.failure(loaded.errorOrNull!);
+    }
+    final SecuritySettings s = loaded.valueOrNull!;
+
     final CredentialState state = _stateFrom(s);
     final AuthLockedOut? activeLockout = _activeLockout(state, DateTime.now());
     if (activeLockout != null) {
       return Result.success(activeLockout);
     }
 
-    final bool matches = await _pinHasher.verify(pin, s.pinHash!);
+    final bool matches = await _pinHasher.verify(pin, stored);
     return _evaluateAndPersist(s, state, matches, AuthType.pin);
   }
 

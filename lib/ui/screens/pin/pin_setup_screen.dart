@@ -243,6 +243,10 @@ class _PinSetupScreenState extends State<PinSetupScreen>
       setState(() {
         _saving = false;
         _step = PinSetupStep.success;
+        // Phase 2D hygiene: drop the raw PIN from widget state the moment
+        // enrollment completes — only the derived hash exists in storage.
+        _entered = '';
+        _firstPin = null;
       });
     } else {
       setState(() {

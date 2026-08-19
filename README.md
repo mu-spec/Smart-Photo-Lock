@@ -25,6 +25,7 @@ setup screen. Locking is not implemented yet.
 | 2A | Authentication data model (PIN, pattern, biometric + credential state) | ✅ |
 | 2B | PIN setup screen (4-digit & 6-digit flow) | ✅ |
 | 2C | PIN confirmation (mandatory confirm, clean mismatch handling) | ✅ |
+| 2D | Secure PIN storage (derived/verifiable material only, never raw PIN) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -178,6 +179,28 @@ A shake animation + red error dots make mismatches unmissable, and nothing
 is ever partially saved (tests assert the credential store stays empty after
 a mismatch).
 
+### Phase 2D ✅ — Secure PIN Storage
+
+Only **derived, verifiable credential material** is persisted — the raw PIN
+is never saved anywhere:
+
+```
+PIN (memory only) ──PBKDF2 (50k, salted)──► PinHash ──► encrypted settings
+                                                       (AES-256-GCM,
+                                                        Keystore-backed key)
+```
+
+- **`PinCredentialStore`** — a hard boundary that only accepts/returns
+  hashes; the raw PIN never crosses it. `DefaultPinCredentialStore` persists
+  through the encrypted settings and **refuses sub-policy hashes on save**.
+- **`CredentialHashPolicy`** — validates work factor, key/salt/digest sizes
+  and encodings on every read; corrupted or weakened records **fail closed**
+  (strict policy wired in production via `AppContainer`).
+- **Hygiene** — the setup screen drops the raw PIN from widget state the
+  moment enrollment completes; nothing logs credential material.
+- Tests inspect the exact persisted bytes and assert the raw PIN appears
+  nowhere in storage.
+
 ```
 lib/
 ├── main.dart                 # entry point (boots AppContainer.create())
@@ -224,6 +247,7 @@ lib/
 │   └── credentials/          # Phase 2A: authentication data model
 │       ├── auth_type.dart    # PIN / pattern / biometric
 │       ├── credential_hash.dart  # shared hash container (PinHash alias)
+│       ├── credential_hash_policy.dart # 2D: storage security policy
 │       ├── pbkdf2.dart       # shared PBKDF2-HMAC-SHA256 core
 │       ├── pattern_codec.dart    # 3x3 grid model + direction canonicalization
 │       ├── pattern_policy.dart   # pattern validation rules
@@ -233,7 +257,9 @@ lib/
 │       ├── credential_state.dart # enrolled/primary/attempts/lockout snapshot
 │       ├── credential_state_machine.dart # pure attempt & cooldown logic
 │       ├── credential_manager.dart# lifecycle contract
-│       └── impl/             # DefaultCredentialManager (persistent counters)
+│       ├── pin_storage.dart      # 2D: secure PIN storage boundary
+│       └── impl/             # DefaultCredentialManager (persistent counters),
+│                             # DefaultPinCredentialStore (hashes only)
 ├── protection/               # lock enforcement contracts
 │   ├── lock_engine.dart      # LockEngine interface (overlay/accessibility/admin)
 │   ├── access_controller.dart# AccessDecision: allow / challenge / deny
@@ -255,10 +281,13 @@ lib/
     └── time_utils.dart       # minutes-of-day, overnight windows, formatting
 ```
 
-**Tests** (run with `flutter test`): PIN setup flow (4-digit happy path,
-6-digit happy path, mismatch state incl. re-confirm / repeated mismatch /
-start-over and no-partial-enrollment guarantees, backspace/long-press
-clear, initialLength, length change), PIN pad + PIN dots component suites,
+**Tests** (run with `flutter test`): PIN storage suites (hash policy
+violations, save/load round-trip, raw-PIN-never-in-storage byte inspection,
+fail-closed corrupted records, manager integration), PIN setup flow
+(4-digit happy path, 6-digit happy path, mismatch state incl. re-confirm /
+repeated mismatch / start-over and no-partial-enrollment guarantees,
+backspace/long-press clear, initialLength, length change), PIN pad + PIN
+dots component suites,
 credential suites (auth types, pattern codec & policy, pattern hasher,
 biometric options, credential state, state machine, credential manager
 incl. lockout persistence), Phase 1G regression suite (launch, navigation,
@@ -283,7 +312,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.1.0 / 9.3.1 / 2.4.0 |
 | Java | 17 |
-| versionName / versionCode | `0.10.0` / `11` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.11.0` / `12` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM) |
 
 ## Prerequisites (on your machine)

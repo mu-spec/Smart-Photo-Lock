@@ -17,7 +17,9 @@ import '../data/storage/preferences_store.dart';
 import '../security/encryption/settings_cipher.dart';
 import '../security/encryption/settings_cipher_impl.dart';
 import '../security/credentials/credential_manager.dart';
+import '../security/credentials/credential_hash_policy.dart';
 import '../security/credentials/impl/default_credential_manager.dart';
+import '../security/credentials/impl/default_pin_credential_store.dart';
 import '../security/storage/impl/flutter_secure_secret_store.dart';
 import '../security/storage/impl/in_memory_secret_store.dart';
 import '../security/storage/secret_store.dart';
@@ -47,7 +49,15 @@ class AppContainer {
       cipher: settingsCipher,
     );
     lockSettings = LockSettingsRepositoryImpl(_database);
-    auth = DefaultCredentialManager(settings: securitySettings);
+    auth = DefaultCredentialManager(
+      settings: securitySettings,
+      // Production PIN storage: strict hash policy (PBKDF2 work factor,
+      // key/salt/digest sizes) + fail-closed reads.
+      pinStore: DefaultPinCredentialStore(
+        settings: securitySettings,
+        policy: CredentialHashPolicy.strict,
+      ),
+    );
   }
 
   /// Production container: real on-device persistence with
