@@ -81,6 +81,11 @@ class _SecurityScreenState extends State<SecurityScreen> {
   Future<void> _onPinTap() async {
     if (!_hasPin) {
       await Navigator.of(context).pushNamed(RouteNames.pinSetup);
+      // Refresh after the setup fall-through so the row flips to
+      // "Change PIN" the moment a PIN now exists.
+      if (mounted) {
+        await _loadStatus();
+      }
       return;
     }
     final bool? changed =
@@ -102,6 +107,11 @@ class _SecurityScreenState extends State<SecurityScreen> {
   Future<void> _onPatternTap() async {
     if (!_hasPattern) {
       await Navigator.of(context).pushNamed(RouteNames.patternSetup);
+      // Refresh after the setup fall-through so the row flips to
+      // "Change pattern" the moment a pattern now exists.
+      if (mounted) {
+        await _loadStatus();
+      }
       return;
     }
     final bool? changed =
