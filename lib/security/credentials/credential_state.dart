@@ -24,6 +24,7 @@ class CredentialState {
     this.pinLength,
     this.lockoutStreak = 0,
     this.randomizedKeypadEnabled = false,
+    this.patternVisibilityEnabled = true,
   });
 
   /// Every enrolled credential type.
@@ -50,6 +51,10 @@ class CredentialState {
   /// Randomizes the unlock keypad (Phase 2G). Default false: the standard
   /// 1-9 layout remains the accessible default.
   final bool randomizedKeypadEnabled;
+
+  /// Shows the pattern drawing trail while unlocking (Phase 2K). Default
+  /// true (visible).
+  final bool patternVisibilityEnabled;
 
   /// Status resolved against [now].
   CredentialStatus statusAt(DateTime now) {
@@ -78,6 +83,7 @@ class CredentialState {
     int? pinLength,
     int? lockoutStreak,
     bool? randomizedKeypadEnabled,
+    bool? patternVisibilityEnabled,
   }) {
     return CredentialState(
       enrolled: enrolled ?? this.enrolled,
@@ -89,6 +95,8 @@ class CredentialState {
       lockoutStreak: lockoutStreak ?? this.lockoutStreak,
       randomizedKeypadEnabled:
           randomizedKeypadEnabled ?? this.randomizedKeypadEnabled,
+      patternVisibilityEnabled:
+          patternVisibilityEnabled ?? this.patternVisibilityEnabled,
     );
   }
 
@@ -100,6 +108,7 @@ class CredentialState {
         'pinLength': pinLength,
         'lockoutStreak': lockoutStreak,
         'randomizedKeypadEnabled': randomizedKeypadEnabled,
+        'patternVisibilityEnabled': patternVisibilityEnabled,
       };
 
   factory CredentialState.fromJson(Map<String, dynamic> json) =>
@@ -120,6 +129,8 @@ class CredentialState {
         lockoutStreak: json['lockoutStreak'] as int? ?? 0,
         randomizedKeypadEnabled:
             json['randomizedKeypadEnabled'] as bool? ?? false,
+        patternVisibilityEnabled:
+            json['patternVisibilityEnabled'] as bool? ?? true,
       );
 
   @override

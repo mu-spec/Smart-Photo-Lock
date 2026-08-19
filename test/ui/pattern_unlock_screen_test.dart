@@ -306,6 +306,45 @@ void main() {
     await tester.pump();
     expect(find.text(PatternUnlockScreen.readyHint), findsOneWidget);
   });
+
+  // -------------------------------------------------------------------
+  // Phase 2K — pattern trail visibility
+  // -------------------------------------------------------------------
+  PatternGridPainter gridPainter(WidgetTester tester) =>
+      tester
+          .widget<CustomPaint>(
+            find
+                .descendant(
+                  of: find.byType(DsPatternGrid),
+                  matching: find.byType(CustomPaint),
+                )
+                .first,
+          )
+          .painter! as PatternGridPainter;
+
+  testWidgets('pattern trail is visible by default', (WidgetTester tester) async {
+    await pumpHosted(tester);
+    await enrollPattern(tester, const <int>[1, 2, 3, 6]);
+    await openUnlock(tester);
+
+    expect(gridPainter(tester).showFeedback, isTrue);
+    expect(find.text('Pattern trail hidden for privacy'), findsNothing);
+  });
+
+  testWidgets('disabling pattern visibility hides the trail on the unlock screen',
+      (WidgetTester tester) async {
+    await pumpHosted(tester);
+    await enrollPattern(tester, const <int>[1, 2, 3, 6]);
+    await _ManagerResults.manager.setPatternVisibilityEnabled(false);
+    await openUnlock(tester);
+
+    expect(gridPainter(tester).showFeedback, isFalse);
+    expect(find.text('Pattern trail hidden for privacy'), findsOneWidget);
+
+    // The setting persists.
+    final state = (await _ManagerResults.manager.status()).valueOrNull!;
+    expect(state.patternVisibilityEnabled, isFalse);
+  });
 }
 
 /// Test-only holder so helper functions can reach the manager and results.

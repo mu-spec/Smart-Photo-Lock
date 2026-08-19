@@ -18,10 +18,17 @@ enum PatternSetupStep { enter, confirm, mismatch, success }
 /// Start over choices — mirroring the PIN flow (2C) — and nothing is saved
 /// until a confirmed match. Minimum 4 dots, enforced inline.
 class PatternSetupScreen extends StatefulWidget {
-  const PatternSetupScreen({super.key, this.credentialManager});
+  const PatternSetupScreen({
+    super.key,
+    this.credentialManager,
+    this.title = 'Set up pattern',
+  });
 
   /// Overrides the manager resolved from [AppScope] (tests/previews).
   final CredentialManager? credentialManager;
+
+  /// App-bar title (the change-pattern flow passes a different one).
+  final String title;
 
   static const String enterTitle = 'Draw your new pattern';
   static const String confirmTitle = 'Confirm your pattern';
@@ -166,7 +173,7 @@ class _PatternSetupScreenState extends State<PatternSetupScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Set up pattern')),
+      appBar: AppBar(title: Text(widget.title)),
       body: SafeArea(
         child: AnimatedSwitcher(
           duration: const Duration(milliseconds: 200),

@@ -148,6 +148,17 @@ class DefaultCredentialManager implements CredentialManager {
     );
   }
 
+  @override
+  Future<Result<void>> setPatternVisibilityEnabled(bool enabled) async {
+    final Result<SecuritySettings> loaded = await _settings.getSettings();
+    return loaded.fold(
+      (SecuritySettings s) => _settings.saveSettings(
+        s.copyWith(patternVisibilityEnabled: enabled),
+      ),
+      Result.failure,
+    );
+  }
+
   // -- authentication -----------------------------------------------------
 
   @override
@@ -306,6 +317,7 @@ class DefaultCredentialManager implements CredentialManager {
       pinLength: s.pinLength,
       lockoutStreak: s.lockoutStreak,
       randomizedKeypadEnabled: s.randomizedKeypadEnabled,
+      patternVisibilityEnabled: s.patternVisibilityEnabled,
     );
   }
 

@@ -35,14 +35,18 @@ class PinSetupScreen extends StatefulWidget {
     super.key,
     this.credentialManager,
     this.initialLength,
+    this.title = 'Set up PIN',
   }) : assert(initialLength == null || initialLength == 4 || initialLength == 6);
 
   /// Overrides the manager resolved from [AppScope] (tests/previews).
   final CredentialManager? credentialManager;
 
   /// Skips the length step when a length is already known
-  /// (used by the future change-PIN flow).
+  /// (used by the change-PIN flow, Phase 2K).
   final int? initialLength;
+
+  /// App-bar title (the change-PIN flow passes a different one).
+  final String title;
 
   static const String chooseLengthTitle = 'Choose PIN length';
   static const String enterPinTitle = 'Enter your new PIN';
@@ -235,7 +239,7 @@ class _PinSetupScreenState extends State<PinSetupScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Set up PIN')),
+      appBar: AppBar(title: Text(widget.title)),
       body: SafeArea(
         child: AnimatedSwitcher(
           duration: const Duration(milliseconds: 200),

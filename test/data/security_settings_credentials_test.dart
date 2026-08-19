@@ -81,6 +81,20 @@ void main() {
     expect(legacy.randomizedKeypadEnabled, isFalse);
   });
 
+  test('patternVisibilityEnabled defaults true and round-trips', () {
+    expect(SecuritySettings.defaults.patternVisibilityEnabled, isTrue);
+    final SecuritySettings hidden =
+        SecuritySettings.defaults.copyWith(patternVisibilityEnabled: false);
+    expect(
+      SecuritySettings.fromJson(hidden.toJson()).patternVisibilityEnabled,
+      isFalse,
+    );
+    // Legacy JSON (missing key) defaults to visible.
+    final SecuritySettings legacy =
+        SecuritySettings.fromJson(<String, dynamic>{'pinLength': 4});
+    expect(legacy.patternVisibilityEnabled, isTrue);
+  });
+
   test('legacy JSON (Phase 1) still parses with the new defaults', () {
     final SecuritySettings restored = SecuritySettings.fromJson(
       <String, dynamic>{

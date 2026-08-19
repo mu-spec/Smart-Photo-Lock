@@ -7,14 +7,17 @@ import '../../../security/credentials/auth_type.dart';
 import '../../../security/credentials/biometric_options.dart';
 import '../../../utilities/result.dart';
 
-/// Security tab — real UI built on the design system's security status
-/// components.
+/// Security tab — the authentication settings surface (Phase 2K).
 ///
-/// The "Set up PIN" banner opens the Phase 2B setup flow; tapping the
-/// "Unlock PIN" row opens the Phase 2E unlock screen (with a hint when no
-/// PIN is enrolled yet). The "Randomized keypad" toggle (Phase 2G) is the
-/// first live security option — it persists through [CredentialManager].
-/// The other control rows stay static until their feature phases.
+/// Lets the user:
+///  * set up or **change the PIN** (verify current → set new),
+///  * set up or **change the pattern**,
+///  * enable/disable **biometric unlock** (2J, real capability checks),
+///  * configure the **randomized keypad** (2G),
+///  * configure **pattern visibility** (2K).
+///
+/// The remaining rows (intruder selfie, ...) stay static until their
+/// feature phases.
 class SecurityScreen extends StatefulWidget {
   const SecurityScreen({super.key});
 
@@ -25,15 +28,28 @@ class SecurityScreen extends StatefulWidget {
   static const String randomizedSubtitle =
       'Shuffle PIN digits on the unlock screen';
 
+  static const String patternVisibilityTitle = 'Visible pattern';
+  static const String patternVisibilitySubtitle =
+      'Show the drawing trail while unlocking';
+
+  static const String setPinTitle = 'Set up PIN';
+  static const String changePinTitle = 'Change PIN';
+  static const String setPatternTitle = 'Set up pattern';
+  static const String changePatternTitle = 'Change pattern';
+  static const String pinChangedMessage = 'PIN changed ✓';
+  static const String patternChangedMessage = 'Pattern changed ✓';
+  static const String couldNotSaveMessage = 'Could not save the setting.';
+
   @override
   State<SecurityScreen> createState() => _SecurityScreenState();
 }
 
 class _SecurityScreenState extends State<SecurityScreen> {
-  /// Cached value of the randomized-keypad setting (null while loading).
+  /// Cached settings (null while loading).
   bool? _randomized;
-
-  /// Whether biometric unlock is currently enabled.
+  bool? _patternVisible;
+  bool _hasPin = false;
+  bool _hasPattern = false;
   bool _biometricEnrolled = false;
 
   @override
@@ -53,9 +69,46 @@ class _SecurityScreenState extends State<SecurityScreen> {
     }
     setState(() {
       _randomized = state.randomizedKeypadEnabled;
+      _patternVisible = state.patternVisibilityEnabled;
+      _hasPin = state.hasEnrolled(AuthType.pin);
+      _hasPattern = state.hasEnrolled(AuthType.pattern);
       _biometricEnrolled = state.hasEnrolled(AuthType.biometric);
     });
   }
+
+  // -- PIN / pattern lifecycle ----------------------------------------------
+
+  Future<void> _onPinTap() async {
+    if (!_hasPin) {
+      await Navigator.of(context).pushNamed(RouteNames.pinSetup);
+      return;
+    }
+    final bool? changed =
+        await Navigator.of(context).pushNamed<bool>(RouteNames.pinChange);
+    if (!mounted || changed != true) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text(SecurityScreen.pinChangedMessage)),
+    );
+  }
+
+  Future<void> _onPatternTap() async {
+    if (!_hasPattern) {
+      await Navigator.of(context).pushNamed(RouteNames.patternSetup);
+      return;
+    }
+    final bool? changed =
+        await Navigator.of(context).pushNamed<bool>(RouteNames.patternChange);
+    if (!mounted || changed != true) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text(SecurityScreen.patternChangedMessage)),
+    );
+  }
+
+  // -- toggles --------------------------------------------------------------
 
   Future<void> _setRandomized(bool value) async {
     setState(() => _randomized = value); // optimistic
@@ -71,13 +124,32 @@ class _SecurityScreenState extends State<SecurityScreen> {
     if (result.isFailure) {
       setState(() => _randomized = !value); // revert
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not save the setting.')),
+        const SnackBar(content: Text(SecurityScreen.couldNotSaveMessage)),
       );
     }
   }
 
-  /// Phase 2J: enables (or disables) biometric unlock, with real
-  /// device-capability checks through the platform bridge.
+  Future<void> _setPatternVisible(bool value) async {
+    setState(() => _patternVisible = value); // optimistic
+    final auth = AppScope.read(context)?.auth;
+    if (auth == null) {
+      setState(() => _patternVisible = !value);
+      return;
+    }
+    final result = await auth.setPatternVisibilityEnabled(value);
+    if (!mounted) {
+      return;
+    }
+    if (result.isFailure) {
+      setState(() => _patternVisible = !value); // revert
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text(SecurityScreen.couldNotSaveMessage)),
+      );
+    }
+  }
+
+  // -- biometric (Phase 2J) -------------------------------------------------
+
   Future<void> _onBiometricTap() async {
     final container = AppScope.read(context);
     if (container == null) {
@@ -123,7 +195,6 @@ class _SecurityScreenState extends State<SecurityScreen> {
       return;
     }
 
-    // Tailor the configuration to what this device actually offers.
     final Set<BiometricKind> kinds =
         (await service.availableKinds()).valueOrNull ??
             const <BiometricKind>{};
@@ -145,58 +216,6 @@ class _SecurityScreenState extends State<SecurityScreen> {
     );
   }
 
-  /// Handles the "Pattern unlock" row: opens pattern setup when nothing is
-  /// enrolled, otherwise opens the unlock challenge (Phase 2I).
-  Future<void> _onPatternTap() async {
-    final auth = AppScope.read(context)?.auth;
-    if (auth == null) {
-      return;
-    }
-    final state = (await auth.status()).valueOrNull;
-    if (!mounted) {
-      return;
-    }
-    if (state == null || !state.hasEnrolled(AuthType.pattern)) {
-      await Navigator.of(context).pushNamed(RouteNames.patternSetup);
-      return;
-    }
-    final bool? unlocked =
-        await Navigator.of(context).pushNamed<bool>(RouteNames.patternUnlock);
-    if (!mounted || unlocked != true) {
-      return;
-    }
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Authenticated ✓')),
-    );
-  }
-
-  /// Handles the "Unlock PIN" row: routes to setup when nothing is
-  /// enrolled, otherwise opens the unlock challenge.
-  Future<void> _onUnlockPinTap() async {
-    final auth = AppScope.read(context)?.auth;
-    if (auth == null) {
-      return;
-    }
-    final state = (await auth.status()).valueOrNull;
-    if (!mounted) {
-      return;
-    }
-    if (state == null || !state.hasEnrolled(AuthType.pin)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Set up a PIN first.')),
-      );
-      return;
-    }
-    final bool? unlocked =
-        await Navigator.of(context).pushNamed<bool>(RouteNames.pinUnlock);
-    if (!mounted || unlocked != true) {
-      return;
-    }
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Authenticated ✓')),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return SafeArea(
@@ -214,7 +233,7 @@ class _SecurityScreenState extends State<SecurityScreen> {
                 Navigator.of(context).pushNamed(RouteNames.pinSetup),
           ),
           const SizedBox(height: DsSpacing.xl),
-          const DsSectionTitle('Protection controls'),
+          const DsSectionTitle('Authentication'),
           const SizedBox(height: DsSpacing.md),
           DsCard(
             padding: const EdgeInsets.symmetric(vertical: DsSpacing.xs),
@@ -222,29 +241,37 @@ class _SecurityScreenState extends State<SecurityScreen> {
               children: <Widget>[
                 SecurityStatusItem(
                   icon: Icons.lock_outline,
-                  title: 'Unlock PIN',
+                  title: _hasPin
+                      ? SecurityScreen.changePinTitle
+                      : SecurityScreen.setPinTitle,
                   subtitle: 'Required to open protected apps',
-                  level: SecurityLevel.notSet,
-                  onTap: _onUnlockPinTap,
+                  level: _hasPin
+                      ? SecurityLevel.secured
+                      : SecurityLevel.notSet,
+                  statusLabel: _hasPin ? 'Set' : null,
+                  onTap: _onPinTap,
                 ),
                 const Divider(),
                 SecurityStatusItem(
                   icon: Icons.gesture,
-                  title: 'Pattern unlock',
+                  title: _hasPattern
+                      ? SecurityScreen.changePatternTitle
+                      : SecurityScreen.setPatternTitle,
                   subtitle: 'Alternative to PIN — draw on a 3x3 grid',
-                  level: SecurityLevel.notSet,
+                  level: _hasPattern
+                      ? SecurityLevel.secured
+                      : SecurityLevel.notSet,
+                  statusLabel: _hasPattern ? 'Set' : null,
                   onTap: _onPatternTap,
                 ),
                 const Divider(),
-                SecurityStatusItem(
-                  icon: Icons.fingerprint,
-                  title: 'Biometric unlock',
-                  subtitle: 'Fingerprint / face via the Android BiometricPrompt',
-                  level: _biometricEnrolled
-                      ? SecurityLevel.secured
-                      : SecurityLevel.notSet,
-                  statusLabel: _biometricEnrolled ? 'Enabled' : null,
-                  onTap: _onBiometricTap,
+                _SwitchRow(
+                  icon: Icons.visibility_outlined,
+                  title: SecurityScreen.patternVisibilityTitle,
+                  subtitle: SecurityScreen.patternVisibilitySubtitle,
+                  value: _patternVisible ?? true,
+                  onChanged:
+                      _patternVisible == null ? null : _setPatternVisible,
                 ),
                 const Divider(),
                 _SwitchRow(
@@ -255,28 +282,49 @@ class _SecurityScreenState extends State<SecurityScreen> {
                   onChanged: _randomized == null ? null : _setRandomized,
                 ),
                 const Divider(),
-                const SecurityStatusItem(
+                SecurityStatusItem(
+                  icon: Icons.fingerprint,
+                  title: 'Biometric unlock',
+                  subtitle:
+                      'Fingerprint / face via the Android BiometricPrompt',
+                  level: _biometricEnrolled
+                      ? SecurityLevel.secured
+                      : SecurityLevel.notSet,
+                  statusLabel: _biometricEnrolled ? 'Enabled' : null,
+                  onTap: _onBiometricTap,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: DsSpacing.xl),
+          const DsSectionTitle('Advanced protection'),
+          const SizedBox(height: DsSpacing.md),
+          const DsCard(
+            padding: EdgeInsets.symmetric(vertical: DsSpacing.xs),
+            child: Column(
+              children: <Widget>[
+                SecurityStatusItem(
                   icon: Icons.photo_camera_outlined,
                   title: 'Intruder selfie',
                   subtitle: 'Photograph anyone who enters a wrong PIN',
                   level: SecurityLevel.notSet,
                 ),
-                const Divider(),
-                const SecurityStatusItem(
+                Divider(),
+                SecurityStatusItem(
                   icon: Icons.notifications_active_outlined,
                   title: 'Break-in alerts',
                   subtitle: 'Get notified about blocked attempts',
                   level: SecurityLevel.notSet,
                 ),
-                const Divider(),
-                const SecurityStatusItem(
+                Divider(),
+                SecurityStatusItem(
                   icon: Icons.visibility_off_outlined,
                   title: 'Stealth mode',
                   subtitle: 'Hide the app lock from the launcher',
                   level: SecurityLevel.notSet,
                 ),
-                const Divider(),
-                const SecurityStatusItem(
+                Divider(),
+                SecurityStatusItem(
                   icon: Icons.block_outlined,
                   title: 'Uninstall protection',
                   subtitle: 'Stop the app being removed while locks are active',

@@ -89,6 +89,11 @@ class SecuritySettings {
   /// so the standard 1-9 layout stays the accessible baseline.
   final bool randomizedKeypadEnabled;
 
+  /// Shows the pattern drawing trail while unlocking (Phase 2K). Default
+  /// true (visible); turning it off hides the trail + node highlights for
+  /// privacy (anti-shoulder-surfing).
+  final bool patternVisibilityEnabled;
+
   /// True once a PIN credential exists (the original primary secret).
   bool get hasPin => pinHash != null;
 
@@ -147,6 +152,8 @@ class SecuritySettings {
       lockoutStreak: lockoutStreak ?? this.lockoutStreak,
       randomizedKeypadEnabled:
           randomizedKeypadEnabled ?? this.randomizedKeypadEnabled,
+      patternVisibilityEnabled:
+          patternVisibilityEnabled ?? this.patternVisibilityEnabled,
     );
   }
 
@@ -167,6 +174,7 @@ class SecuritySettings {
         'pinLength': pinLength,
         'lockoutStreak': lockoutStreak,
         'randomizedKeypadEnabled': randomizedKeypadEnabled,
+        'patternVisibilityEnabled': patternVisibilityEnabled,
       };
 
   factory SecuritySettings.fromJson(Map<String, dynamic> json) =>
@@ -213,6 +221,8 @@ class SecuritySettings {
         lockoutStreak: json['lockoutStreak'] as int? ?? 0,
         randomizedKeypadEnabled:
             json['randomizedKeypadEnabled'] as bool? ?? false,
+        patternVisibilityEnabled:
+            json['patternVisibilityEnabled'] as bool? ?? true,
       );
 
   @override

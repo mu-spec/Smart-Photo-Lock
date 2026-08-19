@@ -386,6 +386,31 @@ void main() {
       isFalse,
     );
   });
+
+  // -------------------------------------------------------------------
+  // Phase 2K — pattern visibility setting
+  // -------------------------------------------------------------------
+  test('setPatternVisibilityEnabled persists through status and settings',
+      () async {
+    expect(
+      (await manager.status()).valueOrNull!.patternVisibilityEnabled,
+      isTrue,
+    );
+
+    await manager.setPatternVisibilityEnabled(false);
+    expect(
+      (await manager.status()).valueOrNull!.patternVisibilityEnabled,
+      isFalse,
+    );
+    final settings = (await settings.getSettings()).valueOrNull!;
+    expect(settings.patternVisibilityEnabled, isFalse);
+
+    await manager.setPatternVisibilityEnabled(true);
+    expect(
+      (await manager.status()).valueOrNull!.patternVisibilityEnabled,
+      isTrue,
+    );
+  });
 }
 
 /// Test double for the platform biometric bridge.

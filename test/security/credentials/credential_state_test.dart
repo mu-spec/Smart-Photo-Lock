@@ -99,6 +99,29 @@ void main() {
     expect(enabled.copyWith(failedAttempts: 2).randomizedKeypadEnabled, isTrue);
   });
 
+  test('patternVisibilityEnabled defaults true, round-trips and copies',
+      () {
+    const CredentialState fresh =
+        CredentialState(enrolled: <AuthType>{AuthType.pattern});
+    expect(fresh.patternVisibilityEnabled, isTrue);
+
+    final CredentialState hidden =
+        fresh.copyWith(patternVisibilityEnabled: false);
+    expect(hidden.patternVisibilityEnabled, isFalse);
+    expect(
+      CredentialState.fromJson(hidden.toJson()).patternVisibilityEnabled,
+      isFalse,
+    );
+    // copyWith of unrelated fields preserves the flag.
+    expect(hidden.copyWith(failedAttempts: 2).patternVisibilityEnabled,
+        isFalse);
+    // Legacy JSON (missing key) defaults to visible.
+    final CredentialState legacy = CredentialState.fromJson(
+      <String, dynamic>{'enrolled': <String>['pattern']},
+    );
+    expect(legacy.patternVisibilityEnabled, isTrue);
+  });
+
   test('copyWith preserves pinLength when updating counters', () {
     final CredentialState state = const CredentialState(
       enrolled: <AuthType>{AuthType.pin},

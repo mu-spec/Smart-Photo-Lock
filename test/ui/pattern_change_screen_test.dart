@@ -1,0 +1,162 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:smart_app_lock/app/app_container.dart';
+import 'package:smart_app_lock/app/theme/app_theme.dart';
+import 'package:smart_app_lock/design_system/design_system.dart';
+import 'package:smart_app_lock/security/credentials/auth_result.dart';
+import 'package:smart_app_lock/security/credentials/credential_state_machine.dart';
+import 'package:smart_app_lock/security/credentials/impl/default_credential_manager.dart';
+import 'package:smart_app_lock/security/credentials/pattern_hasher.dart';
+import 'package:smart_app_lock/security/pin_hasher.dart';
+import 'package:smart_app_lock/ui/screens/pattern/pattern_change_screen.dart';
+import 'package:smart_app_lock/ui/screens/pattern/pattern_setup_screen.dart';
+
+/// Phase 2K: change-pattern flow — verify the current pattern, then draw
+/// and confirm a new one.
+void main() {
+  late DefaultCredentialManager manager;
+  late List<Object?> results;
+
+  setUp(() {
+    manager = DefaultCredentialManager(
+      settings: AppContainer.inMemory().securitySettings,
+      pinHasher: Pbkdf2PinHasher(iterations: 200),
+      patternHasher: Pbkdf2PatternHasher(iterations: 200),
+      stateMachine: const CredentialStateMachine(
+        maxFailedAttempts: 3,
+        lockoutDuration: Duration(seconds: 30),
+      ),
+    );
+  });
+
+  Future<void> pumpHosted(WidgetTester tester) async {
+    results = <Object?>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.dark,
+        home: Builder(
+          builder: (BuildContext context) => Scaffold(
+            body: Center(
+              child: TextButton(
+                key: const Key('open_change'),
+                onPressed: () async {
+                  final Object? res = await Navigator.of(context)
+                      .push<Object?>(MaterialPageRoute<Object?>(
+                    builder: (_) =>
+                        PatternChangeScreen(credentialManager: manager),
+                  ));
+                  results.add(res);
+                },
+                child: const Text('open'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(const Key('open_change')));
+    await tester.pumpAndSettle();
+  }
+
+  Offset nodeCenter(int node) {
+    final int i = node - 1;
+    return Offset(28 + (i % 3) * 112, 28 + (i ~/ 3) * 112);
+  }
+
+  Future<void> drawPattern(WidgetTester tester, List<int> nodes) async {
+    final Offset origin = tester.getTopLeft(find.byType(DsPatternGrid));
+    final TestGesture gesture =
+        await tester.startGesture(origin + nodeCenter(nodes.first));
+    await tester.pump(const Duration(milliseconds: 20));
+    for (final int node in nodes.skip(1)) {
+      await gesture.moveTo(origin + nodeCenter(node));
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+    await gesture.up();
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.pump(const Duration(milliseconds: 300));
+  }
+
+  testWidgets('verifies the current pattern before allowing a change',
+      (WidgetTester tester) async {
+    await manager.enrollPattern(const <int>[1, 2, 3, 6]);
+    await pumpHosted(tester);
+
+    // Step 1: current-pattern verification.
+    expect(find.text(PatternChangeScreen.verifyTitle), findsOneWidget);
+
+    // Wrong pattern: stays on verify with an error.
+    await drawPattern(tester, const <int>[1, 2, 3, 5]);
+    expect(find.textContaining('Incorrect pattern'), findsOneWidget);
+    expect(find.text(PatternChangeScreen.verifyTitle), findsOneWidget);
+
+    // Correct pattern (drawn in reverse — direction-independent).
+    await drawPattern(tester, const <int>[6, 3, 2, 1]);
+    await tester.pumpAndSettle();
+    expect(find.text(PatternChangeScreen.setupTitle), findsOneWidget);
+  });
+
+  testWidgets('full change flow: old pattern stops working, new one works',
+      (WidgetTester tester) async {
+    await manager.enrollPattern(const <int>[1, 2, 3, 6]);
+    await pumpHosted(tester);
+
+    await drawPattern(tester, const <int>[1, 2, 3, 6]); // verify current
+    await tester.pumpAndSettle();
+
+    expect(find.text(PatternChangeScreen.setupTitle), findsOneWidget);
+    await drawPattern(tester, const <int>[1, 4, 7, 8]); // new pattern
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(find.text(PatternSetupScreen.confirmTitle), findsOneWidget);
+
+    await drawPattern(tester, const <int>[1, 4, 7, 8]); // confirm
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(find.text(PatternSetupScreen.successTitle), findsOneWidget);
+
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
+
+    // The change screen pops with true.
+    expect(find.byKey(const Key('open_change')), findsOneWidget);
+    expect(results.last, true);
+
+    // Old pattern rejected, new pattern accepted.
+    expect(
+      (await manager.authenticatePattern(const <int>[1, 2, 3, 6]))
+          .valueOrNull,
+      isA<AuthFailure>(),
+    );
+    expect(
+      (await manager.authenticatePattern(const <int>[1, 4, 7, 8]))
+          .valueOrNull,
+      isA<AuthSuccess>(),
+    );
+  });
+
+  testWidgets('cancelling the verification cancels the change',
+      (WidgetTester tester) async {
+    await manager.enrollPattern(const <int>[1, 2, 3, 6]);
+    await pumpHosted(tester);
+
+    expect(find.text(PatternChangeScreen.verifyTitle), findsOneWidget);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('open_change')), findsOneWidget);
+    expect(results.last, false);
+
+    // Pattern untouched.
+    expect(
+      (await manager.authenticatePattern(const <int>[1, 2, 3, 6]))
+          .valueOrNull,
+      isA<AuthSuccess>(),
+    );
+  });
+
+  testWidgets('falls through to initial setup when no pattern is enrolled',
+      (WidgetTester tester) async {
+    await pumpHosted(tester);
+    expect(find.text(PatternSetupScreen.enterTitle), findsOneWidget);
+  });
+}

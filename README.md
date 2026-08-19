@@ -32,6 +32,7 @@ setup screen. Locking is not implemented yet.
 | 2H | Pattern setup (creation + confirmation) | ✅ |
 | 2I | Pattern authentication (unlock with the saved pattern) | ✅ |
 | 2J | Biometric foundation (Android BiometricPrompt / BiometricManager) | ✅ |
+| 2K | Authentication settings (change PIN/pattern, biometric, keypad, visibility) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -310,6 +311,23 @@ via the `local_auth` plugin:
   guided messages when no primary credential exists / hardware is missing.
 - Manifest: `USE_BIOMETRIC` permission (required on API < 28).
 
+### Phase 2K ✅ — Authentication Settings
+
+The Security tab is a complete authentication settings surface:
+
+- **Change PIN** — `PinChangeScreen` verifies the current PIN (lockouts
+  enforced) before opening the new-PIN setup at the current length; pops
+  `true` only when saved; cancelling leaves the PIN untouched.
+- **Change pattern** — `PatternChangeScreen` verifies the current pattern
+  (direction-independent) before the new draw + confirm flow.
+- **Biometric unlock** — enable/disable with real capability checks (2J).
+- **Randomized keypad** — on/off (2G).
+- **Visible pattern** (new) — show/hide the drawing trail on the unlock
+  screen (`DsPatternGrid.showFeedback`); setup stays visible for
+  accessibility.
+- Rows adapt to enrollment: "Set up PIN" ↔ "Change PIN", "Set up pattern"
+  ↔ "Change pattern".
+
 ```
 lib/
 ├── main.dart                 # entry point (boots AppContainer.create())
@@ -340,8 +358,8 @@ lib/
 │   │   ├── smart/            # Smart tab (placeholder)
 │   │   ├── security/         # Security tab (status banner + control list)
 │   │   ├── settings/         # Settings tab (placeholder)
-│   │   ├── pin/              # PIN setup (2B) + unlock (2E) flows
-│   │   └── pattern/          # Pattern setup (2H) + unlock (2I) flows
+│   │   ├── pin/              # PIN setup (2B) + unlock (2E) + change (2K)
+│   │   └── pattern/          # Pattern setup (2H) + unlock (2I) + change (2K)
 │   └── widgets/              # PlaceholderScreen, EntryShakeMixin (shared
 │                             # PIN-entry shake feedback)
 ├── data/                     # persistence (Phase 1E)
@@ -396,25 +414,30 @@ lib/
     └── time_utils.dart       # minutes-of-day, overnight windows, formatting
 ```
 
-**Tests** (run with `flutter test`): biometric foundation suites (platform
-service fails closed without plugins, manager gates incl. opt-in / primary
-credential / unsupported hardware / lockout-blocks-biometric / failure
-counting / success counter reset / disable-via-null, PIN unlock fingerprint
-slot appearance + success pop + failure error + unconfigured hint, Security
-tab biometric row enable/disable/guided messages), pattern unlock suites
-(correct pattern pops true, reversed-direction unlock, wrong pattern error
-+ cleared grid, too-short draws don't count, lockout view + disabled grid,
-pre-existing lockout on open, countdown expiry via injected clock,
-escalating second lockout, no-credential recovery, clear button), pattern
-setup suites (draw → confirm → enroll with direction independence, mismatch
-state + nothing-saved, re-confirm, start-over, too-short inline error,
-clear, enrollment-failure recovery, route reachability), pattern grid
-component suites (hit-testing, stroke sequences, no-repeat, disabled, error
-painter state, geometry), Security tab pattern-row navigation (setup +
-unlock), randomized keypad suites (pad digit order rendering, deterministic
-seeded shuffle, opt-in unlock behavior with reshuffle-on-failure, Security
-tab toggle persistence + disabled-without-container), PIN unlock suites
-(configured-length dots 4/6, correct PIN pops
+**Tests** (run with `flutter test`): authentication settings suites
+(change-PIN flow incl. verify-first, wrong-PIN stay, full change with old
+PIN rejected / new accepted, cancel, no-credential fallthrough;
+change-pattern flow incl. reversed verification, full change, cancel,
+fallthrough; Security tab dynamic rows, visible-pattern toggle persistence
++ inert-without-container, randomized/biometric rows), biometric
+foundation suites (platform service fails closed without plugins, manager
+gates incl. opt-in / primary credential / unsupported hardware /
+lockout-blocks-biometric / failure counting / success counter reset /
+disable-via-null, PIN unlock fingerprint slot appearance + success pop +
+failure error + unconfigured hint), pattern unlock suites (correct pattern
+pops true, reversed-direction unlock, wrong pattern error + cleared grid,
+too-short draws don't count, lockout view + disabled grid, pre-existing
+lockout on open, countdown expiry via injected clock, escalating second
+lockout, no-credential recovery, clear button, trail visibility default +
+hidden + hint), pattern setup suites (draw → confirm → enroll with
+direction independence, mismatch state + nothing-saved, re-confirm,
+start-over, too-short inline error, clear, enrollment-failure recovery,
+route reachability), pattern grid component suites (hit-testing, stroke
+sequences, no-repeat, disabled, error painter state, geometry, showFeedback
+default + hidden), randomized keypad suites (pad digit order rendering,
+deterministic seeded shuffle, opt-in unlock behavior with
+reshuffle-on-failure), PIN unlock suites (configured-length dots 4/6,
+correct PIN pops
 true, wrong PIN error + remaining attempts, lockout view + disabled pad,
 pre-existing lockout on open, countdown expiry via injected clock,
 no-credential recovery, escalating second lockout with 60s cooldown +
@@ -451,7 +474,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.1.0 / 9.3.1 / 2.4.0 |
 | Java | 17 |
-| versionName / versionCode | `0.17.0` / `18` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.18.0` / `19` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM), `local_auth` (biometrics) |
 
 ## Prerequisites (on your machine)

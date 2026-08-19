@@ -134,6 +134,43 @@ void main() {
     expect(painter.color, DsPalette.dark.danger);
   });
 
+  testWidgets('showFeedback=false hides the drawing trail (Phase 2K)',
+      (WidgetTester tester) async {
+    await tester.pumpWidget(
+      wrap(
+        grid: DsPatternGrid(
+          nodes: const <int>[1, 2, 3],
+          showFeedback: false,
+        ),
+      ),
+    );
+    final CustomPaint paint = tester.widget<CustomPaint>(
+      find.descendant(
+        of: find.byType(DsPatternGrid),
+        matching: find.byType(CustomPaint),
+      ),
+    );
+    final PatternGridPainter painter =
+        paint.painter! as PatternGridPainter;
+    expect(painter.showFeedback, isFalse);
+  });
+
+  testWidgets('showFeedback defaults to true (visible)',
+      (WidgetTester tester) async {
+    await tester.pumpWidget(
+      wrap(grid: DsPatternGrid(nodes: const <int>[1, 2, 3])),
+    );
+    final CustomPaint paint = tester.widget<CustomPaint>(
+      find.descendant(
+        of: find.byType(DsPatternGrid),
+        matching: find.byType(CustomPaint),
+      ),
+    );
+    final PatternGridPainter painter =
+        paint.painter! as PatternGridPainter;
+    expect(painter.showFeedback, isTrue);
+  });
+
   test('nodeCenter geometry matches the 10% padding layout', () {
     const Size gridSize = Size(280, 280);
     expect(DsPatternGrid.nodeCenter(1, gridSize), const Offset(28, 28));

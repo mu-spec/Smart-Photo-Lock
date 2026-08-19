@@ -20,6 +20,7 @@ class DsPatternGrid extends StatelessWidget {
     this.enabled = true,
     this.error = false,
     this.nodeRadius = 17,
+    this.showFeedback = true,
   });
 
   /// Current selected node sequence (values 1-9).
@@ -39,6 +40,11 @@ class DsPatternGrid extends StatelessWidget {
 
   /// Visual radius of a single node.
   final double nodeRadius;
+
+  /// Draws the connecting trail and fills selected nodes (Phase 2K).
+  /// When false, only the node rings are shown — the drawing itself stays
+  /// invisible (anti-shoulder-surfing), while gestures work identically.
+  final bool showFeedback;
 
   /// Grid geometry: nodes sit at 10% padding with two equal gaps.
   static Offset nodeCenter(int node, Size size) {
@@ -88,6 +94,7 @@ class DsPatternGrid extends StatelessWidget {
           nodes: nodes,
           color: color,
           nodeRadius: nodeRadius,
+          showFeedback: showFeedback,
         ),
       ),
     );
@@ -102,6 +109,7 @@ class PatternGridPainter extends CustomPainter {
     required this.color,
     required this.nodeRadius,
     this.lineWidth = 3,
+    this.showFeedback = true,
   });
 
   final List<int> nodes;
@@ -109,10 +117,14 @@ class PatternGridPainter extends CustomPainter {
   final double nodeRadius;
   final double lineWidth;
 
+  /// See [DsPatternGrid.showFeedback].
+  final bool showFeedback;
+
   @override
   void paint(Canvas canvas, Size size) {
-    // Connecting path between consecutive selected nodes.
-    if (nodes.length >= 2) {
+    // Connecting path between consecutive selected nodes (hidden when
+    // feedback is disabled).
+    if (showFeedback && nodes.length >= 2) {
       final Paint line = Paint()
         ..color = color.withValues(alpha: 0.85)
         ..strokeWidth = lineWidth
@@ -143,7 +155,7 @@ class PatternGridPainter extends CustomPainter {
       final Offset c = DsPatternGrid.nodeCenter(node, size);
       canvas.drawCircle(c, nodeRadius, halo);
       canvas.drawCircle(c, nodeRadius, ring);
-      if (nodes.contains(node)) {
+      if (showFeedback && nodes.contains(node)) {
         canvas.drawCircle(c, nodeRadius * 0.45, core);
       }
     }
@@ -154,5 +166,6 @@ class PatternGridPainter extends CustomPainter {
       !listEquals(oldDelegate.nodes, nodes) ||
       oldDelegate.color != color ||
       oldDelegate.nodeRadius != nodeRadius ||
-      oldDelegate.lineWidth != lineWidth;
+      oldDelegate.lineWidth != lineWidth ||
+      oldDelegate.showFeedback != showFeedback;
 }

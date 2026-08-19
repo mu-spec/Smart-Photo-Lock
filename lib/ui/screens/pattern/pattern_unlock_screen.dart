@@ -79,6 +79,9 @@ class _PatternUnlockScreenState extends State<PatternUnlockScreen>
   int _lockoutStreak = 0;
   Timer? _timer;
 
+  // Phase 2K — pattern trail visibility.
+  bool _patternVisible = true;
+
   CredentialManager get _manager =>
       widget.credentialManager ?? AppScope.read(context)!.auth;
 
@@ -109,6 +112,7 @@ class _PatternUnlockScreenState extends State<PatternUnlockScreen>
       setState(() => _view = _UnlockView.noCredential);
       return;
     }
+    _patternVisible = state.patternVisibilityEnabled;
     final DateTime? lockout = state.lockedOutUntil;
     if (lockout != null && _now().isBefore(lockout)) {
       _startLockout(lockout, streak: state.lockoutStreak);
@@ -294,10 +298,22 @@ class _PatternUnlockScreenState extends State<PatternUnlockScreen>
                 onNodeAdded: _onNodeAdded,
                 onDragEnd: _onDragEnd,
                 enabled: !_verifying,
+                showFeedback: _patternVisible,
               ),
             ),
           ),
         ),
+        if (!_patternVisible) ...<Widget>[
+          const SizedBox(height: DsSpacing.sm),
+          Center(
+            child: Text(
+              'Pattern trail hidden for privacy',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: palette.textSecondary,
+              ),
+            ),
+          ),
+        ],
         const SizedBox(height: DsSpacing.lg),
         Center(
           child: DsButton(

@@ -415,6 +415,25 @@ BiometricService (contract, 2A)
 | Security tab | live "Biometric unlock" row — enables (with real device-capability checks, tailoring allowed kinds) or disables; guides when no primary credential exists or the device is unsupported |
 | Manifest | `USE_BIOMETRIC` permission (required for API < 28) |
 
+## 2K. Authentication settings
+
+The Security tab is now a complete authentication settings surface:
+
+| Setting | Behaviour |
+| ------- | --------- |
+| **Change PIN** | `PinChangeScreen` flow controller: verify current PIN (reuses `PinUnlockScreen`) → set new PIN (reuses `PinSetupScreen` with the current length); pops `true` only when the new PIN is saved |
+| **Change pattern** | `PatternChangeScreen`: verify current pattern (direction-independent) → draw + confirm the new one |
+| **Biometric unlock** | enable/disable (2J row, real capability checks) |
+| **Randomized keypad** | on/off (2G) |
+| **Visible pattern** (new) | `patternVisibilityEnabled` (default true): off hides the drawing trail + node highlights on the unlock screen via `DsPatternGrid.showFeedback`; the setup screen intentionally stays visible for accessibility |
+
+- Both change flows verify the current credential first — nothing can be
+  changed without authentication, and the old credential stops working the
+  moment the new one is confirmed.
+- The Security tab rows are dynamic: "Set up PIN" ↔ "Change PIN" and
+  "Set up pattern" ↔ "Change pattern" based on enrollment state.
+- Cancelling verification cancels the whole change (credential untouched).
+
 ---
 
 ## 1. The eight modules

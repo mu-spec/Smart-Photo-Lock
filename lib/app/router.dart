@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../ui/screens/pattern/pattern_change_screen.dart';
 import '../ui/screens/pattern/pattern_setup_screen.dart';
+import '../ui/screens/pattern/pattern_unlock_screen.dart';
+import '../ui/screens/pin/pin_change_screen.dart';
 import '../ui/screens/pin/pin_setup_screen.dart';
 import '../ui/screens/pin/pin_unlock_screen.dart';
 import '../ui/shell/main_shell.dart';
@@ -25,6 +28,12 @@ abstract final class RouteNames {
   /// Full-screen pattern authentication (Phase 2I). Pops `true` on success.
   static const String patternUnlock = '/pattern/unlock';
 
+  /// Change PIN (Phase 2K): verify current → set new.
+  static const String pinChange = '/pin/change';
+
+  /// Change pattern (Phase 2K): verify current → set new.
+  static const String patternChange = '/pattern/change';
+
   // Reserved for later phases — uncomment as the screens land:
   // static const String onboarding  = '/onboarding';
   // static const String lockScreen  = '/lock'; // overlay PIN challenge
@@ -40,5 +49,8 @@ abstract final class AppRouter {
         const PatternSetupScreen(),
     RouteNames.patternUnlock: (BuildContext context) =>
         const PatternUnlockScreen(),
+    RouteNames.pinChange: (BuildContext context) => const PinChangeScreen(),
+    RouteNames.patternChange: (BuildContext context) =>
+        const PatternChangeScreen(),
   };
 }

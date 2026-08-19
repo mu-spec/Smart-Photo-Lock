@@ -36,6 +36,10 @@ abstract interface class CredentialManager {
   /// Enables/disables the randomized unlock keypad (Phase 2G).
   Future<Result<void>> setRandomizedKeypadEnabled(bool enabled);
 
+  /// Enables/disables pattern trail visibility on the unlock screen
+  /// (Phase 2K).
+  Future<Result<void>> setPatternVisibilityEnabled(bool enabled);
+
   // -- authentication -----------------------------------------------------
 
   Future<Result<AuthAttemptResult>> authenticatePin(String pin);

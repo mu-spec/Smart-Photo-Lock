@@ -8,63 +8,122 @@ import 'package:smart_app_lock/app/theme/app_theme.dart';
 import 'package:smart_app_lock/security/credentials/auth_type.dart';
 import 'package:smart_app_lock/security/credentials/biometric_options.dart';
 import 'package:smart_app_lock/ui/screens/pattern/pattern_setup_screen.dart';
-import 'package:smart_app_lock/ui/screens/pattern/pattern_unlock_screen.dart';
 import 'package:smart_app_lock/ui/screens/security/security_screen.dart';
 
-/// Phase 2G: the Security tab's randomized-keypad toggle reflects and
-/// persists the setting through the credential manager.
+/// Phase 2K: the authentication settings surface — dynamic PIN/pattern
+/// rows (set up vs change), the pattern-visibility toggle, plus the
+/// randomized-keypad and biometric rows from earlier phases.
 void main() {
-  Future<AppContainer> pumpWithScope(WidgetTester tester) async {
-    final AppContainer container = AppContainer.inMemory();
+  /// Pumps the Security tab inside an [AppScope]. Pass an existing
+  /// [container] to re-pump with the same state (e.g. after enrolling).
+  Future<AppContainer> pumpWithScope(
+    WidgetTester tester, {
+    AppContainer? container,
+  }) async {
+    final AppContainer c = container ?? AppContainer.inMemory();
     await tester.pumpWidget(
       AppScope(
-        container: container,
+        container: c,
         child: MaterialApp(
           theme: AppTheme.dark,
+          routes: AppRouter.routes,
           home: const Scaffold(body: SecurityScreen()),
         ),
       ),
     );
     // Let the async settings load complete.
     await tester.pump();
-    return container;
+    return c;
   }
 
-  testWidgets('toggle renders off by default (accessible default)',
+  // -------------------------------------------------------------------
+  // PIN row
+  // -------------------------------------------------------------------
+  testWidgets('PIN row reads Set up PIN when nothing is enrolled',
+      (WidgetTester tester) async {
+    await pumpWithScope(tester);
+    expect(find.text(SecurityScreen.setPinTitle), findsOneWidget);
+    expect(find.text(SecurityScreen.changePinTitle), findsNothing);
+  });
+
+  testWidgets('PIN row reads Change PIN when a PIN is enrolled',
+      (WidgetTester tester) async {
+    final AppContainer container = await pumpWithScope(tester);
+    await container.auth.enrollPin('1234');
+    await pumpWithScope(tester, container: container);
+    expect(find.text(SecurityScreen.changePinTitle), findsOneWidget);
+  });
+
+  testWidgets('tapping Change PIN opens the change flow (verify first)',
+      (WidgetTester tester) async {
+    final AppContainer container = await pumpWithScope(tester);
+    await container.auth.enrollPin('1234');
+    await pumpWithScope(tester, container: container);
+
+    await tester.tap(find.text(SecurityScreen.changePinTitle));
+    await tester.pumpAndSettle();
+
+    // The change flow pushes the current-PIN verification first.
+    expect(find.text('Enter current PIN'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  // -------------------------------------------------------------------
+  // Pattern row
+  // -------------------------------------------------------------------
+  testWidgets('pattern row opens the pattern setup route when not enrolled',
       (WidgetTester tester) async {
     await pumpWithScope(tester);
 
-    expect(find.text(SecurityScreen.randomizedTitle), findsOneWidget);
-    expect(find.byType(Switch), findsOneWidget);
-    expect(tester.widget<Switch>(find.byType(Switch)).value, isFalse);
+    expect(find.text(SecurityScreen.setPatternTitle), findsOneWidget);
+    await tester.tap(find.text(SecurityScreen.setPatternTitle));
+    await tester.pumpAndSettle();
+
+    expect(find.text(PatternSetupScreen.enterTitle), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
-  testWidgets('toggling persists the setting through the manager',
+  testWidgets('pattern row opens the change flow when a pattern is enrolled',
+      (WidgetTester tester) async {
+    final AppContainer container = await pumpWithScope(tester);
+    await container.auth.enrollPattern(const <int>[1, 2, 3, 6]);
+    await pumpWithScope(tester, container: container);
+
+    expect(find.text(SecurityScreen.changePatternTitle), findsOneWidget);
+    await tester.tap(find.text(SecurityScreen.changePatternTitle));
+    await tester.pumpAndSettle();
+
+    // Change flow: current-pattern verification first.
+    expect(find.text('Enter current pattern'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  // -------------------------------------------------------------------
+  // Pattern visibility toggle (Phase 2K)
+  // -------------------------------------------------------------------
+  testWidgets('visible-pattern toggle defaults on and persists off',
       (WidgetTester tester) async {
     final AppContainer container = await pumpWithScope(tester);
 
-    await tester.tap(find.byType(Switch));
-    await tester.pumpAndSettle();
+    expect(find.text(SecurityScreen.patternVisibilityTitle), findsOneWidget);
+    final Finder switches = find.byType(Switch);
+    // Switches: [Visible pattern, Randomized keypad]
+    expect(switches, findsNWidgets(2));
+    expect(tester.widget<Switch>(switches.first).value, isTrue);
 
-    expect(tester.widget<Switch>(find.byType(Switch)).value, isTrue);
+    await tester.tap(switches.first);
+    await tester.pumpAndSettle();
+    expect(tester.widget<Switch>(switches.first).value, isFalse);
+
     final state = (await container.auth.status()).valueOrNull!;
-    expect(state.randomizedKeypadEnabled, isTrue);
+    expect(state.patternVisibilityEnabled, isFalse);
     final settings =
         (await container.securitySettings.getSettings()).valueOrNull!;
-    expect(settings.randomizedKeypadEnabled, isTrue);
-
-    // Toggle back off.
-    await tester.tap(find.byType(Switch));
-    await tester.pumpAndSettle();
-    expect(tester.widget<Switch>(find.byType(Switch)).value, isFalse);
-    final off = (await container.auth.status()).valueOrNull!;
-    expect(off.randomizedKeypadEnabled, isFalse);
+    expect(settings.patternVisibilityEnabled, isFalse);
   });
 
-  testWidgets('toggle is disabled without a container in scope',
+  testWidgets('visible-pattern toggle renders inert without a container',
       (WidgetTester tester) async {
-    // Pure widget test (no AppScope): the switch must render inert rather
-    // than crash.
     await tester.pumpWidget(
       MaterialApp(
         theme: AppTheme.dark,
@@ -73,98 +132,45 @@ void main() {
     );
     await tester.pump();
 
-    final Switch toggle = tester.widget<Switch>(find.byType(Switch));
+    final Switch toggle = tester.widget<Switch>(find.byType(Switch).first);
     expect(toggle.onChanged, isNull);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('pattern row opens the pattern setup route when not enrolled',
+  // -------------------------------------------------------------------
+  // Randomized keypad (Phase 2G)
+  // -------------------------------------------------------------------
+  testWidgets('randomized keypad toggle persists through the manager',
       (WidgetTester tester) async {
-    final AppContainer container = AppContainer.inMemory();
-    await tester.pumpWidget(
-      AppScope(
-        container: container,
-        child: MaterialApp(
-          theme: AppTheme.dark,
-          routes: <String, WidgetBuilder>{
-            RouteNames.patternSetup: (_) => const PatternSetupScreen(),
-          },
-          home: const Scaffold(body: SecurityScreen()),
-        ),
-      ),
-    );
-    await tester.pump();
+    final AppContainer container = await pumpWithScope(tester);
 
-    expect(find.text('Pattern unlock'), findsOneWidget);
-    await tester.tap(find.text('Pattern unlock'));
+    final Switch toggle = tester.widget<Switch>(find.byType(Switch).at(1));
+    expect(toggle.value, isFalse);
+
+    await tester.tap(find.byType(Switch).at(1));
     await tester.pumpAndSettle();
-
-    // No pattern enrolled -> the setup flow opens.
-    expect(find.text(PatternSetupScreen.enterTitle), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('pattern row opens the unlock screen when a pattern is enrolled',
-      (WidgetTester tester) async {
-    final AppContainer container = AppContainer.inMemory();
-    await container.auth.enrollPattern(const <int>[1, 2, 3, 6]);
-    await tester.pumpWidget(
-      AppScope(
-        container: container,
-        child: MaterialApp(
-          theme: AppTheme.dark,
-          routes: <String, WidgetBuilder>{
-            RouteNames.patternSetup: (_) => const PatternSetupScreen(),
-            RouteNames.patternUnlock: (_) => const PatternUnlockScreen(),
-          },
-          home: const Scaffold(body: SecurityScreen()),
-        ),
-      ),
+    expect(
+      tester.widget<Switch>(find.byType(Switch).at(1)).value,
+      isTrue,
     );
-    await tester.pump();
 
-    await tester.tap(find.text('Pattern unlock'));
-    await tester.pumpAndSettle();
-
-    // Enrolled -> the unlock challenge opens instead of setup.
-    expect(find.text(PatternUnlockScreen.readyHint), findsOneWidget);
-    expect(tester.takeException(), isNull);
+    final state = (await container.auth.status()).valueOrNull!;
+    expect(state.randomizedKeypadEnabled, isTrue);
   });
 
   // -------------------------------------------------------------------
-  // Phase 2J — biometric row
+  // Biometric row (Phase 2J)
   // -------------------------------------------------------------------
   testWidgets('biometric row renders not-set by default',
       (WidgetTester tester) async {
-    final AppContainer container = AppContainer.inMemory();
-    await tester.pumpWidget(
-      AppScope(
-        container: container,
-        child: MaterialApp(
-          theme: AppTheme.dark,
-          home: const Scaffold(body: SecurityScreen()),
-        ),
-      ),
-    );
-    await tester.pump();
-
+    await pumpWithScope(tester);
     expect(find.text('Biometric unlock'), findsOneWidget);
     expect(find.text('Enabled'), findsNothing);
   });
 
   testWidgets('biometric row requires a primary credential first',
       (WidgetTester tester) async {
-    final AppContainer container = AppContainer.inMemory();
-    await tester.pumpWidget(
-      AppScope(
-        container: container,
-        child: MaterialApp(
-          theme: AppTheme.dark,
-          home: const Scaffold(body: SecurityScreen()),
-        ),
-      ),
-    );
-    await tester.pump();
+    await pumpWithScope(tester);
 
     await tester.tap(find.text('Biometric unlock'));
     await tester.pumpAndSettle();
@@ -173,19 +179,10 @@ void main() {
 
   testWidgets('biometric row disables an enrolled biometric unlock',
       (WidgetTester tester) async {
-    final AppContainer container = AppContainer.inMemory();
+    final AppContainer container = await pumpWithScope(tester);
     await container.auth.enrollPin('1234');
     await container.auth.updateBiometricOptions(BiometricOptions.defaults);
-    await tester.pumpWidget(
-      AppScope(
-        container: container,
-        child: MaterialApp(
-          theme: AppTheme.dark,
-          home: const Scaffold(body: SecurityScreen()),
-        ),
-      ),
-    );
-    await tester.pump();
+    await pumpWithScope(tester, container: container);
 
     expect(find.text('Enabled'), findsOneWidget);
 
@@ -200,20 +197,10 @@ void main() {
 
   testWidgets('biometric row reports unsupported hardware without a platform',
       (WidgetTester tester) async {
-    final AppContainer container = AppContainer.inMemory();
+    final AppContainer container = await pumpWithScope(tester);
     await container.auth.enrollPin('1234');
-    await tester.pumpWidget(
-      AppScope(
-        container: container,
-        child: MaterialApp(
-          theme: AppTheme.dark,
-          home: const Scaffold(body: SecurityScreen()),
-        ),
-      ),
-    );
-    await tester.pump();
+    await pumpWithScope(tester, container: container);
 
-    // flutter test has no platform plugin -> the real service fails closed.
     await tester.tap(find.text('Biometric unlock'));
     await tester.pumpAndSettle();
     expect(
