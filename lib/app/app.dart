@@ -27,7 +27,7 @@ class SmartAppLockApp extends StatelessWidget {
       darkTheme: AppTheme.dark,
       themeMode: ThemeMode.system,
       initialRoute: RouteNames.home,
-      routes: AppRouter.routes,
+      onGenerateRoute: AppRouter.onGenerateRoute,
     );
 
     final AppContainer? container = this.container;

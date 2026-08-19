@@ -60,16 +60,37 @@ class _PatternSetupScreenState extends State<PatternSetupScreen>
   String? _error;
   bool _saving = false;
 
+  /// Pattern trail visibility (Phase 2K/device fix): ALL pattern screens
+  /// honor the same persisted preference. Defaults to visible while the
+  /// setting loads (accessible fallback when no manager is in scope).
+  bool _patternVisible = true;
+
   @override
   void initState() {
     super.initState();
     initShake();
+    _loadVisibility();
   }
 
   @override
   void dispose() {
     disposeShake();
     super.dispose();
+  }
+
+  /// Reads the persisted visibility preference from the SAME credential
+  /// manager the rest of the flow uses (never an independent instance).
+  Future<void> _loadVisibility() async {
+    final CredentialManager? manager =
+        widget.credentialManager ?? AppScope.read(context)?.auth;
+    if (manager == null) {
+      return; // no container in scope (pure widget tests) -> visible default
+    }
+    final state = (await manager.status()).valueOrNull;
+    if (!mounted || state == null) {
+      return;
+    }
+    setState(() => _patternVisible = state.patternVisibilityEnabled);
   }
 
   CredentialManager get _manager =>
@@ -240,10 +261,22 @@ class _PatternSetupScreenState extends State<PatternSetupScreen>
                 onNodeAdded: _onNodeAdded,
                 onDragEnd: _onDragEnd,
                 enabled: !_saving,
+                showFeedback: _patternVisible,
               ),
             ),
           ),
         ),
+        if (!_patternVisible) ...<Widget>[
+          const SizedBox(height: DsSpacing.sm),
+          Center(
+            child: Text(
+              'Pattern trail hidden for privacy',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: palette.textSecondary,
+              ),
+            ),
+          ),
+        ],
         const SizedBox(height: DsSpacing.lg),
         Center(
           child: DsButton(

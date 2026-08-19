@@ -88,6 +88,12 @@ class _SecurityScreenState extends State<SecurityScreen> {
     if (!mounted || changed != true) {
       return;
     }
+    // Refresh credential state (e.g. a new PIN length) instead of showing
+    // stale values.
+    await _loadStatus();
+    if (!mounted) {
+      return;
+    }
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text(SecurityScreen.pinChangedMessage)),
     );
@@ -101,6 +107,11 @@ class _SecurityScreenState extends State<SecurityScreen> {
     final bool? changed =
         await Navigator.of(context).pushNamed<bool>(RouteNames.patternChange);
     if (!mounted || changed != true) {
+      return;
+    }
+    // Refresh credential state instead of showing stale values.
+    await _loadStatus();
+    if (!mounted) {
       return;
     }
     ScaffoldMessenger.of(context).showSnackBar(

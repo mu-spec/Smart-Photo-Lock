@@ -11,8 +11,9 @@ import '../ui/shell/main_shell.dart';
 /// Central route registry.
 ///
 /// The root route hosts the [MainShell] with its five top-level tabs.
-/// Full-screen flows (PIN setup now, more later) are pushed as named routes
-/// on top of the shell so all navigation lives in exactly one place.
+/// Full-screen flows (PIN/pattern setup, unlock and change) are pushed as
+/// named routes on top of the shell so all navigation lives in exactly one
+/// place.
 abstract final class RouteNames {
   static const String home = '/';
 
@@ -33,24 +34,56 @@ abstract final class RouteNames {
 
   /// Change pattern (Phase 2K): verify current → set new.
   static const String patternChange = '/pattern/change';
-
-  // Reserved for later phases — uncomment as the screens land:
-  // static const String onboarding  = '/onboarding';
-  // static const String lockScreen  = '/lock'; // overlay PIN challenge
 }
 
-/// Route name -> screen builder map consumed by `MaterialApp.routes`.
+/// Typed route generator consumed by `MaterialApp.onGenerateRoute`.
+///
+/// IMPORTANT (real-device fix): [SecurityScreen] pushes the change and
+/// unlock flows with `pushNamed<bool>(...)`, which requires the produced
+/// route to be a `Route<bool>`. The default `routes:` map always builds
+/// `MaterialPageRoute<dynamic>`, which crashes the runtime cast — so every
+/// bool-typed route is generated here explicitly.
 abstract final class AppRouter {
-  static final Map<String, WidgetBuilder> routes = <String, WidgetBuilder>{
-    RouteNames.home: (BuildContext context) => const MainShell(),
-    RouteNames.pinSetup: (BuildContext context) => const PinSetupScreen(),
-    RouteNames.pinUnlock: (BuildContext context) => const PinUnlockScreen(),
-    RouteNames.patternSetup: (BuildContext context) =>
-        const PatternSetupScreen(),
-    RouteNames.patternUnlock: (BuildContext context) =>
-        const PatternUnlockScreen(),
-    RouteNames.pinChange: (BuildContext context) => const PinChangeScreen(),
-    RouteNames.patternChange: (BuildContext context) =>
-        const PatternChangeScreen(),
-  };
+  static Route<dynamic>? onGenerateRoute(RouteSettings settings) {
+    final String? name = settings.name;
+    switch (name) {
+      case RouteNames.home:
+        return MaterialPageRoute<dynamic>(
+          settings: settings,
+          builder: (BuildContext context) => const MainShell(),
+        );
+      case RouteNames.pinSetup:
+        return MaterialPageRoute<dynamic>(
+          settings: settings,
+          builder: (BuildContext context) => const PinSetupScreen(),
+        );
+      case RouteNames.pinUnlock:
+        return MaterialPageRoute<bool>(
+          settings: settings,
+          builder: (BuildContext context) => const PinUnlockScreen(),
+        );
+      case RouteNames.patternSetup:
+        return MaterialPageRoute<dynamic>(
+          settings: settings,
+          builder: (BuildContext context) => const PatternSetupScreen(),
+        );
+      case RouteNames.patternUnlock:
+        return MaterialPageRoute<bool>(
+          settings: settings,
+          builder: (BuildContext context) => const PatternUnlockScreen(),
+        );
+      case RouteNames.pinChange:
+        return MaterialPageRoute<bool>(
+          settings: settings,
+          builder: (BuildContext context) => const PinChangeScreen(),
+        );
+      case RouteNames.patternChange:
+        return MaterialPageRoute<bool>(
+          settings: settings,
+          builder: (BuildContext context) => const PatternChangeScreen(),
+        );
+      default:
+        return null;
+    }
+  }
 }

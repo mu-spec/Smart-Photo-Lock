@@ -344,6 +344,13 @@ The Security tab is a complete authentication settings surface:
   accessibility.
 - Rows adapt to enrollment: "Set up PIN" ↔ "Change PIN", "Set up pattern"
   ↔ "Change pattern".
+- **Device integration (0.19.5):** production navigation now uses a typed
+  `AppRouter.onGenerateRoute` — the change and unlock flows return
+  `MaterialPageRoute<bool>`, so `pushNamed<bool>` works on-device (the
+  previous `routes:` map produced `Route<dynamic>` and crashed the cast).
+  The Visible Pattern preference now applies to **all** pattern screens
+  (setup, unlock, change-verify) from the same persisted setting, and the
+  Security tab refreshes its state after a successful change flow.
 
 ### Phase 2L ✅ — Authentication Regression
 
@@ -512,7 +519,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.1.0 / 9.3.1 / 2.4.0 |
 | Java | 17 |
-| versionName / versionCode | `0.19.4` / `24` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.19.5` / `25` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM), `local_auth` (biometrics) |
 
 ## Prerequisites (on your machine)
