@@ -1,103 +1,124 @@
 # Smart App Lock 🔒
 
 Privacy-first Android app locker built with **Flutter**.
-This repository is the production Android project scaffold — **Phase 1A** of the
-PRD-driven build plan.
+Development follows the PRD phase plan; this repository is the production
+Android project.
+
+**Current status: Phase 1A + 1B complete** — production project scaffold +
+core architecture. Locking is not implemented yet.
 
 ---
 
-## Phase 1A — Create Android Project ✅
+## Phase status
 
-| Requirement                          | Status | Where                                        |
-| ------------------------------------ | ------ | -------------------------------------------- |
-| Production Android project           | ✅     | `android/` (Kotlin DSL, current Flutter template layout) |
-| Application ID / package             | ✅     | `com.smartapplock.app` → `android/app/build.gradle.kts` |
-| Minimum Android SDK                  | ✅     | **24** (Android 7.0) — floor for app-lock APIs |
-| Target Android SDK                   | ✅     | **36** (Android 16) — Google Play requirement from Aug 31, 2026 |
-| Compile SDK / NDK                    | ✅     | **36** / **28.2.13676358** (official Flutter template values) |
-| Debug / release build structure      | ✅     | `android/app/src/{debug,profile,main}/` + `buildTypes` in Gradle |
-| Release signing structure            | ✅     | `android/key.properties.example` + signing fallback in Gradle |
-| Confirm project compiles             | ✅     | Verified below (see **Confirm the build** — needs your local Flutter SDK) |
+| Phase | Description | Status |
+| ----- | ----------- | ------ |
+| 1A | Create production Android project | ✅ |
+| 1B | Core project architecture (8 modules) | ✅ |
+
+### Phase 1A ✅ — Create Android Project
+
+| Requirement | Value | Where |
+| ----------- | ----- | ----- |
+| Application ID / package | `com.smartapplock.app` | `android/app/build.gradle.kts` |
+| Minimum Android SDK | **24** (Android 7.0) — floor for app-lock APIs | `android/app/build.gradle.kts` |
+| Target Android SDK | **36** (Android 16) — Play requirement from Aug 31, 2026 | `android/app/build.gradle.kts` |
+| Compile SDK / NDK | **36** / **28.2.13676358** (official Flutter template) | `android/app/build.gradle.kts` |
+| Debug / release structure | `src/{main,debug,profile}/` + `buildTypes` (debug gets `.debug` suffix) | `android/app/` |
+| Release signing | `key.properties` (git-ignored) + debug-signing fallback so builds always compile | `android/` |
+| Toolchain | AGP 9.1.0 · Kotlin 2.4.0 · Gradle 9.3.1 · Java 17 | `android/settings.gradle.kts` |
+
+### Phase 1B ✅ — Core Project Architecture
+
+Eight modules, layered with strict dependency rules. Contracts are stubs
+until their feature phase; pure logic (rules, PIN hashing) is implemented
+and unit-tested. See **docs/architecture.md** for the full design.
+
+```
+lib/
+├── main.dart                 # entry point
+├── app/                      # app shell: router, theme
+│   ├── app.dart              # SmartAppLockApp (root widget)
+│   ├── router.dart           # central route registry (RouteNames + AppRouter)
+│   └── theme/                # AppColors, AppTheme (dark navy + teal)
+├── ui/                       # screens & shared widgets
+│   ├── screens/home/         # Phase 1B architecture dashboard
+│   └── widgets/              # ModuleCard etc.
+├── data/                     # models + repository contracts
+│   ├── models/               # AppEntry (pure Dart)
+│   └── repositories/         # InstalledAppsRepository, LockSettingsRepository
+├── security/                 # PIN hashing & policy (working)
+│   ├── pin_hasher.dart       # PBKDF2-HMAC-SHA256 (crypto package)
+│   └── pin_policy.dart       # 4-6 digit PIN validation
+├── protection/               # lock enforcement contracts
+│   ├── lock_engine.dart      # LockEngine interface (overlay/accessibility/admin)
+│   ├── access_controller.dart# AccessDecision: allow / challenge / deny
+│   └── lock_session.dart     # temporary unlock window model (working)
+├── rules/                    # lock rule model + evaluation (working)
+│   ├── lock_rule.dart        # always / timeWindow / launchLimit
+│   └── rule_engine.dart      # pure shouldLock(...) decision logic
+├── profiles/                 # lock profiles
+│   ├── lock_profile.dart     # named package sets ("Kids mode", ...)
+│   └── profile_manager.dart  # CRUD + activation contract
+├── services/                 # Android platform bridge contracts
+│   ├── installed_apps_service.dart
+│   ├── overlay_lock_service.dart      # SYSTEM_ALERT_WINDOW strategy
+│   ├── accessibility_lock_service.dart# foreground-app detection
+│   └── device_admin_service.dart      # uninstall protection
+└── utilities/                # leaf helpers (working)
+    ├── result.dart           # Result<T> (Success/Failure) for every boundary
+    ├── app_logger.dart       # leveled debug logging
+    └── time_utils.dart       # minutes-of-day, overnight windows, formatting
+```
+
+**Tests** (run with `flutter test`): widget smoke test, PIN hasher
+round-trip, rule engine (incl. midnight-wrapping windows), lock session
+expiry, Result type.
 
 ---
-
-## Project structure
-
-```
-smart_app_lock/
-├── pubspec.yaml                     # Flutter package manifest (app version lives here)
-├── analysis_options.yaml            # Lint rules (flutter_lints)
-├── lib/
-│   └── main.dart                    # Placeholder home (replaced in later phases)
-├── test/
-│   └── widget_test.dart             # Smoke test for the scaffold
-├── tool/
-│   └── gen_icons.py                 # Regenerates all launcher icons (pure stdlib)
-└── android/
-    ├── settings.gradle.kts          # Gradle plugins: AGP 9.1.0, Kotlin 2.4.0
-    ├── build.gradle.kts             # Repositories + build-dir redirection + clean task
-    ├── gradle.properties            # JVM args, AndroidX, Flutter DSL flags
-    ├── gradle/wrapper/
-    │   └── gradle-wrapper.properties # Gradle 9.3.1
-    ├── key.properties.example       # Release signing template → copy to key.properties
-    └── app/
-        ├── build.gradle.kts         # applicationId, minSdk/targetSdk, buildTypes, signing
-        ├── proguard-rules.pro
-        └── src/
-            ├── main/                # App manifest, MainActivity.kt, res/ (icons, themes)
-            ├── debug/               # Debug-only manifest (INTERNET for hot reload)
-            └── profile/             # Profile-only manifest
-```
 
 ## Key configuration
 
-| Setting        | Value                     | Notes                                    |
-| -------------- | ------------------------- | ---------------------------------------- |
-| Application ID | `com.smartapplock.app`    | Debug builds get the `.debug` suffix     |
-| minSdk         | 24 (Android 7.0)          | Matches Flutter's current floor          |
-| targetSdk      | 36 (Android 16)           | Play requirement for new apps, Aug 2026  |
-| compileSdk     | 36                        |                                          |
-| AGP / Gradle   | 9.1.0 / 9.3.1             | Current official Flutter stable template |
-| Kotlin         | 2.4.0                     |                                          |
-| Java           | 17                        | Android Studio's embedded JDK satisfies this |
-| versionName    | 0.1.0 (`pubspec.yaml`)    | Bump with each release                   |
-| versionCode    | 1 (`pubspec.yaml`)        |                                          |
+| Setting | Value |
+| ------- | ----- |
+| Application ID | `com.smartapplock.app` (debug builds: `com.smartapplock.app.debug`) |
+| minSdk / targetSdk / compileSdk | 24 / 36 / 36 |
+| AGP / Gradle / Kotlin | 9.1.0 / 9.3.1 / 2.4.0 |
+| Java | 17 |
+| versionName / versionCode | `0.2.0` / `2` (in `pubspec.yaml`) |
+| Dependencies | `crypto` (PIN hashing) |
 
 ## Prerequisites (on your machine)
 
-- **Flutter SDK** — current stable (Aug 2026, 3.38+). Older SDKs ship older
-  Gradle templates; if you must use an older SDK, run
-  `flutter create --platforms android .` inside this folder to let the tool
-  repair the `android/` scaffolding for your version.
+- **Flutter SDK** — current stable (3.38+; tested on 3.47). Older SDKs ship
+  older Gradle templates; if you must use an older SDK, run
+  `flutter create --platforms android .` once to repair `android/`.
 - **Android Studio** (or Android SDK + JDK 17).
 - An Android device/emulator running **Android 7.0+**.
 
-## Confirm the build
-
-The sandbox this project was written in has no Flutter/Android SDK (by design),
-so run these on your machine from the project root:
+## Getting the code & building
 
 ```bash
-flutter pub get            # resolve Dart packages
-flutter analyze            # static analysis must report "No issues found"
-flutter test               # run the scaffold smoke test
-flutter build apk --debug  # compiles the debug APK
-flutter run                # installs & launches on a connected device
+git clone https://github.com/mu-spec/Smart-Photo-Lock.git
+cd Smart-Photo-Lock
+flutter pub get            # resolve packages (downloads `crypto`)
+flutter analyze            # static analysis
+flutter test               # unit + widget tests
+flutter build apk --debug  # or: flutter build apk --release
 ```
 
-> If the Gradle wrapper files (`gradlew`, `gradle-wrapper.jar`) are missing
-> after download, run `flutter create --platforms android .` once — the Flutter
-> tool regenerates them without touching your existing files.
+APK output: `build/app/outputs/flutter-apk/app-{debug,release}.apk`
+
+> Updating after a new phase is pushed: `git pull && flutter pub get`
 
 ## Debug / release structure
 
-- **Debug** — signed with the auto-generated debug key, app id
-  `com.smartapplock.app.debug` so it can be installed next to the release build.
-- **Release** — reads `android/key.properties` for real signing; until then it
-  deliberately falls back to debug signing so `flutter build apk --release`
-  always compiles.
-- R8 minification is **off** for now and gets enabled with tuned keep-rules in
-  a later phase (app-lock services need them).
+- **Debug** — debug-signed, app id `com.smartapplock.app.debug` (installable
+  next to the release build). Has INTERNET for hot reload.
+- **Release** — reads `android/key.properties` for real signing; falls back
+  to debug signing until that file exists, so builds always compile.
+- R8 minification is **off** until the hardening phase adds keep-rules for
+  the lock services.
 
 ### Release signing (before Play upload)
 
@@ -107,18 +128,18 @@ keytool -genkey -v -keystore upload-keystore.jks \
   -storetype JKS -keyalg RSA -keysize 2048 -validity 10000 -alias upload
 cd ../..
 cp android/key.properties.example android/key.properties   # then edit passwords
-flutter build appbundle   # produces build/app/outputs/bundle/release/*.aab
+flutter build appbundle   # outputs build/app/outputs/bundle/release/*.aab
 ```
 
 `key.properties` and `*.jks` are git-ignored — never commit them.
 
 ## Launcher icons
 
-All icons were generated by `python3 tool/gen_icons.py` (white padlock on brand
-navy, adaptive + legacy densities). Re-run it anytime after tweaking the design.
+Generated by `python3 tool/gen_icons.py` (white padlock on brand navy,
+adaptive + legacy densities). Re-run anytime after tweaking the design.
 
 ## Next phases
 
-Phase 1B+ will add the app-lock feature set: installed-app listing with
-`<queries>`/package visibility, PIN setup flow, secure storage, Usage-Access /
-overlay / accessibility permissions, and the lock service itself.
+Onboarding + PIN setup → app list → rules editor → profiles → lock screen &
+enforcement → hardening. Each phase's module ownership is mapped in
+`docs/architecture.md`.
