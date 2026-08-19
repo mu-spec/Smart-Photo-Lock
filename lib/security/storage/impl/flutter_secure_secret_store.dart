@@ -4,19 +4,24 @@ import '../secret_store.dart';
 
 /// Production [SecretStore] backed by the Android Keystore.
 ///
-/// On Android this uses **EncryptedSharedPreferences**: every value is
-/// encrypted with a device-bound AES-256 key held in the Android Keystore
-/// (hardware-backed where the device provides TEE/StrongBox). The key
-/// material never leaves the OS keystore and values are never written to
-/// disk in plaintext.
+/// flutter_secure_storage v11 dropped the legacy
+/// `encryptedSharedPreferences` flag together with the deprecated
+/// EncryptedSharedPreferences backend (removed upstream by androidx).
+/// Its current Android implementation is **Keystore-backed by default**:
+///
+///  * secret key protection: RSA/ECB/OAEPWithSHA-256AndMGF1Padding key
+///    wrapping in the Android Keystore (hardware-backed where the device
+///    provides TEE/StrongBox);
+///  * data encryption: AES/GCM/NoPadding;
+///  * supported from API 23+.
+///
+/// `AndroidOptions()` therefore needs no extra flags to be secure — every
+/// value is encrypted with a device-bound key that never leaves the OS
+/// keystore, and nothing is written to disk in plaintext.
 class FlutterSecureSecretStore implements SecretStore {
   FlutterSecureSecretStore()
       : _storage = const FlutterSecureStorage(
-          aOptions: AndroidOptions(
-            // Explicit: use the Keystore-backed encrypted preferences
-            // implementation (default on modern versions).
-            encryptedSharedPreferences: true,
-          ),
+          aOptions: AndroidOptions(),
         );
 
   final FlutterSecureStorage _storage;

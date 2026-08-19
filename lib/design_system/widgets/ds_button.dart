@@ -14,6 +14,10 @@ enum DsButtonVariant { primary, secondary, outline, ghost, danger }
 enum DsButtonSize { small, medium, large }
 
 /// The one button of the app — variants, sizes, icons and loading state.
+///
+/// Styles are built as [ButtonStyle]s with [WidgetStateProperty]-based
+/// colors so enabled/disabled (and future hover/focus/pressed) states are
+/// resolved correctly by the current Flutter API.
 class DsButton extends StatelessWidget {
   const DsButton({
     super.key,
@@ -134,8 +138,16 @@ class DsButton extends StatelessWidget {
         borderRadius: BorderRadius.circular(DsRadii.md),
       );
 
+  /// Shared geometry for every variant.
+  ButtonStyle _baseStyle() => ButtonStyle(
+        minimumSize: WidgetStatePropertyAll<Size>(Size(0, _height)),
+        padding: WidgetStatePropertyAll<EdgeInsetsGeometry>(_padding),
+        shape: WidgetStatePropertyAll<OutlinedBorder>(_shape),
+        textStyle: WidgetStatePropertyAll<TextStyle>(_textStyle),
+      );
+
   ButtonStyle _filledStyle(Color background, Color foreground) {
-    return FilledButton.styleFrom(
+    return _baseStyle().copyWith(
       backgroundColor: WidgetStateProperty.resolveWith<Color?>(
         (Set<WidgetState> states) => states.contains(WidgetState.disabled)
             ? background.withValues(alpha: 0.4)
@@ -146,39 +158,33 @@ class DsButton extends StatelessWidget {
             ? foreground.withValues(alpha: 0.6)
             : foreground,
       ),
-      minimumSize: Size(0, _height),
-      padding: _padding,
-      shape: _shape,
-      textStyle: _textStyle,
     );
   }
 
   ButtonStyle _outlineStyle(Color foreground) {
-    return OutlinedButton.styleFrom(
+    return _baseStyle().copyWith(
       foregroundColor: WidgetStateProperty.resolveWith<Color?>(
         (Set<WidgetState> states) => states.contains(WidgetState.disabled)
             ? foreground.withValues(alpha: 0.5)
             : foreground,
       ),
-      side: BorderSide(color: foreground.withValues(alpha: 0.6)),
-      minimumSize: Size(0, _height),
-      padding: _padding,
-      shape: _shape,
-      textStyle: _textStyle,
+      side: WidgetStateProperty.resolveWith<BorderSide?>(
+        (Set<WidgetState> states) => BorderSide(
+          color: foreground.withValues(
+            alpha: states.contains(WidgetState.disabled) ? 0.3 : 0.6,
+          ),
+        ),
+      ),
     );
   }
 
   ButtonStyle _ghostStyle(Color foreground) {
-    return TextButton.styleFrom(
+    return _baseStyle().copyWith(
       foregroundColor: WidgetStateProperty.resolveWith<Color?>(
         (Set<WidgetState> states) => states.contains(WidgetState.disabled)
             ? foreground.withValues(alpha: 0.5)
             : foreground,
       ),
-      minimumSize: Size(0, _height),
-      padding: _padding,
-      shape: _shape,
-      textStyle: _textStyle,
     );
   }
 }

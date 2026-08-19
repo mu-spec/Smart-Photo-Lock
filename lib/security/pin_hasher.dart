@@ -98,7 +98,12 @@ class Pbkdf2PinHasher implements PinHasher {
 
   List<int> _generateSalt(int length) {
     final List<int> salt = List<int>.filled(length, 0);
-    _random.nextBytes(salt);
+    // `Random` (dart:math) has no nextBytes(); draw each byte via
+    // nextInt(256). `_random` is `Random.secure()` by default, so the salt
+    // is cryptographically secure.
+    for (int i = 0; i < length; i++) {
+      salt[i] = _random.nextInt(256);
+    }
     return salt;
   }
 
