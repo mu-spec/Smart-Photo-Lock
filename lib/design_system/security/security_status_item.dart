@@ -19,6 +19,7 @@ class SecurityStatusItem extends StatelessWidget {
     required this.level,
     this.subtitle,
     this.statusLabel,
+    this.onTap,
   });
 
   final IconData icon;
@@ -29,13 +30,16 @@ class SecurityStatusItem extends StatelessWidget {
   /// Overrides the pill label (defaults to [SecurityLevel.label]).
   final String? statusLabel;
 
+  /// Optional tap action (e.g. opening the unlock screen from a status row).
+  final VoidCallback? onTap;
+
   @override
   Widget build(BuildContext context) {
     final DsPalette palette = context.dsColors;
     final ThemeData theme = Theme.of(context);
     final Color toneColor = level.tone.colorOf(palette);
 
-    return Padding(
+    final Widget content = Padding(
       padding: const EdgeInsets.symmetric(horizontal: DsSpacing.lg, vertical: DsSpacing.sm + 2),
       child: Row(
         children: <Widget>[
@@ -75,6 +79,16 @@ class SecurityStatusItem extends StatelessWidget {
           SecurityStatusPill(level: level, label: statusLabel),
         ],
       ),
+    );
+
+    final VoidCallback? onTap = this.onTap;
+    if (onTap == null) {
+      return content;
+    }
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(DsRadii.md),
+      child: content,
     );
   }
 }

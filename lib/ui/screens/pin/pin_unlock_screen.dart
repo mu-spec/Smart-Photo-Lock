@@ -1,0 +1,448 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+
+import '../../../app/app_scope.dart';
+import '../../../app/router.dart';
+import '../../../design_system/design_system.dart';
+import '../../../security/credentials/auth_result.dart';
+import '../../../security/credentials/auth_type.dart';
+import '../../../security/credentials/credential_manager.dart';
+import '../../widgets/entry_shake.dart';
+
+/// Internal presentation states of the unlock screen.
+enum _UnlockView { loading, ready, noCredential, lockedOut }
+
+/// Full-screen PIN authentication (Phase 2E).
+///
+/// Uses the **configured PIN**: the enrolled credential's recorded length
+/// drives the dots, and the entry auto-submits at that length through
+/// [CredentialManager] (which enforces lockouts and verifies against the
+/// stored derived hash — the raw PIN never leaves this screen).
+///
+/// Outcomes:
+///  * correct PIN → pops with `true` (access granted);
+///  * wrong PIN → inline error with remaining attempts + shake;
+///  * lockout → live countdown, pad disabled until the cooldown expires;
+///    persisted lockouts are picked up as soon as the screen opens;
+///  * no PIN configured → guided recovery screen.
+class PinUnlockScreen extends StatefulWidget {
+  const PinUnlockScreen({
+    super.key,
+    this.credentialManager,
+    this.title = 'Enter your PIN',
+    this.now,
+  });
+
+  /// Overrides the manager resolved from [AppScope] (tests/previews).
+  final CredentialManager? credentialManager;
+
+  /// Header title.
+  final String title;
+
+  /// Clock seam for tests (defaults to [DateTime.now]).
+  final DateTime Function()? now;
+
+  static const String wrongPinPrefix = 'Incorrect PIN';
+  static const String verifyFailedMessage =
+      'Could not verify your PIN. Please try again.';
+  static const String lockedOutTitle = 'Too many attempts';
+  static const String lockedOutMessage = 'Try again in';
+  static const String noCredentialTitle = 'No PIN configured';
+  static const String noCredentialMessage =
+      'Set up a PIN before unlocking.';
+  static const String setUpPinLabel = 'Set up PIN';
+  static const String backLabel = 'Back';
+
+  @override
+  State<PinUnlockScreen> createState() => _PinUnlockScreenState();
+}
+
+class _PinUnlockScreenState extends State<PinUnlockScreen>
+    with SingleTickerProviderStateMixin, EntryShakeMixin {
+  _UnlockView _view = _UnlockView.loading;
+  int? _pinLength;
+  String _entered = '';
+  bool _verifying = false;
+  String? _error;
+  int _remainingAttempts = 0;
+  DateTime? _lockoutUntil;
+  Duration _lockoutRemaining = Duration.zero;
+  Timer? _timer;
+
+  CredentialManager get _manager =>
+      widget.credentialManager ?? AppScope.read(context)!.auth;
+
+  DateTime _now() => widget.now?.call() ?? DateTime.now();
+
+  @override
+  void initState() {
+    super.initState();
+    initShake();
+    _loadStatus();
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    disposeShake();
+    super.dispose();
+  }
+
+  /// Reads the credential configuration once when the screen opens:
+  /// enrolled PIN length, and any lockout that is already active.
+  Future<void> _loadStatus() async {
+    final state = (await _manager.status()).valueOrNull;
+    if (!mounted) {
+      return;
+    }
+    final int? length = state?.pinLength;
+    if (state == null ||
+        !state.hasEnrolled(AuthType.pin) ||
+        length == null) {
+      setState(() => _view = _UnlockView.noCredential);
+      return;
+    }
+    _pinLength = length;
+    final DateTime? lockout = state.lockedOutUntil;
+    if (lockout != null && _now().isBefore(lockout)) {
+      _startLockout(lockout);
+    } else {
+      setState(() => _view = _UnlockView.ready);
+    }
+  }
+
+  // -- input ---------------------------------------------------------------
+
+  void _onDigit(String digit) {
+    final int? length = _pinLength;
+    if (_verifying || length == null || _view != _UnlockView.ready) {
+      return;
+    }
+    if (_entered.length >= length) {
+      return;
+    }
+    setState(() {
+      _entered += digit;
+      _error = null;
+    });
+    if (_entered.length == length) {
+      _submit();
+    }
+  }
+
+  void _onDelete() {
+    if (_verifying || _entered.isEmpty) {
+      return;
+    }
+    setState(() => _entered = _entered.substring(0, _entered.length - 1));
+  }
+
+  void _onDeleteAll() {
+    if (_verifying) {
+      return;
+    }
+    setState(() => _entered = '');
+  }
+
+  // -- verification --------------------------------------------------------
+
+  Future<void> _submit() async {
+    setState(() => _verifying = true);
+    final result = await _manager.authenticatePin(_entered);
+    if (!mounted) {
+      return;
+    }
+    final outcome = result.valueOrNull;
+
+    if (outcome is AuthSuccess) {
+      Navigator.of(context).pop(true);
+      return;
+    }
+    if (outcome is AuthLockedOut) {
+      _startLockout(outcome.retryAt);
+      return;
+    }
+    if (outcome is AuthFailure) {
+      if (outcome.reason == AuthFailureReason.noCredentialEnrolled) {
+        setState(() {
+          _view = _UnlockView.noCredential;
+          _verifying = false;
+          _entered = '';
+        });
+        return;
+      }
+      setState(() {
+        _verifying = false;
+        _entered = '';
+        _remainingAttempts = outcome.remainingAttempts;
+        _error = outcome.remainingAttempts > 0
+            ? '${PinUnlockScreen.wrongPinPrefix} — '
+                '${outcome.remainingAttempts} attempts left.'
+            : PinUnlockScreen.wrongPinPrefix;
+      });
+      shake();
+      return;
+    }
+
+    // Storage/crypto failure (fail-closed path): generic message, retry.
+    setState(() {
+      _verifying = false;
+      _entered = '';
+      _error = PinUnlockScreen.verifyFailedMessage;
+    });
+    shake();
+  }
+
+  // -- lockout -------------------------------------------------------------
+
+  void _startLockout(DateTime until) {
+    _timer?.cancel();
+    setState(() {
+      _view = _UnlockView.lockedOut;
+      _lockoutUntil = until;
+      _lockoutRemaining = until.difference(_now());
+      _entered = '';
+      _verifying = false;
+      _error = null;
+    });
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) => _tick());
+  }
+
+  void _tick() {
+    final DateTime until = _lockoutUntil!;
+    final Duration remaining = until.difference(_now());
+    if (remaining <= Duration.zero) {
+      _timer?.cancel();
+      setState(() {
+        _view = _UnlockView.ready;
+        _lockoutUntil = null;
+        _lockoutRemaining = Duration.zero;
+      });
+    } else {
+      setState(() => _lockoutRemaining = remaining);
+    }
+  }
+
+  String _formatCountdown(Duration d) {
+    final int total = d.inSeconds < 0 ? 0 : d.inSeconds;
+    final int minutes = total ~/ 60;
+    final int seconds = total % 60;
+    return '$minutes:${seconds.toString().padLeft(2, '0')}';
+  }
+
+  // -- build ---------------------------------------------------------------
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(widget.title)),
+      body: SafeArea(
+        child: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 200),
+          child: switch (_view) {
+            _UnlockView.loading => const Center(
+                key: ValueKey<String>('loading'),
+                child: CircularProgressIndicator(),
+              ),
+            _UnlockView.noCredential => _buildNoCredential(),
+            _UnlockView.lockedOut => _buildLockedOut(),
+            _UnlockView.ready => _buildEntry(),
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEntry() {
+    final ThemeData theme = Theme.of(context);
+    final DsPalette palette = context.dsColors;
+    final int length = _pinLength!;
+    return ListView(
+      key: const ValueKey<String>('entry'),
+      padding: DsInsets.screen,
+      children: <Widget>[
+        const SizedBox(height: DsSpacing.sm),
+        Center(
+          child: Text(
+            'Enter your $length-digit PIN',
+            style: theme.textTheme.titleMedium?.copyWith(
+              color: palette.textSecondary,
+            ),
+          ),
+        ),
+        if (_error != null) ...<Widget>[
+          const SizedBox(height: DsSpacing.lg),
+          _ErrorBanner(message: _error!),
+        ],
+        const SizedBox(height: DsSpacing.xl),
+        Center(
+          child: shakeWrap(DsPinDots(filled: _entered.length, total: length)),
+        ),
+        const SizedBox(height: DsSpacing.xl),
+        DsPinPad(
+          onDigit: _onDigit,
+          onDelete: _onDelete,
+          onDeleteAll: _onDeleteAll,
+          enabled: !_verifying,
+        ),
+        if (_verifying) ...<Widget>[
+          const SizedBox(height: DsSpacing.lg),
+          const Center(
+            child: SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(strokeWidth: 2.5),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildLockedOut() {
+    final ThemeData theme = Theme.of(context);
+    final DsPalette palette = context.dsColors;
+    final int length = _pinLength ?? 4;
+    return ListView(
+      key: const ValueKey<String>('locked_out'),
+      padding: DsInsets.screen,
+      children: <Widget>[
+        const SizedBox(height: DsSpacing.lg),
+        Center(
+          child: Container(
+            width: 80,
+            height: 80,
+            decoration: BoxDecoration(
+              color: palette.warning.withValues(alpha: 0.12),
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: palette.warning.withValues(alpha: 0.4),
+              ),
+            ),
+            child: Icon(Icons.lock_clock, size: 36, color: palette.warning),
+          ),
+        ),
+        const SizedBox(height: DsSpacing.xl),
+        Center(
+          child: Text(
+            PinUnlockScreen.lockedOutTitle,
+            style: theme.textTheme.headlineSmall,
+          ),
+        ),
+        const SizedBox(height: DsSpacing.sm),
+        Center(
+          child: Text(
+            '${PinUnlockScreen.lockedOutMessage} '
+            '${_formatCountdown(_lockoutRemaining)}',
+            style: theme.textTheme.titleMedium?.copyWith(
+              color: palette.textPrimary,
+              fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
+            ),
+          ),
+        ),
+        const SizedBox(height: DsSpacing.xl),
+        Center(child: DsPinDots(filled: 0, total: length, error: true)),
+        const SizedBox(height: DsSpacing.xl),
+        DsPinPad(onDigit: (_) {}, onDelete: () {}, enabled: false),
+        const SizedBox(height: DsSpacing.lg),
+        Center(
+          child: DsButton(
+            label: PinUnlockScreen.backLabel,
+            variant: DsButtonVariant.ghost,
+            onPressed: () => Navigator.of(context).pop(false),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildNoCredential() {
+    final ThemeData theme = Theme.of(context);
+    final DsPalette palette = context.dsColors;
+    return ListView(
+      key: const ValueKey<String>('no_credential'),
+      padding: const EdgeInsets.fromLTRB(24, 48, 24, 24),
+      children: <Widget>[
+        Center(
+          child: Container(
+            width: 96,
+            height: 96,
+            decoration: BoxDecoration(
+              color: palette.warning.withValues(alpha: 0.12),
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: palette.warning.withValues(alpha: 0.4),
+              ),
+            ),
+            child: Icon(Icons.lock_open, size: 44, color: palette.warning),
+          ),
+        ),
+        const SizedBox(height: DsSpacing.xl),
+        Center(
+          child: Text(
+            PinUnlockScreen.noCredentialTitle,
+            style: theme.textTheme.headlineSmall,
+          ),
+        ),
+        const SizedBox(height: DsSpacing.sm),
+        Center(
+          child: Text(
+            PinUnlockScreen.noCredentialMessage,
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: palette.textSecondary,
+            ),
+          ),
+        ),
+        const SizedBox(height: DsSpacing.xxl),
+        DsButton(
+          label: PinUnlockScreen.setUpPinLabel,
+          expand: true,
+          onPressed: () => Navigator.of(context)
+              .pushReplacementNamed(RouteNames.pinSetup),
+        ),
+        const SizedBox(height: DsSpacing.md),
+        DsButton(
+          label: PinUnlockScreen.backLabel,
+          variant: DsButtonVariant.outline,
+          expand: true,
+          onPressed: () => Navigator.of(context).pop(false),
+        ),
+      ],
+    );
+  }
+}
+
+/// Inline error banner shown above the dots.
+class _ErrorBanner extends StatelessWidget {
+  const _ErrorBanner({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final DsPalette palette = context.dsColors;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: palette.danger.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(DsRadii.md),
+        border: Border.all(color: palette.danger.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        children: <Widget>[
+          Icon(Icons.error_outline, size: 18, color: palette.danger),
+          const SizedBox(width: DsSpacing.sm),
+          Expanded(
+            child: Text(
+              message,
+              style: theme.textTheme.bodySmall?.copyWith(color: palette.danger),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}

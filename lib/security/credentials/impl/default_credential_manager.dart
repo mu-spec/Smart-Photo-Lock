@@ -82,6 +82,7 @@ class DefaultCredentialManager implements CredentialManager {
         primaryAuthType: AuthType.pin,
         failedAttempts: 0,
         clearLockout: true,
+        pinLength: pin.length,
       ),
     );
     if (reset.isFailure) {
@@ -230,6 +231,7 @@ class DefaultCredentialManager implements CredentialManager {
       primary: primary,
       failedAttempts: s.failedAttempts,
       lockedOutUntil: s.lockedOutUntil,
+      pinLength: s.pinLength,
     );
   }
 

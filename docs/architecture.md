@@ -270,6 +270,33 @@ SecuritySettings.pinHash ──► AES-256-GCM (Keystore-backed master key)
   raw PIN appears nowhere in storage, and that corrupted or weakened records
   are rejected on both save and load paths.
 
+## 2E. PIN unlock screen
+
+`ui/screens/pin/pin_unlock_screen.dart` authenticates with the **configured
+PIN** (RouteNames.pinUnlock, pops `true` on success):
+
+```
+open ──► status(): enrolled length (4/6) recorded at enrollment
+         │
+         ├─ no PIN / no length ──► guided recovery (Set up PIN / Back)
+         ├─ lockout already active ──► live countdown, pad disabled
+         └─ ready ──► dots sized to the configured length ──► auto-submit
+              │
+              ├─ correct ──► pop(true)            (manager resets counters)
+              ├─ wrong   ──► inline error + remaining attempts + shake
+              └─ locked  ──► countdown (persisted lockout; re-enables on expiry)
+```
+
+- Reuses `DsPinDots` + `DsPinPad` and the new shared `EntryShakeMixin`
+  (extracted from the setup screen).
+- The PIN **length** is recorded in settings at enrollment (`pinLength`) and
+  mirrored into `CredentialState` — the stored hash itself never reveals it.
+- Lockout countdown is driven by a 1-second timer with an injectable clock
+  (`now`) for tests; persisted lockouts are picked up the moment the screen
+  opens.
+- The Security tab's "Unlock PIN" row now opens this screen (snackbar hint
+  when no PIN is enrolled; "Authenticated ✓" on success).
+
 ---
 
 ## 1. The eight modules
@@ -354,6 +381,7 @@ implementation is deferred.
 | Upcoming phase | Modules it will implement |
 | -------------- | ------------------------- |
 | PIN setup | `ui` (setup screen ready in 2B), `security/credentials` (manager ready in 2A), `data` (SecuritySettingsRepository — ready in 1E) |
+| PIN unlock | `ui` (unlock screen ready in 2E), `security/credentials` (verify + lockout ready in 2A/2D) |
 | Pattern & biometric setup | `ui` (screens), `security/credentials` (hashers/options ready in 2A), `services/biometric_service` impl |
 | App list | `ui` (list screen — replaces Apps placeholder), `services/installed_apps_service` (native impl), `data/installed_apps_repository` (cache impl), `ProtectedAppsRepository` (ready in 1E) |
 | Smart automations | `ui` (replaces Smart placeholder), `rules` (already done), `data` (ready in 1E) |

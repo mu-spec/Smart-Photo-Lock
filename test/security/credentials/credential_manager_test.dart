@@ -50,6 +50,14 @@ void main() {
     expect(state.status, CredentialStatus.enrolled);
   });
 
+  test('enrollPin records the PIN length for the unlock screen', () async {
+    await manager.enrollPin('1234');
+    expect((await manager.status()).valueOrNull!.pinLength, 4);
+
+    await manager.enrollPin('246810');
+    expect((await manager.status()).valueOrNull!.pinLength, 6);
+  });
+
   test('PIN authentication succeeds with the right PIN', () async {
     await manager.enrollPin('1234');
     final result = (await manager.authenticatePin('1234')).valueOrNull!;

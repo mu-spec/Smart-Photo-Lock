@@ -21,6 +21,7 @@ class CredentialState {
     this.primary,
     this.failedAttempts = 0,
     this.lockedOutUntil,
+    this.pinLength,
   });
 
   /// Every enrolled credential type.
@@ -35,6 +36,10 @@ class CredentialState {
 
   /// When the current lockout expires (null = not locked out).
   final DateTime? lockedOutUntil;
+
+  /// Length of the enrolled PIN (4 or 6), mirrored from settings so the
+  /// unlock screen can size its entry dots.
+  final int? pinLength;
 
   /// Status resolved against [now].
   CredentialStatus statusAt(DateTime now) {
@@ -60,12 +65,15 @@ class CredentialState {
     int? failedAttempts,
     DateTime? lockedOutUntil,
     bool clearLockout = false,
+    int? pinLength,
   }) {
     return CredentialState(
       enrolled: enrolled ?? this.enrolled,
       primary: primary ?? this.primary,
       failedAttempts: failedAttempts ?? this.failedAttempts,
-      lockedOutUntil: clearLockout ? null : (lockedOutUntil ?? this.lockedOutUntil),
+      lockedOutUntil:
+          clearLockout ? null : (lockedOutUntil ?? this.lockedOutUntil),
+      pinLength: pinLength ?? this.pinLength,
     );
   }
 
@@ -74,6 +82,7 @@ class CredentialState {
         'primary': primary?.storageName,
         'failedAttempts': failedAttempts,
         'lockedOutUntilEpochMs': lockedOutUntil?.millisecondsSinceEpoch,
+        'pinLength': pinLength,
       };
 
   factory CredentialState.fromJson(Map<String, dynamic> json) =>
@@ -90,6 +99,7 @@ class CredentialState {
             : DateTime.fromMillisecondsSinceEpoch(
                 json['lockedOutUntilEpochMs'] as int,
               ),
+        pinLength: json['pinLength'] as int?,
       );
 
   @override

@@ -57,12 +57,24 @@ void main() {
       primary: AuthType.pin,
       failedAttempts: 3,
       lockedOutUntil: lockoutEnd,
+      pinLength: 6,
     );
     final CredentialState restored = CredentialState.fromJson(state.toJson());
     expect(restored.enrolled, state.enrolled);
     expect(restored.primary, AuthType.pin);
     expect(restored.failedAttempts, 3);
     expect(restored.lockedOutUntil, lockoutEnd);
+    expect(restored.pinLength, 6);
+  });
+
+  test('copyWith preserves pinLength when updating counters', () {
+    final CredentialState state = const CredentialState(
+      enrolled: <AuthType>{AuthType.pin},
+      pinLength: 4,
+    );
+    final CredentialState updated = state.copyWith(failedAttempts: 2);
+    expect(updated.failedAttempts, 2);
+    expect(updated.pinLength, 4);
   });
 
   test('JSON round-trip with no lockout and no primary', () {

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../app/app_scope.dart';
 import '../../../design_system/design_system.dart';
 import '../../../security/credentials/credential_manager.dart';
+import '../../widgets/entry_shake.dart';
 
 /// Steps of the PIN setup flow.
 enum PinSetupStep {
@@ -62,7 +63,7 @@ class PinSetupScreen extends StatefulWidget {
 }
 
 class _PinSetupScreenState extends State<PinSetupScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, EntryShakeMixin {
   PinSetupStep _step = PinSetupStep.chooseLength;
   int? _length;
   String _entered = '';
@@ -70,38 +71,10 @@ class _PinSetupScreenState extends State<PinSetupScreen>
   String? _error;
   bool _saving = false;
 
-  late final AnimationController _shakeController;
-  late final Animation<Offset> _shake;
-
   @override
   void initState() {
     super.initState();
-    _shakeController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 420),
-    );
-    _shake = TweenSequence<Offset>(<TweenSequenceItem<Offset>>[
-      TweenSequenceItem<Offset>(
-        tween: Tween<Offset>(begin: Offset.zero, end: const Offset(0.06, 0)),
-        weight: 1,
-      ),
-      TweenSequenceItem<Offset>(
-        tween: Tween<Offset>(begin: const Offset(0.06, 0), end: const Offset(-0.06, 0)),
-        weight: 1,
-      ),
-      TweenSequenceItem<Offset>(
-        tween: Tween<Offset>(begin: const Offset(-0.06, 0), end: const Offset(0.04, 0)),
-        weight: 1,
-      ),
-      TweenSequenceItem<Offset>(
-        tween: Tween<Offset>(begin: const Offset(0.04, 0), end: const Offset(-0.03, 0)),
-        weight: 1,
-      ),
-      TweenSequenceItem<Offset>(
-        tween: Tween<Offset>(begin: const Offset(-0.03, 0), end: Offset.zero),
-        weight: 1,
-      ),
-    ]).animate(_shakeController);
+    initShake();
 
     final int? initial = widget.initialLength;
     if (initial != null) {
@@ -112,7 +85,7 @@ class _PinSetupScreenState extends State<PinSetupScreen>
 
   @override
   void dispose() {
-    _shakeController.dispose();
+    disposeShake();
     super.dispose();
   }
 
@@ -212,7 +185,7 @@ class _PinSetupScreenState extends State<PinSetupScreen>
     if (_entered == _firstPin) {
       await _enroll(_entered);
     } else {
-      _shakeController.forward(from: 0);
+      shake();
       setState(() {
         _step = PinSetupStep.mismatch;
         _entered = '';
@@ -352,10 +325,7 @@ class _PinSetupScreenState extends State<PinSetupScreen>
         ],
         const SizedBox(height: DsSpacing.xl),
         Center(
-          child: SlideTransition(
-            position: _shake,
-            child: DsPinDots(filled: _entered.length, total: length),
-          ),
+          child: shakeWrap(DsPinDots(filled: _entered.length, total: length)),
         ),
         const SizedBox(height: DsSpacing.xl),
         DsPinPad(
@@ -428,10 +398,7 @@ class _PinSetupScreenState extends State<PinSetupScreen>
         ),
         const SizedBox(height: DsSpacing.xl),
         Center(
-          child: SlideTransition(
-            position: _shake,
-            child: DsPinDots(filled: 0, total: length, error: true),
-          ),
+          child: shakeWrap(DsPinDots(filled: 0, total: length, error: true)),
         ),
         const SizedBox(height: DsSpacing.xxl),
         DsButton(

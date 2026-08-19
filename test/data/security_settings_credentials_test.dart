@@ -30,6 +30,7 @@ void main() {
       primaryAuthType: AuthType.pattern,
       failedAttempts: 4,
       lockedOutUntil: DateTime(2026, 8, 19, 12, 5),
+      pinLength: 6,
     );
 
     final SecuritySettings restored =
@@ -44,6 +45,14 @@ void main() {
     expect(restored.primaryAuthType, AuthType.pattern);
     expect(restored.failedAttempts, 4);
     expect(restored.lockedOutUntil, DateTime(2026, 8, 19, 12, 5));
+    expect(restored.pinLength, 6);
+  });
+
+  test('pinLength round-trips and can be cleared', () {
+    final SecuritySettings settings =
+        SecuritySettings.defaults.copyWith(pinLength: 4);
+    expect(SecuritySettings.fromJson(settings.toJson()).pinLength, 4);
+    expect(settings.copyWith(clearPinLength: true).pinLength, isNull);
   });
 
   test('legacy JSON (Phase 1) still parses with the new defaults', () {

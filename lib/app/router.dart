@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../ui/screens/pin/pin_setup_screen.dart';
+import '../ui/screens/pin/pin_unlock_screen.dart';
 import '../ui/shell/main_shell.dart';
 
 /// Central route registry.
@@ -14,10 +15,12 @@ abstract final class RouteNames {
   /// Initial PIN setup (Phase 2B) — also reused by the change-PIN flow.
   static const String pinSetup = '/pin/setup';
 
+  /// Full-screen PIN authentication (Phase 2E). Pops `true` on success.
+  static const String pinUnlock = '/pin/unlock';
+
   // Reserved for later phases — uncomment as the screens land:
   // static const String onboarding  = '/onboarding';
-  // static const String pinVerify   = '/pin/verify';
-  // static const String lockScreen  = '/lock'; // full-screen PIN challenge
+  // static const String lockScreen  = '/lock'; // overlay PIN challenge
 }
 
 /// Route name -> screen builder map consumed by `MaterialApp.routes`.
@@ -25,5 +28,6 @@ abstract final class AppRouter {
   static final Map<String, WidgetBuilder> routes = <String, WidgetBuilder>{
     RouteNames.home: (BuildContext context) => const MainShell(),
     RouteNames.pinSetup: (BuildContext context) => const PinSetupScreen(),
+    RouteNames.pinUnlock: (BuildContext context) => const PinUnlockScreen(),
   };
 }

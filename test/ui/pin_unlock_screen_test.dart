@@ -1,0 +1,231 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:smart_app_lock/app/app_scope.dart';
+import 'package:smart_app_lock/app/app_container.dart';
+import 'package:smart_app_lock/app/theme/app_theme.dart';
+import 'package:smart_app_lock/design_system/design_system.dart';
+import 'package:smart_app_lock/security/credentials/credential_state_machine.dart';
+import 'package:smart_app_lock/security/credentials/impl/default_credential_manager.dart';
+import 'package:smart_app_lock/security/credentials/pattern_hasher.dart';
+import 'package:smart_app_lock/security/pin_hasher.dart';
+import 'package:smart_app_lock/ui/screens/pin/pin_unlock_screen.dart';
+
+/// Phase 2E: PIN unlock screen — uses the configured PIN, handles wrong
+/// entries, lockouts (including pre-existing ones), countdown expiry and
+/// the not-configured state.
+void main() {
+  /// Builds the host: AppScope + a page that pushes the unlock screen and
+  /// records its pop result.
+  Future<AppContainer> pumpHosted(
+    WidgetTester tester, {
+    DateTime Function()? now,
+  }) async {
+    final AppContainer container = AppContainer.inMemory();
+    // Fast hashers + a low lockout threshold so the suite stays quick.
+    final DefaultCredentialManager manager = DefaultCredentialManager(
+      settings: container.securitySettings,
+      pinHasher: Pbkdf2PinHasher(iterations: 200),
+      patternHasher: Pbkdf2PatternHasher(iterations: 200),
+      stateMachine: const CredentialStateMachine(
+        maxFailedAttempts: 3,
+        lockoutDuration: Duration(seconds: 30),
+      ),
+    );
+    final List<Object?> results = <Object?>[];
+    await tester.pumpWidget(
+      AppScope(
+        container: container,
+        child: MaterialApp(
+          theme: AppTheme.dark,
+          home: Builder(
+            builder: (BuildContext context) => Scaffold(
+              body: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    TextButton(
+                      key: const Key('open_unlock'),
+                      onPressed: () async {
+                        final Object? res = await Navigator.of(context)
+                            .push<Object?>(MaterialPageRoute<Object?>(
+                          builder: (_) => PinUnlockScreen(
+                            credentialManager: manager,
+                            now: now,
+                          ),
+                        ));
+                        results.add(res);
+                      },
+                      child: const Text('open'),
+                    ),
+                    TextButton(
+                      key: const Key('close_unlock'),
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text('back'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    // Expose the manager + results for assertions.
+    _ManagerResults.manager = manager;
+    _ManagerResults.results = results;
+    return container;
+  }
+
+  Future<void> openUnlock(WidgetTester tester) async {
+    await tester.tap(find.byKey(const Key('open_unlock')));
+    await tester.pumpAndSettle();
+  }
+
+  Future<void> tapDigits(WidgetTester tester, String digits) async {
+    for (final String d in digits.split('')) {
+      await tester.tap(find.byKey(Key('pin_key_$d')));
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    // Entry completion delay + async verification.
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pump(const Duration(milliseconds: 100));
+  }
+
+  Future<void> enrollPin(WidgetTester tester, String pin) async {
+    await _ManagerResults.manager.enrollPin(pin);
+  }
+
+  int dotsTotal(WidgetTester tester) =>
+      tester.widget<DsPinDots>(find.byType(DsPinDots)).total;
+
+  testWidgets('dots match the configured PIN length (4 and 6)',
+      (WidgetTester tester) async {
+    await pumpHosted(tester);
+
+    await enrollPin(tester, '1234');
+    await openUnlock(tester);
+    expect(dotsTotal(tester), 4);
+
+    await tester.tap(find.byKey(const Key('close_unlock')));
+    await tester.pumpAndSettle();
+
+    await enrollPin(tester, '246810');
+    await openUnlock(tester);
+    expect(dotsTotal(tester), 6);
+    expect(find.text('Enter your 6-digit PIN'), findsOneWidget);
+  });
+
+  testWidgets('correct PIN pops with true', (WidgetTester tester) async {
+    await pumpHosted(tester);
+    await enrollPin(tester, '1234');
+    await openUnlock(tester);
+
+    await tapDigits(tester, '1234');
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('open_unlock')), findsOneWidget); // back home
+    expect(_ManagerResults.results.last, true);
+  });
+
+  testWidgets('wrong PIN shows the error with remaining attempts and stays',
+      (WidgetTester tester) async {
+    await pumpHosted(tester);
+    await enrollPin(tester, '1234');
+    await openUnlock(tester);
+
+    await tapDigits(tester, '9999');
+
+    expect(find.text('Incorrect PIN — 2 attempts left.'), findsOneWidget);
+    expect(find.byKey(const Key('open_unlock')), findsNothing); // not popped
+    // Entry was cleared for the retry.
+    expect(tester.widget<DsPinDots>(find.byType(DsPinDots)).filled, 0);
+  });
+
+  testWidgets('reaching the threshold opens the lockout view with a countdown',
+      (WidgetTester tester) async {
+    await pumpHosted(tester);
+    await enrollPin(tester, '1234');
+    await openUnlock(tester);
+
+    await tapDigits(tester, '9999');
+    await tapDigits(tester, '8888');
+    await tapDigits(tester, '7777');
+
+    expect(find.text(PinUnlockScreen.lockedOutTitle), findsOneWidget);
+    expect(find.textContaining(PinUnlockScreen.lockedOutMessage),
+        findsOneWidget);
+
+    // The pad is disabled: further taps change nothing.
+    await tester.tap(find.byKey(const Key('pin_key_1')));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text(PinUnlockScreen.lockedOutTitle), findsOneWidget);
+
+    // Tear down so the periodic timer is disposed.
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('a pre-existing lockout is picked up when the screen opens',
+      (WidgetTester tester) async {
+    await pumpHosted(tester);
+    await enrollPin(tester, '1234');
+
+    // Trigger a lockout through the manager (as if an earlier attempt
+    // happened before opening the screen).
+    await _ManagerResults.manager.authenticatePin('9999');
+    await _ManagerResults.manager.authenticatePin('8888');
+    await _ManagerResults.manager.authenticatePin('7777');
+
+    await openUnlock(tester);
+    expect(find.text(PinUnlockScreen.lockedOutTitle), findsOneWidget);
+    expect(find.textContaining(PinUnlockScreen.lockedOutMessage),
+        findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('countdown expiry re-enables the pad', (WidgetTester tester) async {
+    DateTime fakeNow = DateTime.now();
+    await pumpHosted(tester, now: () => fakeNow);
+    await enrollPin(tester, '1234');
+    await openUnlock(tester);
+
+    await tapDigits(tester, '9999');
+    await tapDigits(tester, '8888');
+    await tapDigits(tester, '7777');
+    expect(find.text(PinUnlockScreen.lockedOutTitle), findsOneWidget);
+
+    // Advance past the 30s lockout and let the periodic tick fire.
+    fakeNow = fakeNow.add(const Duration(seconds: 31));
+    await tester.pump(const Duration(seconds: 1));
+
+    expect(find.text(PinUnlockScreen.lockedOutTitle), findsNothing);
+    expect(find.text('Enter your 4-digit PIN'), findsOneWidget);
+
+    // Teardown (a new timer no longer exists, but stay safe).
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('no configured PIN shows the guided recovery view',
+      (WidgetTester tester) async {
+    await pumpHosted(tester);
+    await openUnlock(tester);
+
+    expect(find.text(PinUnlockScreen.noCredentialTitle), findsOneWidget);
+    expect(find.text(PinUnlockScreen.noCredentialMessage), findsOneWidget);
+    expect(find.text(PinUnlockScreen.setUpPinLabel), findsOneWidget);
+
+    // Back pops false without a credential.
+    await tester.tap(find.text(PinUnlockScreen.backLabel));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('open_unlock')), findsOneWidget);
+    expect(_ManagerResults.results.last, false);
+  });
+}
+
+/// Test-only holder so helper functions can reach the manager and results
+/// without threading them through every call.
+class _ManagerResults {
+  static late DefaultCredentialManager manager;
+  static late List<Object?> results;
+}

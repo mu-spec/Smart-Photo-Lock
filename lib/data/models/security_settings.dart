@@ -73,6 +73,11 @@ class SecuritySettings {
   /// When the current lockout expires (null = not locked out).
   final DateTime? lockedOutUntil;
 
+  /// Length of the enrolled PIN (4 or 6). Recorded at enrollment so the
+  /// unlock screen knows how many digits to expect without inspecting the
+  /// stored hash.
+  final int? pinLength;
+
   /// True once a PIN credential exists (the original primary secret).
   bool get hasPin => pinHash != null;
 
@@ -101,6 +106,8 @@ class SecuritySettings {
     int? failedAttempts,
     DateTime? lockedOutUntil,
     bool clearLockout = false,
+    int? pinLength,
+    bool clearPinLength = false,
   }) {
     return SecuritySettings(
       pinHash: clearPin ? null : (pinHash ?? this.pinHash),
@@ -122,6 +129,8 @@ class SecuritySettings {
       failedAttempts: failedAttempts ?? this.failedAttempts,
       lockedOutUntil:
           clearLockout ? null : (lockedOutUntil ?? this.lockedOutUntil),
+      pinLength:
+          clearPinLength ? null : (pinLength ?? this.pinLength),
     );
   }
 
@@ -139,6 +148,7 @@ class SecuritySettings {
         'unlockSessionWindowSeconds': unlockSessionWindow.inSeconds,
         'failedAttempts': failedAttempts,
         'lockedOutUntilEpochMs': lockedOutUntil?.millisecondsSinceEpoch,
+        'pinLength': pinLength,
       };
 
   factory SecuritySettings.fromJson(Map<String, dynamic> json) =>
@@ -181,6 +191,7 @@ class SecuritySettings {
             : DateTime.fromMillisecondsSinceEpoch(
                 json['lockedOutUntilEpochMs'] as int,
               ),
+        pinLength: json['pinLength'] as int?,
       );
 
   @override
