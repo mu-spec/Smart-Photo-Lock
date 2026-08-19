@@ -8,7 +8,7 @@ import 'package:smart_app_lock/security/credentials/credential_hash_policy.dart'
 void main() {
   const CredentialHash valid = CredentialHash(
     salt: 'c2FsdHNhbHRzYWx0c2FsdA==', // 16 bytes
-    digest: 'ZGlmZmllcg==', // placeholder, replaced per case
+    digest: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=', // 32 bytes
     iterations: 50000,
     keyLength: 32,
   );

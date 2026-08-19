@@ -36,12 +36,14 @@ class DefaultCredentialManager implements CredentialManager {
     CredentialStateMachine? stateMachine,
     PinCredentialStore? pinStore,
     BiometricService? biometricService,
+    DateTime Function()? now,
   })  : _settings = settings,
         _pinHasher = pinHasher ?? Pbkdf2PinHasher(),
         _patternHasher = patternHasher ?? Pbkdf2PatternHasher(),
         _machine = stateMachine ?? CredentialStateMachine(),
         _pinStore = pinStore ?? DefaultPinCredentialStore(settings),
-        _biometrics = biometricService;
+        _biometrics = biometricService,
+        _now = now ?? DateTime.now;
 
   final SecuritySettingsRepository _settings;
   final PinHasher _pinHasher;
@@ -52,6 +54,10 @@ class DefaultCredentialManager implements CredentialManager {
   /// Platform biometric service; null = not wired (attempts fail with
   /// [AuthFailureReason.notAvailable] — never a fabricated success).
   final BiometricService? _biometrics;
+
+  /// Clock seam (Phase 2L QA): lockout timestamps come from here so tests
+  /// can drive time deterministically; defaults to [DateTime.now].
+  final DateTime Function() _now;
 
   // -- status -------------------------------------------------------------
 
@@ -186,7 +192,7 @@ class DefaultCredentialManager implements CredentialManager {
     final SecuritySettings s = loaded.valueOrNull!;
 
     final CredentialState state = _stateFrom(s);
-    final AuthLockedOut? activeLockout = _activeLockout(state, DateTime.now());
+    final AuthLockedOut? activeLockout = _activeLockout(state, _now());
     if (activeLockout != null) {
       return Result.success(activeLockout);
     }
@@ -218,7 +224,7 @@ class DefaultCredentialManager implements CredentialManager {
     }
 
     final CredentialState state = _stateFrom(s);
-    final AuthLockedOut? activeLockout = _activeLockout(state, DateTime.now());
+    final AuthLockedOut? activeLockout = _activeLockout(state, _now());
     if (activeLockout != null) {
       return Result.success(activeLockout);
     }
@@ -260,7 +266,7 @@ class DefaultCredentialManager implements CredentialManager {
 
     // 2. Lockout gates everything — even the correct biometric.
     final CredentialState state = _stateFrom(s);
-    final AuthLockedOut? activeLockout = _activeLockout(state, DateTime.now());
+    final AuthLockedOut? activeLockout = _activeLockout(state, _now());
     if (activeLockout != null) {
       return Result.success(activeLockout);
     }
@@ -370,7 +376,7 @@ class DefaultCredentialManager implements CredentialManager {
       state: state,
       credentialMatches: matches,
       attemptType: type,
-      now: DateTime.now(),
+      now: _now(),
     );
     final Result<void> saved = await _settings.saveSettings(
       s.copyWith(

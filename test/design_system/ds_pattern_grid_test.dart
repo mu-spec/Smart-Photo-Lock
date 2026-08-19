@@ -9,6 +9,10 @@ import 'package:smart_app_lock/design_system/design_system.dart';
 void main() {
   const double size = 280;
 
+  /// Shared state for the controlled-grid gesture tests (the widget's
+  /// parent owns the selected sequence, mirroring the real screens).
+  List<int> _current = <int>[];
+
   Widget wrap({required Widget grid}) => MaterialApp(
         theme: AppTheme.dark,
         home: Scaffold(
@@ -45,12 +49,23 @@ void main() {
       (WidgetTester tester) async {
     final List<List<int>> sequences = <List<int>>[];
     bool ended = false;
+    // DsPatternGrid is a CONTROLLED widget: the parent owns the selected
+    // sequence. Drive it through a stateful host exactly like the real
+    // screens do, otherwise every onNodeAdded re-reads the stale prop.
+    _current = <int>[];
     await tester.pumpWidget(
       wrap(
-        grid: DsPatternGrid(
-          nodes: const <int>[],
-          onNodeAdded: sequences.add,
-          onDragEnd: () => ended = true,
+        grid: StatefulBuilder(
+          builder: (BuildContext context, StateSetter setState) {
+            return DsPatternGrid(
+              nodes: _current,
+              onNodeAdded: (List<int> sequence) {
+                setState(() => _current = sequence);
+                sequences.add(sequence);
+              },
+              onDragEnd: () => ended = true,
+            );
+          },
         ),
       ),
     );
@@ -75,9 +90,23 @@ void main() {
   testWidgets('a node cannot be visited twice in one stroke',
       (WidgetTester tester) async {
     final List<List<int>> sequences = <List<int>>[];
+    _current = <int>[];
     await tester.pumpWidget(
-      wrap(grid: DsPatternGrid(nodes: const <int>[], onNodeAdded: sequences.add)),
+      wrap(
+        grid: StatefulBuilder(
+          builder: (BuildContext context, StateSetter setState) {
+            return DsPatternGrid(
+              nodes: _current,
+              onNodeAdded: (List<int> sequence) {
+                setState(() => _current = sequence);
+                sequences.add(sequence);
+              },
+            );
+          },
+        ),
+      ),
     );
+
     final Offset origin = gridOrigin(tester);
     final TestGesture gesture =
         await tester.startGesture(origin + centerOf(1));

@@ -42,6 +42,8 @@ void main() {
         lockoutDuration: Duration(seconds: 30),
       ),
       biometricService: biometricService,
+      // Same clock as the screen: lockout timestamps stay deterministic.
+      now: now,
     );
     final List<Object?> results = <Object?>[];
     await tester.pumpWidget(
@@ -259,11 +261,11 @@ void main() {
     expect(find.text('Cooldown increases with repeated failures.'),
         findsNothing);
 
-    // The manager records the streak and a ~30s cooldown (real clock).
+    // The manager records the streak and a ~30s cooldown (both the
+    // manager and the screen now share the injected clock).
     final state1 = (await _ManagerResults.manager.status()).valueOrNull!;
     expect(state1.lockoutStreak, 1);
-    final int cooldown1 =
-        state1.lockedOutUntil!.difference(DateTime.now()).inSeconds;
+    final int cooldown1 = state1.lockedOutUntil!.difference(fakeNow).inSeconds;
     expect(cooldown1, inInclusiveRange(25, 30));
 
     // Wait the lockout out (screen countdown uses the injected clock;
@@ -282,8 +284,7 @@ void main() {
 
     final state2 = (await _ManagerResults.manager.status()).valueOrNull!;
     expect(state2.lockoutStreak, 2);
-    final int cooldown2 =
-        state2.lockedOutUntil!.difference(DateTime.now()).inSeconds;
+    final int cooldown2 = state2.lockedOutUntil!.difference(fakeNow).inSeconds;
     expect(cooldown2, inInclusiveRange(50, 60));
 
     await tester.pumpWidget(const SizedBox.shrink());

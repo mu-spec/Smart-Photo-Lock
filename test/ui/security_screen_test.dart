@@ -5,6 +5,7 @@ import 'package:smart_app_lock/app/app_scope.dart';
 import 'package:smart_app_lock/app/app_container.dart';
 import 'package:smart_app_lock/app/router.dart';
 import 'package:smart_app_lock/app/theme/app_theme.dart';
+import 'package:smart_app_lock/design_system/design_system.dart';
 import 'package:smart_app_lock/security/credentials/auth_type.dart';
 import 'package:smart_app_lock/security/credentials/biometric_options.dart';
 import 'package:smart_app_lock/ui/screens/pattern/pattern_change_screen.dart';
@@ -52,8 +53,8 @@ void main() {
         ),
       ),
     );
-    // Let the async settings load complete.
-    await tester.pump();
+    // Let the async settings load complete (status load + setState).
+    await tester.pumpAndSettle();
     return c;
   }
 
@@ -63,8 +64,17 @@ void main() {
   testWidgets('PIN row reads Set up PIN when nothing is enrolled',
       (WidgetTester tester) async {
     await pumpWithScope(tester);
-    expect(find.text(SecurityScreen.setPinTitle), findsOneWidget);
-    expect(find.text(SecurityScreen.changePinTitle), findsNothing);
+    // Scoped to the row: the banner's action button also reads
+    // 'Set up PIN', so unscoped text finders are ambiguous.
+    final Finder row = find.widgetWithText(
+      SecurityStatusItem,
+      SecurityScreen.setPinTitle,
+    );
+    expect(row, findsOneWidget);
+    expect(
+      find.widgetWithText(SecurityStatusItem, SecurityScreen.changePinTitle),
+      findsNothing,
+    );
   });
 
   testWidgets('PIN row reads Change PIN when a PIN is enrolled',
@@ -72,7 +82,10 @@ void main() {
     final AppContainer container = await pumpWithScope(tester);
     await container.auth.enrollPin('1234');
     await pumpWithScope(tester, container: container);
-    expect(find.text(SecurityScreen.changePinTitle), findsOneWidget);
+    expect(
+      find.widgetWithText(SecurityStatusItem, SecurityScreen.changePinTitle),
+      findsOneWidget,
+    );
   });
 
   testWidgets('tapping Change PIN opens the change flow (verify first)',
@@ -81,7 +94,9 @@ void main() {
     await container.auth.enrollPin('1234');
     await pumpWithScope(tester, container: container);
 
-    await tester.tap(find.text(SecurityScreen.changePinTitle));
+    await tester.tap(
+      find.widgetWithText(SecurityStatusItem, SecurityScreen.changePinTitle),
+    );
     await tester.pumpAndSettle();
 
     // The change flow pushes the current-PIN verification first.
@@ -96,8 +111,13 @@ void main() {
       (WidgetTester tester) async {
     await pumpWithScope(tester);
 
-    expect(find.text(SecurityScreen.setPatternTitle), findsOneWidget);
-    await tester.tap(find.text(SecurityScreen.setPatternTitle));
+    expect(
+      find.widgetWithText(SecurityStatusItem, SecurityScreen.setPatternTitle),
+      findsOneWidget,
+    );
+    await tester.tap(
+      find.widgetWithText(SecurityStatusItem, SecurityScreen.setPatternTitle),
+    );
     await tester.pumpAndSettle();
 
     expect(find.text(PatternSetupScreen.enterTitle), findsOneWidget);
@@ -110,8 +130,13 @@ void main() {
     await container.auth.enrollPattern(const <int>[1, 2, 3, 6]);
     await pumpWithScope(tester, container: container);
 
-    expect(find.text(SecurityScreen.changePatternTitle), findsOneWidget);
-    await tester.tap(find.text(SecurityScreen.changePatternTitle));
+    expect(
+      find.widgetWithText(SecurityStatusItem, SecurityScreen.changePatternTitle),
+      findsOneWidget,
+    );
+    await tester.tap(
+      find.widgetWithText(SecurityStatusItem, SecurityScreen.changePatternTitle),
+    );
     await tester.pumpAndSettle();
 
     // Change flow: current-pattern verification first.

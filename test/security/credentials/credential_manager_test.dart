@@ -158,6 +158,11 @@ void main() {
 
   test('biometric enrollment records options and auth fails gracefully',
       () async {
+    // Biometric unlock always requires a primary credential; with one
+    // enrolled and options configured but no platform service wired, the
+    // outcome is notAvailable (configured but platform unavailable) —
+    // never a fabricated success.
+    await manager.enrollPin('1234');
     await manager.updateBiometricOptions(
       const BiometricOptions(allowDeviceCredential: false),
     );

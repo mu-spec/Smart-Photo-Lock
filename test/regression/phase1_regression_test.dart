@@ -225,12 +225,16 @@ void main() {
       Color? bgDark;
       Brightness? brightnessViaTokens;
 
+      // The test environment reports a LIGHT platform brightness, so the
+      // dark probe must FORCE dark via themeMode — assigning the same
+      // ThemeData to both theme and darkTheme always resolves light.
       Widget probe(Brightness brightness) {
-        final ThemeData theme =
-            brightness == Brightness.light ? AppTheme.light : AppTheme.dark;
         return MaterialApp(
-          theme: theme,
-          darkTheme: theme,
+          theme: AppTheme.light,
+          darkTheme: AppTheme.dark,
+          themeMode: brightness == Brightness.light
+              ? ThemeMode.light
+              : ThemeMode.dark,
           home: Scaffold(
             body: Builder(
               builder: (BuildContext context) {
