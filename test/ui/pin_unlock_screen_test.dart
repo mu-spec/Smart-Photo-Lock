@@ -234,6 +234,9 @@ void main() {
     // time during test pumps) and let the periodic tick fire.
     fakeNow = fakeNow.add(const Duration(seconds: 60));
     await tester.pump(const Duration(seconds: 1));
+    // Let the AnimatedSwitcher cross-fade finish: the outgoing lockout
+    // child is still in the tree mid-fade.
+    await tester.pump(const Duration(milliseconds: 300));
 
     expect(find.text(PinUnlockScreen.lockedOutTitle), findsNothing);
     expect(find.text('Enter your 4-digit PIN'), findsOneWidget);
@@ -268,6 +271,8 @@ void main() {
     // advance well past the cooldown to cover fake/real clock drift).
     fakeNow = fakeNow.add(const Duration(seconds: 60));
     await tester.pump(const Duration(seconds: 1));
+    // Let the AnimatedSwitcher cross-fade finish before asserting.
+    await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('Enter your 4-digit PIN'), findsOneWidget);
 
     // Second lockout: streak 2 -> doubled cooldown + escalation notice.

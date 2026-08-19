@@ -252,7 +252,13 @@ void main() {
       }
 
       await tester.pumpWidget(probe(Brightness.light));
+      await tester.pump(const Duration(milliseconds: 300));
+
       await tester.pumpWidget(probe(Brightness.dark));
+      // MaterialApp animates theme changes through AnimatedTheme (~200ms):
+      // without this pump, Theme.of reads the still-LIGHT intermediate
+      // value and both probes capture identical colors.
+      await tester.pump(const Duration(milliseconds: 300));
 
       expect(bgLight, isNot(bgDark));
       expect(bgDark, DsPalette.dark.background);

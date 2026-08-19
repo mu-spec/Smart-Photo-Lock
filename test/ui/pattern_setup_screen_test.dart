@@ -47,33 +47,56 @@ void main() {
     return container;
   }
 
-  // Node centers for the fixed 280x280 grid (10% padding, two equal gaps).
-  Offset nodeCenter(int node) {
-    final int i = node - 1;
-    return Offset(28 + (i % 3) * 112, 28 + (i ~/ 3) * 112);
-  }
-
   Future<void> drawPattern(WidgetTester tester, List<int> nodes) async {
     // Settle any pending step/view transition so exactly one grid is
-    // mounted (getTopLeft throws when the switcher still holds two).
-    await tester.pump(const Duration(milliseconds: 250));
-    final Offset origin = tester.getTopLeft(find.byType(DsPatternGrid));
+    // mounted (getRect throws when the switcher still holds two).
+    await tester.pump(const Duration(milliseconds: 300));
+    final Finder gridFinder = find.byType(DsPatternGrid);
+    expect(gridFinder, findsOneWidget);
+    final Rect bounds = tester.getRect(gridFinder);
+
+    // Node centers computed from the RENDERED bounds (10% padding, two
+    // equal gaps) — no hardcoded coordinates, matching the painter.
+    final double pad = bounds.width * 0.10;
+    final double step = (bounds.width - 2 * pad) / 2;
+    Offset center(int node) {
+      final int i = node - 1;
+      return Offset(
+        bounds.left + pad + (i % 3) * step,
+        bounds.top + pad + (i ~/ 3) * step,
+      );
+    }
+
     final TestGesture gesture =
-        await tester.startGesture(origin + nodeCenter(nodes.first));
+        await tester.startGesture(center(nodes.first));
     await tester.pump();
-    // Win the gesture arena with a small HORIZONTAL movement before any
-    // vertical leg: the enclosing scrollable would otherwise claim
-    // vertical drags and the grid's pan callbacks would never fire.
-    await gesture.moveBy(const Offset(24, 0));
+    // Win the gesture arena from the enclosing scrollable with a small
+    // HORIZONTAL movement (the scrollable's vertical drag rejects it,
+    // the grid's pan accepts it) before any vertical leg is drawn.
+    await gesture.moveBy(const Offset(20, 0));
     await tester.pump();
+
+    Offset current = center(nodes.first).translate(20, 0);
     for (final int node in nodes.skip(1)) {
-      await gesture.moveTo(origin + nodeCenter(node));
-      await tester.pump();
+      // Micro-step toward each node so the recognizer sees a continuous,
+      // device-like stroke and every hit test lands.
+      final Offset target = center(node);
+      const int steps = 6;
+      for (int s = 1; s <= steps; s++) {
+        final Offset next = Offset(
+          current.dx + (target.dx - current.dx) * s / steps,
+          current.dy + (target.dy - current.dy) * s / steps,
+        );
+        await gesture.moveTo(next);
+        await tester.pump();
+      }
+      current = target;
     }
     await gesture.up();
     await tester.pump();
-    // Let async verification/enrollment and step transitions finish.
-    await tester.pump(const Duration(milliseconds: 400));
+    // Let async verification/enrollment (PBKDF2 + encrypted settings) and
+    // step transitions finish.
+    await tester.pump(const Duration(milliseconds: 700));
   }
 
   testWidgets('draw → confirm → enroll → success (exact ordered sequence)',
@@ -196,22 +219,16 @@ void main() {
       (WidgetTester tester) async {
     await pumpHosted(tester);
 
-    // Draw a partial stroke, then clear before lifting is not possible
-    // (gesture already ended) — draw a short stroke, then clear.
-    await drawPattern(tester, const <int>[1, 2]); // rejected as too short
+    // A too-short stroke is rejected inline and the grid auto-clears.
+    await drawPattern(tester, const <int>[1, 2]);
     expect(find.text(PatternSetupScreen.tooShortMessage), findsOneWidget);
-    // After rejection the grid is already cleared; draw again and clear
-    // mid-progress via the button after completion.
-    final Offset origin = tester.getTopLeft(find.byType(DsPatternGrid));
-    final TestGesture gesture =
-        await tester.startGesture(origin + nodeCenter(1));
-    await tester.pump();
-    await gesture.moveTo(origin + nodeCenter(2));
-    await tester.pump();
-    await gesture.up();
-    await tester.pump();
-    // 2 dots -> error again; tap Clear to reset (already empty), then a
-    // valid draw still works.
+
+    // A second short stroke is rejected the same way.
+    await drawPattern(tester, const <int>[1, 2]);
+    expect(find.text(PatternSetupScreen.tooShortMessage), findsOneWidget);
+
+    // Clear resets state (the grid is already empty — the button must
+    // not crash) and a valid draw still advances to confirmation.
     await tester.tap(find.text(PatternSetupScreen.clearLabel));
     await tester.pump();
     await drawPattern(tester, const <int>[1, 2, 3, 6]);

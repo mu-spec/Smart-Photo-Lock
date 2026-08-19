@@ -81,6 +81,10 @@ void main() {
       (WidgetTester tester) async {
     final AppContainer container = await pumpWithScope(tester);
     await container.auth.enrollPin('1234');
+    // Tear down so the next pump creates a FRESH SecurityScreen State:
+    // identical widget types update elements in place and would keep the
+    // pre-enrollment state (initState would never re-run).
+    await tester.pumpWidget(const SizedBox.shrink());
     await pumpWithScope(tester, container: container);
     expect(
       find.widgetWithText(SecurityStatusItem, SecurityScreen.changePinTitle),
@@ -92,6 +96,10 @@ void main() {
       (WidgetTester tester) async {
     final AppContainer container = await pumpWithScope(tester);
     await container.auth.enrollPin('1234');
+    // Tear down so the next pump creates a FRESH SecurityScreen State:
+    // identical widget types update elements in place and would keep the
+    // pre-enrollment state (initState would never re-run).
+    await tester.pumpWidget(const SizedBox.shrink());
     await pumpWithScope(tester, container: container);
 
     await tester.tap(
@@ -128,6 +136,10 @@ void main() {
       (WidgetTester tester) async {
     final AppContainer container = await pumpWithScope(tester);
     await container.auth.enrollPattern(const <int>[1, 2, 3, 6]);
+    // Tear down so the next pump creates a FRESH SecurityScreen State:
+    // identical widget types update elements in place and would keep the
+    // pre-enrollment state (initState would never re-run).
+    await tester.pumpWidget(const SizedBox.shrink());
     await pumpWithScope(tester, container: container);
 
     expect(
@@ -228,6 +240,10 @@ void main() {
     final AppContainer container = await pumpWithScope(tester);
     await container.auth.enrollPin('1234');
     await container.auth.updateBiometricOptions(BiometricOptions.defaults);
+    // Tear down so the next pump creates a FRESH SecurityScreen State:
+    // identical widget types update elements in place and would keep the
+    // pre-enrollment state (initState would never re-run).
+    await tester.pumpWidget(const SizedBox.shrink());
     await pumpWithScope(tester, container: container);
 
     expect(find.text('Enabled'), findsOneWidget);
@@ -245,6 +261,10 @@ void main() {
       (WidgetTester tester) async {
     final AppContainer container = await pumpWithScope(tester);
     await container.auth.enrollPin('1234');
+    // Tear down so the next pump creates a FRESH SecurityScreen State:
+    // identical widget types update elements in place and would keep the
+    // pre-enrollment state (initState would never re-run).
+    await tester.pumpWidget(const SizedBox.shrink());
     await pumpWithScope(tester, container: container);
 
     await tester.tap(find.text('Biometric unlock'));
