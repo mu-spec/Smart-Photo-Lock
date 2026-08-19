@@ -5,7 +5,7 @@ publish_to: "none"
 
 # App version. versionCode (left of '+') and versionName (right of '+')
 # are consumed by the Android Gradle config (see android/app/build.gradle.kts).
-version: 0.16.0+17
+version: 0.17.0+18
 
 environment:
   sdk: ">=3.5.0 <4.0.0"
@@ -27,6 +27,9 @@ dependencies:
   flutter_secure_storage: ^11.0.0
   # Pure-Dart AES-GCM used to encrypt the security settings at rest.
   cryptography: ^2.9.0
+  # Android biometric authentication (wraps AndroidX BiometricPrompt /
+  # BiometricManager). Phase 2J.
+  local_auth: ^3.0.2
 
 dev_dependencies:
   flutter_test:

@@ -1,5 +1,6 @@
 import '../../../data/models/security_settings.dart';
 import '../../../data/repositories/security_settings_repository.dart';
+import '../../../services/biometric_service.dart';
 import '../../../utilities/result.dart';
 import '../../pin_hasher.dart';
 import '../../pin_policy.dart';
@@ -33,17 +34,23 @@ class DefaultCredentialManager implements CredentialManager {
     PatternHasher? patternHasher,
     CredentialStateMachine? stateMachine,
     PinCredentialStore? pinStore,
+    BiometricService? biometricService,
   })  : _settings = settings,
         _pinHasher = pinHasher ?? Pbkdf2PinHasher(),
         _patternHasher = patternHasher ?? Pbkdf2PatternHasher(),
         _machine = stateMachine ?? const CredentialStateMachine(),
-        _pinStore = pinStore ?? DefaultPinCredentialStore(settings);
+        _pinStore = pinStore ?? DefaultPinCredentialStore(settings),
+        _biometrics = biometricService;
 
   final SecuritySettingsRepository _settings;
   final PinHasher _pinHasher;
   final PatternHasher _patternHasher;
   final CredentialStateMachine _machine;
   final PinCredentialStore _pinStore;
+
+  /// Platform biometric service; null = not wired (attempts fail with
+  /// [AuthFailureReason.notAvailable] — never a fabricated success).
+  final BiometricService? _biometrics;
 
   // -- status -------------------------------------------------------------
 
@@ -118,11 +125,13 @@ class DefaultCredentialManager implements CredentialManager {
   }
 
   @override
-  Future<Result<void>> updateBiometricOptions(BiometricOptions options) async {
+  Future<Result<void>> updateBiometricOptions(BiometricOptions? options) async {
     final Result<SecuritySettings> loaded = await _settings.getSettings();
     return loaded.fold(
       (SecuritySettings s) => _settings.saveSettings(
-        s.copyWith(biometricOptions: options),
+        options == null
+            ? s.copyWith(clearBiometricOptions: true)
+            : s.copyWith(biometricOptions: options),
       ),
       Result.failure,
     );
@@ -206,13 +215,65 @@ class DefaultCredentialManager implements CredentialManager {
   Future<Result<AuthAttemptResult>> authenticateBiometric({
     String reason = 'Unlock Smart App Lock',
   }) async {
-    // Platform biometric prompt lands with the BiometricService phase.
-    // Fail explicitly — never pretend success without OS verification.
-    return Result.success(
-      const AuthFailure(
-        reason: AuthFailureReason.notAvailable,
-        remainingAttempts: 0,
-      ),
+    // 1. Configuration gates: biometric is an accelerator — it needs the
+    //    user's explicit opt-in AND an enrolled primary credential.
+    final Result<SecuritySettings> loaded = await _settings.getSettings();
+    if (loaded.isFailure) {
+      return Result.failure(loaded.errorOrNull!);
+    }
+    final SecuritySettings s = loaded.valueOrNull!;
+    final BiometricOptions? options = s.biometricOptions;
+    if (options == null || !s.hasAnyCredential) {
+      return Result.success(
+        const AuthFailure(
+          reason: AuthFailureReason.notConfigured,
+          remainingAttempts: 0,
+        ),
+      );
+    }
+
+    final BiometricService? service = _biometrics;
+    if (service == null) {
+      return Result.success(
+        const AuthFailure(
+          reason: AuthFailureReason.notAvailable,
+          remainingAttempts: 0,
+        ),
+      );
+    }
+
+    // 2. Lockout gates everything — even the correct biometric.
+    final CredentialState state = _stateFrom(s);
+    final AuthLockedOut? activeLockout = _activeLockout(state, DateTime.now());
+    if (activeLockout != null) {
+      return Result.success(activeLockout);
+    }
+
+    // 3. Capability check (BiometricManager).
+    final Result<bool> supported = await service.isSupported();
+    if (supported.isFailure || supported.valueOrNull != true) {
+      return Result.success(
+        const AuthFailure(
+          reason: AuthFailureReason.notAvailable,
+          remainingAttempts: 0,
+        ),
+      );
+    }
+
+    // 4. Prompt (BiometricPrompt). The OS owns verification.
+    final Result<bool> outcome =
+        await service.authenticate(reason: reason, options: options);
+    if (outcome.isFailure) {
+      // Platform rejection (canceled, not enrolled, ...) counts as a
+      // failed attempt so brute-forcing prompts cannot bypass lockouts.
+      return _evaluateAndPersist(s, state, false, AuthType.biometric);
+    }
+
+    return _evaluateAndPersist(
+      s,
+      state,
+      outcome.valueOrNull == true,
+      AuthType.biometric,
     );
   }
 

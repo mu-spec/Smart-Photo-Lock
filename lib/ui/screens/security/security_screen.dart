@@ -4,6 +4,8 @@ import '../../../app/app_scope.dart';
 import '../../../app/router.dart';
 import '../../../design_system/design_system.dart';
 import '../../../security/credentials/auth_type.dart';
+import '../../../security/credentials/biometric_options.dart';
+import '../../../utilities/result.dart';
 
 /// Security tab — real UI built on the design system's security status
 /// components.
@@ -31,13 +33,16 @@ class _SecurityScreenState extends State<SecurityScreen> {
   /// Cached value of the randomized-keypad setting (null while loading).
   bool? _randomized;
 
+  /// Whether biometric unlock is currently enabled.
+  bool _biometricEnrolled = false;
+
   @override
   void initState() {
     super.initState();
-    _loadRandomized();
+    _loadStatus();
   }
 
-  Future<void> _loadRandomized() async {
+  Future<void> _loadStatus() async {
     final auth = AppScope.read(context)?.auth;
     if (auth == null) {
       return; // no container in scope (pure widget tests)
@@ -46,7 +51,10 @@ class _SecurityScreenState extends State<SecurityScreen> {
     if (!mounted || state == null) {
       return;
     }
-    setState(() => _randomized = state.randomizedKeypadEnabled);
+    setState(() {
+      _randomized = state.randomizedKeypadEnabled;
+      _biometricEnrolled = state.hasEnrolled(AuthType.biometric);
+    });
   }
 
   Future<void> _setRandomized(bool value) async {
@@ -66,6 +74,75 @@ class _SecurityScreenState extends State<SecurityScreen> {
         const SnackBar(content: Text('Could not save the setting.')),
       );
     }
+  }
+
+  /// Phase 2J: enables (or disables) biometric unlock, with real
+  /// device-capability checks through the platform bridge.
+  Future<void> _onBiometricTap() async {
+    final container = AppScope.read(context);
+    if (container == null) {
+      return;
+    }
+    final auth = container.auth;
+    final service = container.biometrics;
+
+    if (_biometricEnrolled) {
+      await auth.updateBiometricOptions(null); // disable
+      if (!mounted) {
+        return;
+      }
+      setState(() => _biometricEnrolled = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Biometric unlock disabled.')),
+      );
+      return;
+    }
+
+    final state = (await auth.status()).valueOrNull;
+    if (state == null || !state.hasAnyCredential) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Set up a PIN or pattern first.')),
+      );
+      return;
+    }
+
+    final Result<bool> supported = await service.isSupported();
+    if (!mounted) {
+      return;
+    }
+    if (supported.isFailure || supported.valueOrNull != true) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Biometric authentication is not available '
+              'on this device.'),
+        ),
+      );
+      return;
+    }
+
+    // Tailor the configuration to what this device actually offers.
+    final Set<BiometricKind> kinds =
+        (await service.availableKinds()).valueOrNull ??
+            const <BiometricKind>{};
+    if (!mounted) {
+      return;
+    }
+    final BiometricOptions options = BiometricOptions(
+      allowStrongBiometrics: kinds.contains(BiometricKind.strong),
+      allowDeviceCredential: kinds.contains(BiometricKind.deviceCredential),
+      requireConfirmation: true,
+    );
+    await auth.updateBiometricOptions(options);
+    if (!mounted) {
+      return;
+    }
+    setState(() => _biometricEnrolled = true);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Biometric unlock enabled ✓')),
+    );
   }
 
   /// Handles the "Pattern unlock" row: opens pattern setup when nothing is
@@ -157,6 +234,17 @@ class _SecurityScreenState extends State<SecurityScreen> {
                   subtitle: 'Alternative to PIN — draw on a 3x3 grid',
                   level: SecurityLevel.notSet,
                   onTap: _onPatternTap,
+                ),
+                const Divider(),
+                SecurityStatusItem(
+                  icon: Icons.fingerprint,
+                  title: 'Biometric unlock',
+                  subtitle: 'Fingerprint / face via the Android BiometricPrompt',
+                  level: _biometricEnrolled
+                      ? SecurityLevel.secured
+                      : SecurityLevel.notSet,
+                  statusLabel: _biometricEnrolled ? 'Enabled' : null,
+                  onTap: _onBiometricTap,
                 ),
                 const Divider(),
                 _SwitchRow(

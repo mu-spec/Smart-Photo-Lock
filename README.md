@@ -31,6 +31,7 @@ setup screen. Locking is not implemented yet.
 | 2G | Randomized keypad (optional, default off for accessibility) | ✅ |
 | 2H | Pattern setup (creation + confirmation) | ✅ |
 | 2I | Pattern authentication (unlock with the saved pattern) | ✅ |
+| 2J | Biometric foundation (Android BiometricPrompt / BiometricManager) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -287,6 +288,28 @@ Full-screen authentication with the **saved pattern**
 - The Security tab's "Pattern unlock" row opens the unlock when a pattern
   is enrolled (setup otherwise); success shows "Authenticated ✓".
 
+### Phase 2J ✅ — Biometric Foundation
+
+Android biometric authentication through the supported AndroidX APIs
+(BiometricPrompt for the prompt, BiometricManager for capability checks)
+via the `local_auth` plugin:
+
+- **`LocalAuthBiometricService`** implements the 2A `BiometricService`
+  contract and fails closed (platform errors → `Failure`, never fake
+  success). Maps `BiometricOptions` onto the prompt (device-credential
+  fallback, confirmation requirement).
+- **`CredentialManager.authenticateBiometric`** now performs real
+  authentication: requires opt-in *and* an enrolled primary credential,
+  respects lockouts, counts failures toward the escalating cooldown, and
+  resets counters on success. `updateBiometricOptions(null)` disables.
+- **PIN unlock screen** shows a fingerprint slot ("Or use your fingerprint")
+  when biometric unlock is enabled — success pops `true`, failures show
+  reason-specific errors, lockouts reuse the countdown.
+- **Security tab** gains a live "Biometric unlock" row: enable (with real
+  device-capability checks tailored to available kinds), disable, or
+  guided messages when no primary credential exists / hardware is missing.
+- Manifest: `USE_BIOMETRIC` permission (required on API < 28).
+
 ```
 lib/
 ├── main.dart                 # entry point (boots AppContainer.create())
@@ -364,26 +387,33 @@ lib/
 │   ├── installed_apps_service.dart
 │   ├── overlay_lock_service.dart      # SYSTEM_ALERT_WINDOW strategy
 │   ├── accessibility_lock_service.dart# foreground-app detection
-│   └── device_admin_service.dart      # uninstall protection
+│   ├── device_admin_service.dart      # uninstall protection
+│   ├── biometric_service.dart         # BiometricPrompt contract (2A)
+│   └── impl/                 # LocalAuthBiometricService (2J, local_auth)
 └── utilities/                # leaf helpers (working)
     ├── result.dart           # Result<T> (Success/Failure) for every boundary
     ├── app_logger.dart       # leveled debug logging
     └── time_utils.dart       # minutes-of-day, overnight windows, formatting
 ```
 
-**Tests** (run with `flutter test`): pattern unlock suites (correct pattern
-pops true, reversed-direction unlock, wrong pattern error + cleared grid,
-too-short draws don't count, lockout view + disabled grid, pre-existing
-lockout on open, countdown expiry via injected clock, escalating second
-lockout, no-credential recovery, clear button), pattern setup suites (draw
-→ confirm → enroll with direction independence, mismatch state +
-nothing-saved, re-confirm, start-over, too-short inline error, clear,
-enrollment-failure recovery, route reachability), pattern grid component
-suites (hit-testing, stroke sequences, no-repeat, disabled, error painter
-state, geometry), Security tab pattern-row navigation (setup + unlock),
-randomized keypad suites (pad digit order rendering, deterministic seeded
-shuffle, opt-in unlock behavior with reshuffle-on-failure, Security tab
-toggle persistence + disabled-without-container), PIN unlock suites
+**Tests** (run with `flutter test`): biometric foundation suites (platform
+service fails closed without plugins, manager gates incl. opt-in / primary
+credential / unsupported hardware / lockout-blocks-biometric / failure
+counting / success counter reset / disable-via-null, PIN unlock fingerprint
+slot appearance + success pop + failure error + unconfigured hint, Security
+tab biometric row enable/disable/guided messages), pattern unlock suites
+(correct pattern pops true, reversed-direction unlock, wrong pattern error
++ cleared grid, too-short draws don't count, lockout view + disabled grid,
+pre-existing lockout on open, countdown expiry via injected clock,
+escalating second lockout, no-credential recovery, clear button), pattern
+setup suites (draw → confirm → enroll with direction independence, mismatch
+state + nothing-saved, re-confirm, start-over, too-short inline error,
+clear, enrollment-failure recovery, route reachability), pattern grid
+component suites (hit-testing, stroke sequences, no-repeat, disabled, error
+painter state, geometry), Security tab pattern-row navigation (setup +
+unlock), randomized keypad suites (pad digit order rendering, deterministic
+seeded shuffle, opt-in unlock behavior with reshuffle-on-failure, Security
+tab toggle persistence + disabled-without-container), PIN unlock suites
 (configured-length dots 4/6, correct PIN pops
 true, wrong PIN error + remaining attempts, lockout view + disabled pad,
 pre-existing lockout on open, countdown expiry via injected clock,
@@ -421,8 +451,8 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.1.0 / 9.3.1 / 2.4.0 |
 | Java | 17 |
-| versionName / versionCode | `0.16.0` / `17` (in `pubspec.yaml`) |
-| Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM) |
+| versionName / versionCode | `0.17.0` / `18` (in `pubspec.yaml`) |
+| Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM), `local_auth` (biometrics) |
 
 ## Prerequisites (on your machine)
 

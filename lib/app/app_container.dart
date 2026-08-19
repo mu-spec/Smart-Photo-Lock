@@ -23,6 +23,8 @@ import '../security/credentials/impl/default_pin_credential_store.dart';
 import '../security/storage/impl/flutter_secure_secret_store.dart';
 import '../security/storage/impl/in_memory_secret_store.dart';
 import '../security/storage/secret_store.dart';
+import '../services/biometric_service.dart';
+import '../services/impl/local_auth_biometric_service.dart';
 
 /// Application dependency container — the single wiring point for all
 /// persistence and security storage.
@@ -49,6 +51,8 @@ class AppContainer {
       cipher: settingsCipher,
     );
     lockSettings = LockSettingsRepositoryImpl(_database);
+    // Biometric foundation (Phase 2J): platform BiometricPrompt bridge.
+    biometrics = LocalAuthBiometricService();
     auth = DefaultCredentialManager(
       settings: securitySettings,
       // Production PIN storage: strict hash policy (PBKDF2 work factor,
@@ -57,6 +61,7 @@ class AppContainer {
         settings: securitySettings,
         policy: CredentialHashPolicy.strict,
       ),
+      biometricService: biometrics,
     );
   }
 
@@ -105,4 +110,7 @@ class AppContainer {
   /// Credential lifecycle (Phase 2A): enroll / status / authenticate /
   /// clear for PIN, pattern and biometric.
   late final CredentialManager auth;
+
+  /// Platform biometric bridge (Phase 2J): capability checks + prompt.
+  late final BiometricService biometrics;
 }

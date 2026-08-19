@@ -390,6 +390,31 @@ open ──► status(): pattern enrolled? / lockout active?
   pattern is enrolled (setup otherwise); success shows the shared
   "Authenticated ✓" snackbar.
 
+## 2J. Biometric foundation
+
+Android biometric authentication via the supported AndroidX APIs, exposed
+through the `local_auth` plugin (BiometricPrompt for authentication,
+BiometricManager for capability detection):
+
+```
+BiometricService (contract, 2A)
+  └─ LocalAuthBiometricService   ← local_auth → AndroidX BiometricPrompt /
+                                                 BiometricManager
+         isSupported()            canCheckBiometrics
+         availableKinds()         getAvailableBiometrics + isDeviceSupported
+         authenticate(reason, opts)  authenticate(biometricOnly: !deviceCredential,
+                                                   sensitiveTransaction: confirm)
+```
+
+| Piece | Behaviour |
+| ----- | --------- |
+| `LocalAuthBiometricService` | fails closed — platform errors surface as `Failure`, never fabricated success; maps `BiometricOptions` (allowDeviceCredential → `biometricOnly`, requireConfirmation → `sensitiveTransaction`) |
+| `CredentialManager.authenticateBiometric` | gates: opt-in required (`biometricOptions` set) + a primary credential enrolled; lockout blocks biometrics too; failures count toward the escalating cooldown; success resets counters |
+| `updateBiometricOptions(null)` | disables biometric unlock (contract changed to nullable) |
+| PIN unlock screen | fingerprint slot appears when biometric is enabled (keypad bottom-left + "Or use your fingerprint" hint); outcomes: success pops `true`, failures show reason-specific errors, lockouts reuse the countdown |
+| Security tab | live "Biometric unlock" row — enables (with real device-capability checks, tailoring allowed kinds) or disables; guides when no primary credential exists or the device is unsupported |
+| Manifest | `USE_BIOMETRIC` permission (required for API < 28) |
+
 ---
 
 ## 1. The eight modules
@@ -421,7 +446,7 @@ open ──► status(): pattern enrolled? / lockout active?
 | Protection | `lib/protection` | Lock engine, access control, unlock sessions | `lock_engine.dart`, `access_controller.dart`, `lock_session.dart` | contracts (+session model) |
 | Rules | `lib/rules` | Lock rule model + pure evaluation | `lock_rule.dart`, `rule_engine.dart` ✅ | **working pure logic** |
 | Profiles | `lib/profiles` | Lock profiles (groups of locked apps) | `lock_profile.dart`, `profile_manager.dart` | contracts (+model) |
-| Services | `lib/services` | Android platform bridges | overlay / accessibility / device-admin / installed-apps | contracts |
+| Services | `lib/services` | Android platform bridges | overlay / accessibility / device-admin / installed-apps (contracts); `impl/local_auth_biometric_service` ✅ (2J) | contracts + biometric impl |
 | Utilities | `lib/utilities` | Shared leaf helpers | `result.dart` ✅, `app_logger.dart` ✅, `time_utils.dart` ✅ | **working** |
 
 ---
@@ -476,7 +501,7 @@ implementation is deferred.
 | PIN setup | `ui` (setup screen ready in 2B), `security/credentials` (manager ready in 2A), `data` (SecuritySettingsRepository — ready in 1E) |
 | PIN unlock | `ui` (unlock screen ready in 2E), `security/credentials` (verify + lockout ready in 2A/2D) |
 | Pattern setup & unlock | `ui` (screens ready in 2H/2I), `security/credentials` (hasher + policy ready in 2A) |
-| Biometric setup & unlock | `ui` (screens), `security/credentials` (options ready in 2A), `services/biometric_service` impl |
+| Biometric setup & unlock | `ui` (PIN unlock slot + Security tab row ready in 2J), `security/credentials` (manager ready in 2A/2J), `services/impl/local_auth_biometric_service` (2J) |
 | App list | `ui` (list screen — replaces Apps placeholder), `services/installed_apps_service` (native impl), `data/installed_apps_repository` (cache impl), `ProtectedAppsRepository` (ready in 1E) |
 | Smart automations | `ui` (replaces Smart placeholder), `rules` (already done), `data` (ready in 1E) |
 | Security settings | `ui` (PIN flows on the Security tab), `security` (encryption-at-rest ready in 1F) |

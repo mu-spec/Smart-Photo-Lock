@@ -15,5 +15,11 @@ abstract interface class BiometricService {
   Future<Result<Set<BiometricKind>>> availableKinds();
 
   /// Prompts the user; resolves true when the OS confirms their identity.
-  Future<Result<bool>> authenticate({required String reason});
+  ///
+  /// [options] tailors the prompt (biometric-only vs device-credential
+  /// fallback, confirmation requirement); defaults apply when null.
+  Future<Result<bool>> authenticate({
+    required String reason,
+    BiometricOptions? options,
+  });
 }

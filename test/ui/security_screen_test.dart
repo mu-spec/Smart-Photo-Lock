@@ -5,6 +5,8 @@ import 'package:smart_app_lock/app/app_scope.dart';
 import 'package:smart_app_lock/app/app_container.dart';
 import 'package:smart_app_lock/app/router.dart';
 import 'package:smart_app_lock/app/theme/app_theme.dart';
+import 'package:smart_app_lock/security/credentials/auth_type.dart';
+import 'package:smart_app_lock/security/credentials/biometric_options.dart';
 import 'package:smart_app_lock/ui/screens/pattern/pattern_setup_screen.dart';
 import 'package:smart_app_lock/ui/screens/pattern/pattern_unlock_screen.dart';
 import 'package:smart_app_lock/ui/screens/security/security_screen.dart';
@@ -127,5 +129,96 @@ void main() {
     // Enrolled -> the unlock challenge opens instead of setup.
     expect(find.text(PatternUnlockScreen.readyHint), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  // -------------------------------------------------------------------
+  // Phase 2J — biometric row
+  // -------------------------------------------------------------------
+  testWidgets('biometric row renders not-set by default',
+      (WidgetTester tester) async {
+    final AppContainer container = AppContainer.inMemory();
+    await tester.pumpWidget(
+      AppScope(
+        container: container,
+        child: MaterialApp(
+          theme: AppTheme.dark,
+          home: const Scaffold(body: SecurityScreen()),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Biometric unlock'), findsOneWidget);
+    expect(find.text('Enabled'), findsNothing);
+  });
+
+  testWidgets('biometric row requires a primary credential first',
+      (WidgetTester tester) async {
+    final AppContainer container = AppContainer.inMemory();
+    await tester.pumpWidget(
+      AppScope(
+        container: container,
+        child: MaterialApp(
+          theme: AppTheme.dark,
+          home: const Scaffold(body: SecurityScreen()),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.text('Biometric unlock'));
+    await tester.pumpAndSettle();
+    expect(find.text('Set up a PIN or pattern first.'), findsOneWidget);
+  });
+
+  testWidgets('biometric row disables an enrolled biometric unlock',
+      (WidgetTester tester) async {
+    final AppContainer container = AppContainer.inMemory();
+    await container.auth.enrollPin('1234');
+    await container.auth.updateBiometricOptions(BiometricOptions.defaults);
+    await tester.pumpWidget(
+      AppScope(
+        container: container,
+        child: MaterialApp(
+          theme: AppTheme.dark,
+          home: const Scaffold(body: SecurityScreen()),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Enabled'), findsOneWidget);
+
+    await tester.tap(find.text('Biometric unlock'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Biometric unlock disabled.'), findsOneWidget);
+    expect(find.text('Enabled'), findsNothing);
+    final state = (await container.auth.status()).valueOrNull!;
+    expect(state.hasEnrolled(AuthType.biometric), isFalse);
+  });
+
+  testWidgets('biometric row reports unsupported hardware without a platform',
+      (WidgetTester tester) async {
+    final AppContainer container = AppContainer.inMemory();
+    await container.auth.enrollPin('1234');
+    await tester.pumpWidget(
+      AppScope(
+        container: container,
+        child: MaterialApp(
+          theme: AppTheme.dark,
+          home: const Scaffold(body: SecurityScreen()),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    // flutter test has no platform plugin -> the real service fails closed.
+    await tester.tap(find.text('Biometric unlock'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Biometric authentication is not available on this device.'),
+      findsOneWidget,
+    );
   });
 }

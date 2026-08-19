@@ -82,6 +82,9 @@ class _PinUnlockScreenState extends State<PinUnlockScreen>
   List<String> _digitOrder = DsPinPad.defaultDigitOrder;
   late final math.Random _random;
 
+  // Phase 2J — biometric shortcut.
+  bool _biometricEnabled = false;
+
   CredentialManager get _manager =>
       widget.credentialManager ?? AppScope.read(context)!.auth;
 
@@ -121,6 +124,7 @@ class _PinUnlockScreenState extends State<PinUnlockScreen>
     if (_randomized) {
       _digitOrder = shuffledDigitOrder(_random);
     }
+    _biometricEnabled = state.hasEnrolled(AuthType.biometric);
     final DateTime? lockout = state.lockedOutUntil;
     if (lockout != null && _now().isBefore(lockout)) {
       _startLockout(lockout, streak: state.lockoutStreak);
@@ -213,6 +217,61 @@ class _PinUnlockScreenState extends State<PinUnlockScreen>
       if (_randomized) {
         _digitOrder = shuffledDigitOrder(_random);
       }
+    });
+    shake();
+  }
+
+  // -- biometric (Phase 2J) -------------------------------------------------
+
+  /// Maps biometric failures onto the inline error message.
+  String _biometricError(AuthFailure failure) => switch (failure.reason) {
+        AuthFailureReason.notConfigured =>
+          'Enable biometric unlock in Security settings.',
+        AuthFailureReason.notAvailable =>
+          'Biometric authentication is not available.',
+        AuthFailureReason.wrongCredential => failure.remainingAttempts > 0
+            ? 'Biometric failed — ${failure.remainingAttempts} attempts left.'
+            : 'Biometric failed.',
+        AuthFailureReason.cancelled => 'Biometric cancelled.',
+        AuthFailureReason.noCredentialEnrolled => 'No PIN configured.',
+        AuthFailureReason.invalidInput => 'Biometric failed.',
+      };
+
+  Future<void> _onBiometric() async {
+    if (_verifying || _view != _UnlockView.ready) {
+      return;
+    }
+    setState(() => _verifying = true);
+    final result =
+        await _manager.authenticateBiometric(reason: 'Unlock Smart App Lock');
+    if (!mounted) {
+      return;
+    }
+    final outcome = result.valueOrNull;
+
+    if (outcome is AuthSuccess) {
+      Navigator.of(context).pop(true);
+      return;
+    }
+    if (outcome is AuthLockedOut) {
+      _startLockout(outcome.retryAt, streak: outcome.lockoutStreak);
+      return;
+    }
+    if (outcome is AuthFailure) {
+      setState(() {
+        _verifying = false;
+        _entered = '';
+        _error = _biometricError(outcome);
+      });
+      shake();
+      return;
+    }
+
+    // Service failure (fail-closed): generic message, retry.
+    setState(() {
+      _verifying = false;
+      _entered = '';
+      _error = PinUnlockScreen.verifyFailedMessage;
     });
     shake();
   }
@@ -314,7 +373,20 @@ class _PinUnlockScreenState extends State<PinUnlockScreen>
           onDeleteAll: _onDeleteAll,
           enabled: !_verifying,
           digitOrder: _digitOrder,
+          showBiometric: _biometricEnabled,
+          onBiometric: _onBiometric,
         ),
+        if (_biometricEnabled) ...<Widget>[
+          const SizedBox(height: DsSpacing.sm),
+          Center(
+            child: Text(
+              'Or use your fingerprint',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: palette.textSecondary,
+              ),
+            ),
+          ),
+        ],
         if (_randomized) ...<Widget>[
           const SizedBox(height: DsSpacing.sm),
           Center(

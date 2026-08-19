@@ -7,11 +7,16 @@ import 'package:smart_app_lock/app/app_scope.dart';
 import 'package:smart_app_lock/app/app_container.dart';
 import 'package:smart_app_lock/app/theme/app_theme.dart';
 import 'package:smart_app_lock/design_system/design_system.dart';
+import 'package:smart_app_lock/security/credentials/auth_result.dart';
+import 'package:smart_app_lock/security/credentials/auth_type.dart';
+import 'package:smart_app_lock/security/credentials/biometric_options.dart';
 import 'package:smart_app_lock/security/credentials/credential_state_machine.dart';
 import 'package:smart_app_lock/security/credentials/impl/default_credential_manager.dart';
 import 'package:smart_app_lock/security/credentials/pattern_hasher.dart';
 import 'package:smart_app_lock/security/pin_hasher.dart';
+import 'package:smart_app_lock/services/biometric_service.dart';
 import 'package:smart_app_lock/ui/screens/pin/pin_unlock_screen.dart';
+import 'package:smart_app_lock/utilities/result.dart';
 
 /// Phase 2E: PIN unlock screen — uses the configured PIN, handles wrong
 /// entries, lockouts (including pre-existing ones), countdown expiry and
@@ -19,11 +24,13 @@ import 'package:smart_app_lock/ui/screens/pin/pin_unlock_screen.dart';
 void main() {
   /// Builds the host: AppScope + a page that pushes the unlock screen and
   /// records its pop result. [seed] injects a deterministic RNG for the
-  /// randomized-keypad tests.
+  /// randomized-keypad tests. [biometricService] fakes the platform
+  /// biometric bridge (Phase 2J tests).
   Future<AppContainer> pumpHosted(
     WidgetTester tester, {
     DateTime Function()? now,
     int? seed,
+    BiometricService? biometricService,
   }) async {
     final AppContainer container = AppContainer.inMemory();
     // Fast hashers + a low lockout threshold so the suite stays quick.
@@ -35,6 +42,7 @@ void main() {
         maxFailedAttempts: 3,
         lockoutDuration: Duration(seconds: 30),
       ),
+      biometricService: biometricService,
     );
     final List<Object?> results = <Object?>[];
     await tester.pumpWidget(
@@ -340,6 +348,123 @@ void main() {
     expect(state.randomizedKeypadEnabled, isFalse);
     expect(padOrder(tester), DsPinPad.defaultDigitOrder);
   });
+
+  // -------------------------------------------------------------------
+  // Phase 2J — biometric shortcut
+  // -------------------------------------------------------------------
+  testWidgets('fingerprint slot appears when biometric unlock is enabled',
+      (WidgetTester tester) async {
+    await pumpHosted(
+      tester,
+      biometricService:
+          const _FakeBiometricService(supported: true, passes: true),
+    );
+    await enrollPin(tester, '1234');
+    await _ManagerResults.manager
+        .updateBiometricOptions(BiometricOptions.defaults);
+    await openUnlock(tester);
+
+    expect(find.byKey(const Key('pin_key_biometric')), findsOneWidget);
+    expect(find.byIcon(Icons.fingerprint), findsOneWidget);
+    expect(find.text('Or use your fingerprint'), findsOneWidget);
+  });
+
+  testWidgets('biometric slot stays hidden when not configured',
+      (WidgetTester tester) async {
+    await pumpHosted(tester);
+    await enrollPin(tester, '1234'); // no biometric options
+    await openUnlock(tester);
+
+    expect(find.byKey(const Key('pin_key_biometric')), findsNothing);
+    expect(find.text('Or use your fingerprint'), findsNothing);
+  });
+
+  testWidgets('successful biometric unlock pops with true',
+      (WidgetTester tester) async {
+    await pumpHosted(
+      tester,
+      biometricService:
+          const _FakeBiometricService(supported: true, passes: true),
+    );
+    await enrollPin(tester, '1234');
+    await _ManagerResults.manager
+        .updateBiometricOptions(BiometricOptions.defaults);
+    await openUnlock(tester);
+
+    await tester.tap(find.byKey(const Key('pin_key_biometric')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('open_unlock')), findsOneWidget);
+    expect(_ManagerResults.results.last, true);
+  });
+
+  testWidgets('biometric failure shows an error and stays',
+      (WidgetTester tester) async {
+    await pumpHosted(
+      tester,
+      biometricService:
+          const _FakeBiometricService(supported: true, passes: false),
+    );
+    await enrollPin(tester, '1234');
+    await _ManagerResults.manager
+        .updateBiometricOptions(BiometricOptions.defaults);
+    await openUnlock(tester);
+
+    await tester.tap(find.byKey(const Key('pin_key_biometric')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Biometric failed — 2 attempts left.'), findsOneWidget);
+    expect(find.byKey(const Key('open_unlock')), findsNothing); // not popped
+  });
+
+  testWidgets('unconfigured biometric shows the enable hint',
+      (WidgetTester tester) async {
+    // Service supported, but the user never opted in (no options).
+    await pumpHosted(
+      tester,
+      biometricService:
+          const _FakeBiometricService(supported: true, passes: true),
+    );
+    await enrollPin(tester, '1234');
+    await openUnlock(tester);
+
+    // No biometric slot without opt-in, so go through the manager path
+    // directly via the pad is impossible — assert the slot is absent and
+    // the manager reports notConfigured.
+    expect(find.byKey(const Key('pin_key_biometric')), findsNothing);
+    final result = (await _ManagerResults.manager.authenticateBiometric())
+        .valueOrNull!;
+    expect(result, isA<AuthFailure>());
+    expect(
+      (result as AuthFailure).reason,
+      AuthFailureReason.notConfigured,
+    );
+  });
+}
+
+/// Test double for the platform biometric bridge.
+class _FakeBiometricService implements BiometricService {
+  const _FakeBiometricService({required this.supported, required this.passes});
+
+  final bool supported;
+  final bool passes;
+
+  @override
+  Future<Result<bool>> isSupported() async => Result.success(supported);
+
+  @override
+  Future<Result<Set<BiometricKind>>> availableKinds() async =>
+      Result.success(const <BiometricKind>{
+        BiometricKind.strong,
+        BiometricKind.deviceCredential,
+      });
+
+  @override
+  Future<Result<bool>> authenticate({
+    required String reason,
+    BiometricOptions? options,
+  }) async =>
+      Result.success(passes);
 }
 
 /// Test-only holder so helper functions can reach the manager and results

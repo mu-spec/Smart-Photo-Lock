@@ -27,7 +27,9 @@ abstract interface class CredentialManager {
   });
 
   /// Configures (or removes) the biometric accelerator.
-  Future<Result<void>> updateBiometricOptions(BiometricOptions options);
+  ///
+  /// Passing null disables biometric authentication entirely.
+  Future<Result<void>> updateBiometricOptions(BiometricOptions? options);
 
   // -- security options ---------------------------------------------------
 

@@ -14,6 +14,8 @@ import 'package:smart_app_lock/security/credentials/impl/default_credential_mana
 import 'package:smart_app_lock/security/credentials/pattern_hasher.dart';
 import 'package:smart_app_lock/security/pin_hasher.dart';
 import 'package:smart_app_lock/security/pin_policy.dart';
+import 'package:smart_app_lock/services/biometric_service.dart';
+import 'package:smart_app_lock/utilities/result.dart';
 
 void main() {
   // Fast hashers + a low lockout threshold so the suite stays quick.
@@ -250,4 +252,163 @@ void main() {
     expect(ok, isA<AuthSuccess>());
     expect((await manager.status()).valueOrNull!.lockoutStreak, 0);
   });
+
+  // -------------------------------------------------------------------
+  // Phase 2J — biometric foundation (manager side)
+  // -------------------------------------------------------------------
+  test('biometric auth succeeds through the platform service', () async {
+    await manager.enrollPin('1234');
+    await manager.updateBiometricOptions(BiometricOptions.defaults);
+    final CredentialManager bio = DefaultCredentialManager(
+      settings: settings,
+      pinHasher: Pbkdf2PinHasher(iterations: 200),
+      patternHasher: Pbkdf2PatternHasher(iterations: 200),
+      biometricService: const _FakeBiometricService(supported: true, passes: true),
+    );
+
+    final AuthAttemptResult result =
+        (await bio.authenticateBiometric()).valueOrNull!;
+    expect(result, isA<AuthSuccess>());
+    expect((result as AuthSuccess).type, AuthType.biometric);
+  });
+
+  test('biometric success resets failure counters', () async {
+    await manager.enrollPin('1234');
+    await manager.updateBiometricOptions(BiometricOptions.defaults);
+    final CredentialManager bio = DefaultCredentialManager(
+      settings: settings,
+      pinHasher: Pbkdf2PinHasher(iterations: 200),
+      patternHasher: Pbkdf2PatternHasher(iterations: 200),
+      biometricService: const _FakeBiometricService(supported: true, passes: true),
+    );
+
+    await bio.authenticatePin('0000');
+    await bio.authenticatePin('0000');
+    expect((await bio.status()).valueOrNull!.failedAttempts, 2);
+
+    await bio.authenticateBiometric();
+    expect((await bio.status()).valueOrNull!.failedAttempts, 0);
+  });
+
+  test('biometric failure counts as a failed attempt', () async {
+    await manager.enrollPin('1234');
+    await manager.updateBiometricOptions(BiometricOptions.defaults);
+    final CredentialManager bio = DefaultCredentialManager(
+      settings: settings,
+      pinHasher: Pbkdf2PinHasher(iterations: 200),
+      patternHasher: Pbkdf2PatternHasher(iterations: 200),
+      stateMachine: const CredentialStateMachine(
+        maxFailedAttempts: 3,
+        lockoutDuration: Duration(seconds: 30),
+      ),
+      biometricService:
+          const _FakeBiometricService(supported: true, passes: false),
+    );
+
+    final AuthAttemptResult r1 =
+        (await bio.authenticateBiometric()).valueOrNull!;
+    expect(r1, isA<AuthFailure>());
+    expect((r1 as AuthFailure).reason, AuthFailureReason.wrongCredential);
+    expect(r1.remainingAttempts, 2);
+    expect((await bio.status()).valueOrNull!.failedAttempts, 1);
+  });
+
+  test('biometric requires opt-in: notConfigured without options', () async {
+    await manager.enrollPin('1234');
+    // No updateBiometricOptions call.
+    final AuthAttemptResult result =
+        (await manager.authenticateBiometric()).valueOrNull!;
+    expect(result, isA<AuthFailure>());
+    expect((result as AuthFailure).reason, AuthFailureReason.notConfigured);
+  });
+
+  test('biometric requires a primary credential', () async {
+    // No PIN/pattern enrolled, but biometric options set.
+    await manager.updateBiometricOptions(BiometricOptions.defaults);
+    final AuthAttemptResult result =
+        (await manager.authenticateBiometric()).valueOrNull!;
+    expect(result, isA<AuthFailure>());
+    expect((result as AuthFailure).reason, AuthFailureReason.notConfigured);
+  });
+
+  test('unsupported hardware reports notAvailable', () async {
+    await manager.enrollPin('1234');
+    await manager.updateBiometricOptions(BiometricOptions.defaults);
+    final CredentialManager bio = DefaultCredentialManager(
+      settings: settings,
+      pinHasher: Pbkdf2PinHasher(iterations: 200),
+      patternHasher: Pbkdf2PatternHasher(iterations: 200),
+      biometricService:
+          const _FakeBiometricService(supported: false, passes: true),
+    );
+
+    final AuthAttemptResult result =
+        (await bio.authenticateBiometric()).valueOrNull!;
+    expect(result, isA<AuthFailure>());
+    expect((result as AuthFailure).reason, AuthFailureReason.notAvailable);
+  });
+
+  test('an active lockout blocks even the correct biometric', () async {
+    await manager.enrollPin('1234');
+    await manager.updateBiometricOptions(BiometricOptions.defaults);
+    final CredentialManager bio = DefaultCredentialManager(
+      settings: settings,
+      pinHasher: Pbkdf2PinHasher(iterations: 200),
+      patternHasher: Pbkdf2PatternHasher(iterations: 200),
+      stateMachine: const CredentialStateMachine(
+        maxFailedAttempts: 3,
+        lockoutDuration: Duration(seconds: 30),
+      ),
+      biometricService: const _FakeBiometricService(supported: true, passes: true),
+    );
+
+    await bio.authenticatePin('0000');
+    await bio.authenticatePin('0000');
+    await bio.authenticatePin('0000');
+    expect((await bio.status()).valueOrNull!.status, CredentialStatus.lockedOut);
+
+    final AuthAttemptResult result =
+        (await bio.authenticateBiometric()).valueOrNull!;
+    expect(result, isA<AuthLockedOut>());
+  });
+
+  test('updateBiometricOptions(null) disables biometric enrollment',
+      () async {
+    await manager.updateBiometricOptions(BiometricOptions.defaults);
+    expect(
+      (await manager.status()).valueOrNull!.hasEnrolled(AuthType.biometric),
+      isTrue,
+    );
+
+    await manager.updateBiometricOptions(null);
+    expect(
+      (await manager.status()).valueOrNull!.hasEnrolled(AuthType.biometric),
+      isFalse,
+    );
+  });
+}
+
+/// Test double for the platform biometric bridge.
+class _FakeBiometricService implements BiometricService {
+  const _FakeBiometricService({required this.supported, required this.passes});
+
+  final bool supported;
+  final bool passes;
+
+  @override
+  Future<Result<bool>> isSupported() async => Result.success(supported);
+
+  @override
+  Future<Result<Set<BiometricKind>>> availableKinds() async =>
+      Result.success(const <BiometricKind>{
+        BiometricKind.strong,
+        BiometricKind.deviceCredential,
+      });
+
+  @override
+  Future<Result<bool>> authenticate({
+    required String reason,
+    BiometricOptions? options,
+  }) async =>
+      Result.success(passes);
 }
