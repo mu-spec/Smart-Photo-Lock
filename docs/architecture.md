@@ -434,6 +434,21 @@ The Security tab is now a complete authentication settings surface:
   "Set up pattern" ↔ "Change pattern" based on enrollment state.
 - Cancelling verification cancels the whole change (credential untouched).
 
+## 2L. Authentication regression
+
+A single suite (`test/regression/authentication_regression_test.dart`)
+covers all nine required scenarios over a **shared encrypted store** — a
+fresh manager over the same repository simulates a new app process, so
+"process recreation" is tested exactly the way the app actually behaves:
+
+| # | Scenario | Guarantee |
+| - | -------- | --------- |
+| 1-2 | correct / incorrect PIN | success + counter reset; decreasing remaining attempts, wrong lengths, missing credential |
+| 3 | cooldown | lockout blocks even the correct PIN; escalation 30s → 60s; post-cooldown success resets attempts + streak |
+| 4-5 | correct / incorrect pattern | direction-independent verification; failures share the PIN lockout state |
+| 6-8 | biometric success / failure / cancellation | success resets counters; failures count; cancellations **fail closed and count** (local_auth returns `false` on cancel — counting prevents cancel-loop bypass); capability checks never count |
+| 9 | process recreation | credentials, counters, lockouts, streak, and all settings survive restarts; the store remains `enc:v1:` encrypted with no raw PIN bytes |
+
 ---
 
 ## 1. The eight modules

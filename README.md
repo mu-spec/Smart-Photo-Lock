@@ -4,10 +4,10 @@ Privacy-first Android app locker built with **Flutter**.
 Development follows the PRD phase plan; this repository is the production
 Android project.
 
-**Current status: Phase 1 complete (1A–1G), Phase 2 underway (2A–2B done)** —
+**Current status: Phase 1 complete (1A–1G), Phase 2 complete (2A–2L)** —
 production scaffold, architecture, navigation, design system, persistence,
-secure storage, regression pass, authentication data model, and the PIN
-setup screen. Locking is not implemented yet.
+secure storage, full authentication (PIN, pattern, biometric) with settings
+and a regression pass. App-locking is not implemented yet.
 
 ---
 
@@ -33,6 +33,7 @@ setup screen. Locking is not implemented yet.
 | 2I | Pattern authentication (unlock with the saved pattern) | ✅ |
 | 2J | Biometric foundation (Android BiometricPrompt / BiometricManager) | ✅ |
 | 2K | Authentication settings (change PIN/pattern, biometric, keypad, visibility) | ✅ |
+| 2L | Authentication regression (9 scenarios incl. process recreation) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -328,6 +329,24 @@ The Security tab is a complete authentication settings surface:
 - Rows adapt to enrollment: "Set up PIN" ↔ "Change PIN", "Set up pattern"
   ↔ "Change pattern".
 
+### Phase 2L ✅ — Authentication Regression
+
+One comprehensive suite (`test/regression/authentication_regression_test.dart`)
+over a shared encrypted store — successive manager instances behave exactly
+like successive app processes:
+
+1. **Correct PIN** (4 & 6 digit, counter reset) · 2. **Incorrect PIN**
+(remaining attempts, wrong length, missing credential) · 3. **Cooldown**
+(lockout, blocked-correct-PIN, escalation 30s→60s, post-cooldown reset) ·
+4. **Correct pattern** (direction-independent) · 5. **Incorrect pattern**
+(shared lockout state) · 6. **Biometric success** · 7. **Biometric
+failure** (counted) · 8. **Biometric cancellation** (fails closed, counted
+— prevents cancel-loop bypass) · 9. **Process recreation** (credentials,
+counters, lockouts, streak, and every setting survive a restart; the store
+stays encrypted with no raw PIN bytes).
+
+Full record in `docs/regression.md` (§Phase 2L).
+
 ```
 lib/
 ├── main.dart                 # entry point (boots AppContainer.create())
@@ -414,7 +433,10 @@ lib/
     └── time_utils.dart       # minutes-of-day, overnight windows, formatting
 ```
 
-**Tests** (run with `flutter test`): authentication settings suites
+**Tests** (run with `flutter test`): authentication regression suite
+(9 scenarios: correct/incorrect PIN, cooldown incl. escalation, correct/
+incorrect pattern, biometric success/failure/cancellation, process
+recreation over a shared encrypted store), authentication settings suites
 (change-PIN flow incl. verify-first, wrong-PIN stay, full change with old
 PIN rejected / new accepted, cancel, no-credential fallthrough;
 change-pattern flow incl. reversed verification, full change, cancel,
@@ -474,7 +496,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.1.0 / 9.3.1 / 2.4.0 |
 | Java | 17 |
-| versionName / versionCode | `0.18.0` / `19` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.19.0` / `20` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM), `local_auth` (biometrics) |
 
 ## Prerequisites (on your machine)
@@ -529,6 +551,6 @@ adaptive + legacy densities). Re-run anytime after tweaking the design.
 
 ## Next phases
 
-Phase 2 continues: pattern & biometric setup → app list (Apps tab) → smart
+Phase 3 begins the app-locking work: app list (Apps tab) → smart
 automations (Smart tab) → lock screen & enforcement → hardening. Each
 phase's module ownership is mapped in `docs/architecture.md`.

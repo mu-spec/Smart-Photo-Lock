@@ -81,3 +81,32 @@ flutter run             # or launch from the launcher
 
 Any defect you find on-device gets logged here (or in a GitHub issue) and
 fixed before Phase 2 begins.
+
+---
+
+# Phase 2L — Authentication Regression
+
+Executed by `test/regression/authentication_regression_test.dart` — one
+suite, nine scenarios, over a shared encrypted store so successive manager
+instances behave exactly like successive app processes.
+
+| # | Scenario | What it proves |
+| - | -------- | -------------- |
+| 1 | Correct PIN | 4 & 6 digit auth; `AuthSuccess(type: pin)`; success resets the failure counter |
+| 2 | Incorrect PIN | `AuthFailure(wrongCredential)` with decreasing remaining attempts; wrong-length rejected; missing credential → `noCredentialEnrolled` |
+| 3 | Cooldown | threshold → `AuthLockedOut` (~30s, streak 1); correct PIN blocked during cooldown; escalation 30s → 60s; post-cooldown success resets attempts + streak |
+| 4 | Correct pattern | auth succeeds; **direction-independent** (reversed drawing unlocks) |
+| 5 | Incorrect pattern | `AuthFailure` counted; patterns share the PIN lockout state |
+| 6 | Biometric success | `AuthSuccess(type: biometric)`; resets counters |
+| 7 | Biometric failure | counted as a failed attempt; 3 failures → shared lockout |
+| 8 | Biometric cancellation | **fails closed and counts** — local_auth returns `false` on user-cancel (indistinguishable from rejection), and counting prevents cancel-loop bypass; repeated cancels reach the lockout |
+| 9 | Process recreation | fresh manager over the same store: credentials still verify, attempt counters/lockouts/streak survive, all settings (randomized keypad, pattern visibility, biometric options) survive, and the persisted document stays encrypted with no raw PIN bytes |
+
+Design notes recorded for the record:
+
+- Biometric capability checks (`isSupported`) are **not** authentication
+  attempts — they never touch the counter.
+- Opt-in gate: biometric authentication without configured
+  `biometricOptions` returns `notConfigured`.
+- The raw PIN is absent from the persisted store across restarts
+  (`enc:v1:` ciphertext only).
