@@ -71,7 +71,6 @@ class _PinUnlockScreenState extends State<PinUnlockScreen>
   String _entered = '';
   bool _verifying = false;
   String? _error;
-  int _remainingAttempts = 0;
   DateTime? _lockoutUntil;
   Duration _lockoutRemaining = Duration.zero;
   int _lockoutStreak = 0;
@@ -196,7 +195,6 @@ class _PinUnlockScreenState extends State<PinUnlockScreen>
       setState(() {
         _verifying = false;
         _entered = '';
-        _remainingAttempts = outcome.remainingAttempts;
         _error = outcome.remainingAttempts > 0
             ? '${PinUnlockScreen.wrongPinPrefix} — '
                 '${outcome.remainingAttempts} attempts left.'

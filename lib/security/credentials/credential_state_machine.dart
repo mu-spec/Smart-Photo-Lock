@@ -15,8 +15,13 @@ import 'credential_state.dart';
 ///    streak persists until a success, so the next lockout is longer.
 ///
 /// Pure Dart: no storage, no clocks of its own (callers pass [DateTime]).
+///
+/// Note: the constructor is intentionally NOT const — the default cooldown
+/// policy is derived from the [lockoutDuration] parameter, which is a
+/// runtime value in const-invalid expressions. Use a plain constructor;
+/// the machine itself is still fully immutable.
 class CredentialStateMachine {
-  const CredentialStateMachine({
+  CredentialStateMachine({
     this.maxFailedAttempts = 5,
     this.lockoutDuration = const Duration(seconds: 30),
     EscalatingCooldownPolicy? cooldownPolicy,

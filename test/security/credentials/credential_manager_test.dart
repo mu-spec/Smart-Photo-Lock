@@ -30,7 +30,7 @@ void main() {
       settings: settings,
       pinHasher: Pbkdf2PinHasher(iterations: 200),
       patternHasher: Pbkdf2PatternHasher(iterations: 200),
-      stateMachine: const CredentialStateMachine(
+      stateMachine: CredentialStateMachine(
         maxFailedAttempts: 3,
         lockoutDuration: Duration(seconds: 30),
       ),
@@ -305,7 +305,7 @@ void main() {
       settings: settings,
       pinHasher: Pbkdf2PinHasher(iterations: 200),
       patternHasher: Pbkdf2PatternHasher(iterations: 200),
-      stateMachine: const CredentialStateMachine(
+      stateMachine: CredentialStateMachine(
         maxFailedAttempts: 3,
         lockoutDuration: Duration(seconds: 30),
       ),
@@ -363,7 +363,7 @@ void main() {
       settings: settings,
       pinHasher: Pbkdf2PinHasher(iterations: 200),
       patternHasher: Pbkdf2PatternHasher(iterations: 200),
-      stateMachine: const CredentialStateMachine(
+      stateMachine: CredentialStateMachine(
         maxFailedAttempts: 3,
         lockoutDuration: Duration(seconds: 30),
       ),
@@ -481,8 +481,8 @@ void main() {
       (await manager.status()).valueOrNull!.patternVisibilityEnabled,
       isFalse,
     );
-    final settings = (await settings.getSettings()).valueOrNull!;
-    expect(settings.patternVisibilityEnabled, isFalse);
+    final savedSettings = (await settings.getSettings()).valueOrNull!;
+    expect(savedSettings.patternVisibilityEnabled, isFalse);
 
     await manager.setPatternVisibilityEnabled(true);
     expect(

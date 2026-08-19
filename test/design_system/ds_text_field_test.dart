@@ -28,17 +28,19 @@ void main() {
       await tester.pumpWidget(
         wrap(const DsTextField(label: 'PIN', obscureText: true)),
       );
-      TextFormField field() =>
-          tester.widget<TextFormField>(find.byType(TextFormField));
-      expect(field().obscureText, isTrue);
+      // TextFormField builds an EditableText internally; obscureText is
+      // exposed there (current Flutter API).
+      EditableText editable() =>
+          tester.widget<EditableText>(find.byType(EditableText));
+      expect(editable().obscureText, isTrue);
 
       await tester.tap(find.byIcon(Icons.visibility_outlined));
       await tester.pump();
-      expect(field().obscureText, isFalse);
+      expect(editable().obscureText, isFalse);
 
       await tester.tap(find.byIcon(Icons.visibility_off_outlined));
       await tester.pump();
-      expect(field().obscureText, isTrue);
+      expect(editable().obscureText, isTrue);
     });
 
     testWidgets('validator errors show inside a Form', (WidgetTester tester) async {

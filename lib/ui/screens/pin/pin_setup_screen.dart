@@ -452,7 +452,7 @@ class _PinSetupScreenState extends State<PinSetupScreen>
         const SizedBox(height: DsSpacing.sm),
         Center(
           child: Text(
-            'Your ${_length}-digit PIN protects your apps from now on.',
+            'Your $_length-digit PIN protects your apps from now on.',
             textAlign: TextAlign.center,
             style: theme.textTheme.bodyMedium?.copyWith(
               color: palette.textSecondary,

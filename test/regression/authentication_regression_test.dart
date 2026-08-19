@@ -534,7 +534,7 @@ class Harness {
       settings: settings,
       pinHasher: Pbkdf2PinHasher(iterations: 200),
       patternHasher: Pbkdf2PatternHasher(iterations: 200),
-      stateMachine: const CredentialStateMachine(
+      stateMachine: CredentialStateMachine(
         maxFailedAttempts: 3,
         lockoutDuration: Duration(seconds: 30),
       ),

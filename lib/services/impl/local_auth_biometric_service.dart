@@ -147,11 +147,6 @@ BiometricAuthException mapBiometricError(Object error) {
           'unknownError',
           'Biometric authentication failed.',
         ),
-      // Future platform-interface codes collapse to the generic mapping.
-      _ => (
-          'unknownError',
-          'Biometric authentication failed.',
-        ),
     };
     return BiometricAuthException(code: code, message: message);
   }

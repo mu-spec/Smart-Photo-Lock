@@ -73,7 +73,6 @@ class _PatternUnlockScreenState extends State<PatternUnlockScreen>
   List<int> _nodes = <int>[];
   bool _verifying = false;
   String? _error;
-  int _remainingAttempts = 0;
   DateTime? _lockoutUntil;
   Duration _lockoutRemaining = Duration.zero;
   int _lockoutStreak = 0;
@@ -187,7 +186,6 @@ class _PatternUnlockScreenState extends State<PatternUnlockScreen>
       setState(() {
         _verifying = false;
         _nodes = <int>[];
-        _remainingAttempts = outcome.remainingAttempts;
         _error = outcome.remainingAttempts > 0
             ? '${PatternUnlockScreen.wrongPatternPrefix} — '
                 '${outcome.remainingAttempts} attempts left.'

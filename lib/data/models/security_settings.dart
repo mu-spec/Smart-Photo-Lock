@@ -30,6 +30,7 @@ class SecuritySettings {
     this.pinLength,
     this.lockoutStreak = 0,
     this.randomizedKeypadEnabled = false,
+    this.patternVisibilityEnabled = true,
   });
 
   /// Factory-default settings (nothing configured yet).

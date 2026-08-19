@@ -18,7 +18,9 @@ void main() {
 
   group('CredentialHashPolicy', () {
     test('lenient policy only checks structure', () {
-      const CredentialHash lowIterations = CredentialHash(
+      // Property access (valid.salt) is not allowed in const expressions,
+      // so this record is a plain final instance.
+      final CredentialHash lowIterations = CredentialHash(
         salt: valid.salt,
         digest: valid.digest,
         iterations: 1,

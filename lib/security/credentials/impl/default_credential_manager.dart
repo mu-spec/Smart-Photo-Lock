@@ -1,11 +1,13 @@
 import '../../../data/models/security_settings.dart';
 import '../../../data/repositories/security_settings_repository.dart';
 import '../../../services/biometric_service.dart';
-import '../../../utilities/result.dart';import '../../pin_hasher.dart';
+import '../../../utilities/result.dart';
+import '../../pin_hasher.dart';
 import '../../pin_policy.dart';
 import '../auth_result.dart';
 import '../auth_type.dart';
 import '../biometric_options.dart';
+import '../credential_hash.dart';
 import '../credential_state.dart';
 import '../credential_state_machine.dart';
 import '../credential_manager.dart';
@@ -37,7 +39,7 @@ class DefaultCredentialManager implements CredentialManager {
   })  : _settings = settings,
         _pinHasher = pinHasher ?? Pbkdf2PinHasher(),
         _patternHasher = patternHasher ?? Pbkdf2PatternHasher(),
-        _machine = stateMachine ?? const CredentialStateMachine(),
+        _machine = stateMachine ?? CredentialStateMachine(),
         _pinStore = pinStore ?? DefaultPinCredentialStore(settings),
         _biometrics = biometricService;
 

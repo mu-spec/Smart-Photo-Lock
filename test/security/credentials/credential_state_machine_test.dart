@@ -6,7 +6,7 @@ import 'package:smart_app_lock/security/credentials/credential_state.dart';
 import 'package:smart_app_lock/security/credentials/credential_state_machine.dart';
 
 void main() {
-  const CredentialStateMachine machine = CredentialStateMachine(
+  final CredentialStateMachine machine = CredentialStateMachine(
     maxFailedAttempts: 3,
     lockoutDuration: Duration(seconds: 30),
   );
@@ -105,7 +105,7 @@ void main() {
   });
 
   test('custom thresholds and durations are respected', () {
-    const CredentialStateMachine custom = CredentialStateMachine(
+    final CredentialStateMachine custom = CredentialStateMachine(
       maxFailedAttempts: 2,
       lockoutDuration: Duration(minutes: 5),
     );
