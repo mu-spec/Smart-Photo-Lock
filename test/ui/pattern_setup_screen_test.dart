@@ -67,7 +67,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 50));
   }
 
-  testWidgets('draw → confirm → enroll → success (direction-independent)',
+  testWidgets('draw → confirm → enroll → success (exact ordered sequence)',
       (WidgetTester tester) async {
     final AppContainer container = await pumpHosted(tester);
 
@@ -76,8 +76,8 @@ void main() {
     await drawPattern(tester, const <int>[1, 2, 3, 6]);
     expect(find.text(PatternSetupScreen.confirmTitle), findsOneWidget);
 
-    // Confirm the SAME SHAPE drawn in reverse — must match.
-    await drawPattern(tester, const <int>[6, 3, 2, 1]);
+    // Confirm the EXACT sequence in the same direction — must match.
+    await drawPattern(tester, const <int>[1, 2, 3, 6]);
     expect(find.text(PatternSetupScreen.successTitle), findsOneWidget);
 
     // Really enrolled and verifiable.
@@ -95,12 +95,28 @@ void main() {
     expect(find.byKey(const Key('open_pattern_setup')), findsOneWidget);
   });
 
+  testWidgets('setup confirmation is direction-sensitive: reverse does NOT match',
+      (WidgetTester tester) async {
+    final AppContainer container = await pumpHosted(tester);
+
+    await drawPattern(tester, const <int>[1, 2, 3, 6]); // first entry
+    await drawPattern(tester, const <int>[6, 3, 2, 1]); // reverse confirm
+
+    // PATTERNS DO NOT MATCH — dedicated mismatch state.
+    expect(find.text(PatternSetupScreen.mismatchTitle), findsOneWidget);
+    expect(find.text(PatternSetupScreen.mismatchMessage), findsOneWidget);
+
+    // Nothing was enrolled — no partial credential.
+    final state = (await container.auth.status()).valueOrNull!;
+    expect(state.hasAnyCredential, isFalse);
+  });
+
   testWidgets('mismatch opens the dedicated state and saves nothing',
       (WidgetTester tester) async {
     final AppContainer container = await pumpHosted(tester);
 
     await drawPattern(tester, const <int>[1, 2, 3, 6]);
-    await drawPattern(tester, const <int>[1, 2, 3, 5]); // different shape
+    await drawPattern(tester, const <int>[1, 2, 3, 5]); // different sequence
 
     expect(find.text(PatternSetupScreen.mismatchTitle), findsOneWidget);
     expect(find.text(PatternSetupScreen.mismatchMessage), findsOneWidget);

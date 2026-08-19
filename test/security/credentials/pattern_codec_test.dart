@@ -40,42 +40,56 @@ void main() {
     });
   });
 
-  group('PatternCodec', () {
-    test('canonicalize keeps the lexicographically smaller orientation', () {
-      expect(PatternCodec.canonicalize(const <int>[1, 4, 7]),
-          const <int>[1, 4, 7]);
-      expect(PatternCodec.canonicalize(const <int>[7, 4, 1]),
-          const <int>[1, 4, 7]);
-    });
-
-    test('same shape in either direction serializes identically', () {
+  group('PatternCodec (ordered, direction-sensitive)', () {
+    test('serialize preserves the exact drawing order', () {
       expect(
         PatternCodec.serialize(const <int>[1, 2, 3, 6]),
+        '1-2-3-6',
+      );
+      expect(
         PatternCodec.serialize(const <int>[6, 3, 2, 1]),
+        '6-3-2-1',
       );
-      expect(PatternCodec.sameShape(const <int>[1, 2, 3, 6], const <int>[6, 3, 2, 1]),
-          isTrue);
     });
 
-    test('different shapes serialize differently', () {
+    test('a pattern and its reverse serialize differently', () {
       expect(
         PatternCodec.serialize(const <int>[1, 2, 3, 6]),
-        isNot(PatternCodec.serialize(const <int>[1, 2, 3, 5])),
+        isNot(PatternCodec.serialize(const <int>[6, 3, 2, 1])),
       );
-      expect(PatternCodec.sameShape(const <int>[1, 2, 3, 6], const <int>[1, 2, 3, 5]),
-          isFalse);
     });
 
-    test('serialize/parse round-trip', () {
+    test('reordered sequences serialize differently', () {
+      expect(
+        PatternCodec.serialize(const <int>[1, 2, 3, 6]),
+        isNot(PatternCodec.serialize(const <int>[1, 3, 2, 6])),
+      );
+    });
+
+    test('matches is strict about order', () {
+      expect(
+        PatternCodec.matches(const <int>[1, 2, 3, 6], const <int>[1, 2, 3, 6]),
+        isTrue,
+      );
+      expect(
+        PatternCodec.matches(const <int>[1, 2, 3, 6], const <int>[6, 3, 2, 1]),
+        isFalse,
+      );
+      expect(
+        PatternCodec.matches(const <int>[1, 2, 3, 6], const <int>[1, 3, 2, 6]),
+        isFalse,
+      );
+    });
+
+    test('serialize/parse round-trip preserves order', () {
       const List<int> nodes = <int>[1, 5, 9, 8, 7];
-      expect(PatternCodec.parse(PatternCodec.serialize(nodes)),
-          PatternCodec.canonicalize(nodes));
+      expect(PatternCodec.parse(PatternCodec.serialize(nodes)), nodes);
     });
 
-    test('input is not mutated by canonicalize', () {
+    test('input is not mutated', () {
       final List<int> original = <int>[7, 4, 1];
       final List<int> snapshot = List<int>.from(original);
-      PatternCodec.canonicalize(original);
+      PatternCodec.serialize(original);
       expect(original, snapshot);
     });
   });

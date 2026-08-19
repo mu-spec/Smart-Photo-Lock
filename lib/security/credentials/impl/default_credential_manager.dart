@@ -203,7 +203,11 @@ class DefaultCredentialManager implements CredentialManager {
       return Result.failure(loaded.errorOrNull!);
     }
     final SecuritySettings s = loaded.valueOrNull!;
-    if (s.patternHash == null) {
+    final CredentialHash? patternHash = s.patternHash;
+    // Fail closed: legacy (direction-insensitive) hashes are ambiguous and
+    // must be re-enrolled — they are treated as not enrolled, never
+    // verified against both orientations.
+    if (patternHash == null || Pbkdf2PatternHasher.isLegacyHash(patternHash)) {
       return Result.success(
         const AuthFailure(
           reason: AuthFailureReason.noCredentialEnrolled,
@@ -218,7 +222,7 @@ class DefaultCredentialManager implements CredentialManager {
       return Result.success(activeLockout);
     }
 
-    final bool matches = await _patternHasher.verify(nodes, s.patternHash!);
+    final bool matches = await _patternHasher.verify(nodes, patternHash);
     return _evaluateAndPersist(s, state, matches, AuthType.pattern);
   }
 
@@ -297,21 +301,33 @@ class DefaultCredentialManager implements CredentialManager {
   // -- internals ----------------------------------------------------------
 
   /// Projects persisted settings onto a [CredentialState] snapshot.
+  ///
+  /// Legacy (direction-insensitive) pattern hashes are excluded from the
+  /// enrolled set so flows treat them as "set up the pattern again" —
+  /// re-enrollment overwrites the record with the ordered scheme.
   CredentialState _stateFrom(SecuritySettings s) {
+    final bool patternUsable =
+        s.patternHash != null &&
+            !Pbkdf2PatternHasher.isLegacyHash(s.patternHash!);
     final Set<AuthType> enrolled = <AuthType>{
       if (s.pinHash != null) AuthType.pin,
-      if (s.patternHash != null) AuthType.pattern,
+      if (patternUsable) AuthType.pattern,
       if (s.biometricOptions != null) AuthType.biometric,
     };
     final AuthType? primary = s.primaryAuthType ??
         (s.pinHash != null
             ? AuthType.pin
-            : s.patternHash != null
+            : patternUsable
                 ? AuthType.pattern
                 : null);
+    // A legacy primary falls back to PIN (or none).
+    final AuthType? effectivePrimary =
+        primary == AuthType.pattern && !patternUsable
+            ? (s.pinHash != null ? AuthType.pin : null)
+            : primary;
     return CredentialState(
       enrolled: enrolled,
-      primary: primary,
+      primary: effectivePrimary,
       failedAttempts: s.failedAttempts,
       lockedOutUntil: s.lockedOutUntil,
       pinLength: s.pinLength,

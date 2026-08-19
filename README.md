@@ -142,8 +142,8 @@ Authentication types and the credential-state architecture, in
 `lib/security/credentials/`:
 
 - **Types** — `AuthType` (pin / pattern / biometric, with primary-secret
-  eligibility), `PatternPolicy` + `PatternCodec` (3x3 grid, direction
-  canonicalization), `BiometricOptions` + `BiometricKind`.
+  eligibility), `PatternPolicy` + `PatternCodec` (3x3 grid, ordered
+  direction-sensitive sequences), `BiometricOptions` + `BiometricKind`.
 - **Hashing** — shared `CredentialHash` container (the old `PinHash` is a
   back-compatible alias), shared PBKDF2-HMAC-SHA256 core, `PatternHasher`
   beside the existing `PinHasher`.
@@ -265,14 +265,19 @@ the PIN flow's UX:
 - New design-system widget **`DsPatternGrid`** — a controlled, draggable 3x3
   grid (row-major nodes matching `PatternCodec`), with `onNodeAdded` while
   dragging and `onDragEnd` for validation; error tint and disabled states.
-- Flow: draw (min 4 dots, enforced inline) → **confirm by redrawing** →
-  enroll → success. Confirmation is direction-independent — the same shape
-  drawn in reverse counts.
+- Flow: draw (min 4 dots, enforced inline) → **confirm by redrawing the
+  exact ordered sequence** → enroll → success. Direction matters: the
+  reverse of a pattern does **not** confirm.
 - Mismatches land on a dedicated state (Re-confirm pattern / Start over)
   with shake feedback; nothing is saved until a confirmed match.
-- Enrollment uses `CredentialManager.enrollPattern` (PBKDF2 over the
-  canonical shape, encrypted at rest); the Security tab's "Pattern unlock"
+- Enrollment uses `CredentialManager.enrollPattern` (PBKDF2 over the exact
+  ordered sequence, encrypted at rest); the Security tab's "Pattern unlock"
   row opens the setup when no pattern is enrolled.
+- **Migration:** pattern hashes now carry a scheme version (v2 = ordered).
+  Pre-fix records (unversioned, direction-insensitive) are ambiguous and
+  therefore treated as **not enrolled** — verification fails closed and
+  the user is guided to set the pattern again; PIN/biometric are
+  unaffected. No fallback ever accepts both directions.
 
 ### Phase 2I ✅ — Pattern Authentication
 
@@ -280,7 +285,9 @@ Full-screen authentication with the **saved pattern**
 (`RouteNames.patternUnlock`, pops `true` on success):
 
 - Draw the pattern on the shared `DsPatternGrid`; verification is
-  **direction-independent** — the same shape unlocks however it was drawn.
+  **direction-sensitive and order-sensitive** — the exact sequence drawn at
+  setup must be reproduced (`1-2-3-6` does not equal `6-3-2-1` or
+  `1-3-2-6`).
 - Too-short draws get an inline hint and **do not count** as failed
   attempts; wrong patterns show the remaining-attempts error + shake.
 - Lockouts reuse the 2F machinery: live countdown with the grid disabled,
@@ -320,7 +327,7 @@ The Security tab is a complete authentication settings surface:
   enforced) before opening the new-PIN setup at the current length; pops
   `true` only when saved; cancelling leaves the PIN untouched.
 - **Change pattern** — `PatternChangeScreen` verifies the current pattern
-  (direction-independent) before the new draw + confirm flow.
+  (exact ordered sequence) before the new draw + confirm flow.
 - **Biometric unlock** — enable/disable with real capability checks (2J).
 - **Randomized keypad** — on/off (2G).
 - **Visible pattern** (new) — show/hide the drawing trail on the unlock
@@ -338,7 +345,7 @@ like successive app processes:
 1. **Correct PIN** (4 & 6 digit, counter reset) · 2. **Incorrect PIN**
 (remaining attempts, wrong length, missing credential) · 3. **Cooldown**
 (lockout, blocked-correct-PIN, escalation 30s→60s, post-cooldown reset) ·
-4. **Correct pattern** (direction-independent) · 5. **Incorrect pattern**
+4. **Correct pattern** (exact ordered sequence) · 5. **Incorrect pattern**
 (shared lockout state) · 6. **Biometric success** · 7. **Biometric
 failure** (counted) · 8. **Biometric cancellation** (fails closed, counted
 — prevents cancel-loop bypass) · 9. **Process recreation** (credentials,
@@ -398,7 +405,7 @@ lib/
 │       ├── credential_hash.dart  # shared hash container (PinHash alias)
 │       ├── credential_hash_policy.dart # 2D: storage security policy
 │       ├── pbkdf2.dart       # shared PBKDF2-HMAC-SHA256 core
-│       ├── pattern_codec.dart    # 3x3 grid model + direction canonicalization
+│       ├── pattern_codec.dart    # 3x3 grid model, ordered sequences (2H/2I fix)
 │       ├── pattern_policy.dart   # pattern validation rules
 │       ├── pattern_hasher.dart   # PBKDF2 pattern hashing
 │       ├── biometric_options.dart# biometric configuration (no secrets stored)
@@ -496,7 +503,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.1.0 / 9.3.1 / 2.4.0 |
 | Java | 17 |
-| versionName / versionCode | `0.19.0` / `20` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.19.1` / `21` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM), `local_auth` (biometrics) |
 
 ## Prerequisites (on your machine)

@@ -161,7 +161,7 @@ Three authentication methods with one shared credential-state architecture
 ```
                     ┌─────────────────────────────────────────────┐
   PIN    ──► PinHasher (PBKDF2) ──┐                               │
-  Pattern ──► PatternHasher (PBKDF2 over canonical shape) ├─► CredentialHash ──► SecuritySettings (encrypted at rest)
+  Pattern ──► PatternHasher (PBKDF2 over exact ordered sequence) ├─► CredentialHash ──► SecuritySettings (encrypted at rest)
   Biometric ──► OS-owned; app stores only BiometricOptions ────────┘
                     └─────────────────────────────────────────────┘
 
@@ -179,8 +179,8 @@ Three authentication methods with one shared credential-state architecture
 | `AuthType` | `auth_type.dart` | pin/pattern/biometric; only pin & pattern can be primary secrets |
 | `CredentialHash` | `credential_hash.dart` | shared hash container; `PinHash` is a back-compat typedef |
 | PBKDF2 core | `pbkdf2.dart` | single key-derivation implementation for all hashers |
-| Pattern model | `pattern_codec.dart` + `pattern_policy.dart` | 3x3 grid, min 4 nodes, direction canonicalization (shape matters, not direction) |
-| `PatternHasher` | `pattern_hasher.dart` | PBKDF2 over the canonical serialization |
+| Pattern model | `pattern_codec.dart` + `pattern_policy.dart` | 3x3 grid, min 4 nodes; sequences are **ordered and direction-sensitive** (Android-style) |
+| `PatternHasher` | `pattern_hasher.dart` | PBKDF2 over the exact ordered serialization; scheme v2 marker; legacy (unversioned) hashes fail closed |
 | `BiometricOptions` | `biometric_options.dart` | configuration only — **no biometric secrets are ever stored** |
 | `AuthAttemptResult` | `auth_result.dart` | sealed: success / failure(reason, remaining) / lockedOut(retryAt) |
 | `CredentialState` | `credential_state.dart` | enrolled set, primary, attempts, lockout; status unset/enrolled/lockedOut |
@@ -353,14 +353,33 @@ Draw pattern (min 4 dots) ──► Confirm (redraw) ──► Enroll ──► 
   (nodes numbered row-major 1-9, matching `PatternCodec`); parent owns the
   sequence via `onNodeAdded`, validates on `onDragEnd`; error tint +
   disabled states.
-- Confirmation is **direction-independent**: `PatternCodec.sameShape`
-  accepts the same shape drawn in reverse.
+- Confirmation is **direction-sensitive**: `PatternCodec.matches` requires
+  the exact ordered sequence — a reverse or reordered redraw lands on the
+  mismatch state.
 - Mirrors the PIN flow UX: dedicated mismatch state (Re-confirm / Start
   over), shake feedback via the shared `EntryShakeMixin`, nothing saved
   until a confirmed match; minimum 4 dots enforced inline.
 - Enrollment goes through `CredentialManager.enrollPattern` (policy →
-  PBKDF2 over canonical shape → encrypted settings); the Security tab's
-  "Pattern unlock" row opens the setup when no pattern is enrolled.
+  PBKDF2 over the exact ordered sequence → encrypted settings); the
+  Security tab's "Pattern unlock" row opens the setup when no pattern is
+  enrolled.
+
+**Pattern scheme migration (QA fix — direction sensitivity).** Pattern
+hashes now carry a scheme version (`CredentialHash.schemeVersion`):
+
+- version `2` — ordered, direction-sensitive (current);
+- no version marker — the pre-fix direction-insensitive scheme.
+
+A legacy record is **ambiguous** (the originally drawn orientation cannot
+be recovered), so safe transparent migration is impossible. Handling is
+fail-closed and never accepts both orientations:
+
+- `Pbkdf2PatternHasher.isLegacyHash` detects unversioned records;
+- verification against a legacy record always fails;
+- the manager treats legacy pattern records as **not enrolled**, so the
+  Security tab shows "Set up pattern" and the unlock/change flows guide
+  re-enrollment (which overwrites the record with a v2 hash);
+- PIN and biometric credentials are unaffected.
 
 ## 2I. Pattern authentication
 
@@ -374,7 +393,7 @@ open ──► status(): pattern enrolled? / lockout active?
          ├─ lockout active ──► live countdown, grid disabled
          └─ ready ──► draw on the grid ──► authenticatePattern
               │
-              ├─ correct ──► pop(true)   (direction-independent!)
+              ├─ correct ──► pop(true)   (exact ordered sequence)
               ├─ too short ──► inline hint, does NOT count as an attempt
               ├─ wrong ──► inline error + remaining attempts + shake
               └─ locked ──► countdown (persisted; escalating cooldown 2F)
@@ -384,8 +403,8 @@ open ──► status(): pattern enrolled? / lockout active?
   minimum; every attempt flows through `CredentialManager`, so wrong
   patterns count toward the same escalating lockout as PIN failures and
   only the derived hash is ever consulted.
-- Drawing direction does not matter — `PatternCodec.sameShape`
-  canonicalization applies at verification.
+- Drawing direction and order are part of the credential: the exact
+  sequence drawn at setup must be reproduced at verification.
 - The Security tab's "Pattern unlock" row now opens this screen when a
   pattern is enrolled (setup otherwise); success shows the shared
   "Authenticated ✓" snackbar.
@@ -422,7 +441,7 @@ The Security tab is now a complete authentication settings surface:
 | Setting | Behaviour |
 | ------- | --------- |
 | **Change PIN** | `PinChangeScreen` flow controller: verify current PIN (reuses `PinUnlockScreen`) → set new PIN (reuses `PinSetupScreen` with the current length); pops `true` only when the new PIN is saved |
-| **Change pattern** | `PatternChangeScreen`: verify current pattern (direction-independent) → draw + confirm the new one |
+| **Change pattern** | `PatternChangeScreen`: verify current pattern (exact ordered sequence) → draw + confirm the new one |
 | **Biometric unlock** | enable/disable (2J row, real capability checks) |
 | **Randomized keypad** | on/off (2G) |
 | **Visible pattern** (new) | `patternVisibilityEnabled` (default true): off hides the drawing trail + node highlights on the unlock screen via `DsPatternGrid.showFeedback`; the setup screen intentionally stays visible for accessibility |
@@ -445,7 +464,7 @@ fresh manager over the same repository simulates a new app process, so
 | - | -------- | --------- |
 | 1-2 | correct / incorrect PIN | success + counter reset; decreasing remaining attempts, wrong lengths, missing credential |
 | 3 | cooldown | lockout blocks even the correct PIN; escalation 30s → 60s; post-cooldown success resets attempts + streak |
-| 4-5 | correct / incorrect pattern | direction-independent verification; failures share the PIN lockout state |
+| 4-5 | correct / incorrect pattern | exact ordered verification (reverse and reordered sequences fail); failures share the PIN lockout state |
 | 6-8 | biometric success / failure / cancellation | success resets counters; failures count; cancellations **fail closed and count** (local_auth returns `false` on cancel — counting prevents cancel-loop bypass); capability checks never count |
 | 9 | process recreation | credentials, counters, lockouts, streak, and all settings survive restarts; the store remains `enc:v1:` encrypted with no raw PIN bytes |
 

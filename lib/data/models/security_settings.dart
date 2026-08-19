@@ -38,7 +38,8 @@ class SecuritySettings {
   /// Stored PIN credential (PBKDF2 hash) — null until a PIN is enrolled.
   final PinHash? pinHash;
 
-  /// Stored pattern credential (PBKDF2 hash over the canonical shape).
+  /// Stored pattern credential (PBKDF2 hash over the exact ordered node
+  /// sequence — direction-sensitive).
   final CredentialHash? patternHash;
 
   /// Biometric accelerator configuration; null = biometric not configured.

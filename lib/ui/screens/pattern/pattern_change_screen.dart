@@ -64,7 +64,7 @@ class _PatternChangeScreenState extends State<PatternChangeScreen> {
       return;
     }
 
-    // Step 1: verify the current pattern (direction-independent; lockouts
+    // Step 1: verify the current pattern (exact ordered sequence; lockouts
     // and attempt counting enforced by the unlock screen).
     final bool? verified = await Navigator.of(context).push<bool>(
       MaterialPageRoute<bool>(

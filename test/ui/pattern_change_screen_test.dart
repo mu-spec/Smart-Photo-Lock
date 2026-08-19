@@ -91,8 +91,8 @@ void main() {
     expect(find.textContaining('Incorrect pattern'), findsOneWidget);
     expect(find.text(PatternChangeScreen.verifyTitle), findsOneWidget);
 
-    // Correct pattern (drawn in reverse — direction-independent).
-    await drawPattern(tester, const <int>[6, 3, 2, 1]);
+    // Correct pattern: the exact ordered sequence.
+    await drawPattern(tester, const <int>[1, 2, 3, 6]);
     await tester.pumpAndSettle();
     expect(find.text(PatternChangeScreen.setupTitle), findsOneWidget);
   });

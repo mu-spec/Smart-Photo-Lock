@@ -121,18 +121,30 @@ void main() {
     expect(_ManagerResults.results.last, true);
   });
 
-  testWidgets('the saved pattern unlocks regardless of drawing direction',
+  testWidgets('the reverse of the saved pattern is REJECTED',
       (WidgetTester tester) async {
     await pumpHosted(tester);
     await enrollPattern(tester, const <int>[1, 2, 3, 6]);
     await openUnlock(tester);
 
-    // Same shape, drawn in reverse.
+    // Exact sequence: 1-2-3-6 was saved; its reverse must fail.
     await drawPattern(tester, const <int>[6, 3, 2, 1]);
-    await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('open_unlock')), findsOneWidget);
-    expect(_ManagerResults.results.last, true);
+    expect(find.textContaining('Incorrect pattern'), findsOneWidget);
+    expect(find.byKey(const Key('open_unlock')), findsNothing); // not popped
+  });
+
+  testWidgets('a reordered sequence is REJECTED',
+      (WidgetTester tester) async {
+    await pumpHosted(tester);
+    await enrollPattern(tester, const <int>[1, 2, 3, 6]);
+    await openUnlock(tester);
+
+    // Same nodes, different order: 1-3-2-6 must fail.
+    await drawPattern(tester, const <int>[1, 3, 2, 6]);
+
+    expect(find.textContaining('Incorrect pattern'), findsOneWidget);
+    expect(find.byKey(const Key('open_unlock')), findsNothing);
   });
 
   testWidgets('wrong pattern shows the error with remaining attempts',

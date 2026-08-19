@@ -13,10 +13,11 @@ enum PatternSetupStep { enter, confirm, mismatch, success }
 /// Pattern creation and confirmation screen (Phase 2H).
 ///
 /// Draw → confirm → enroll. Confirmation is mandatory: enrollment runs only
-/// when the redrawn shape matches the first one (direction-independent via
-/// [PatternCodec]). Mismatches land on a dedicated state with Re-confirm /
-/// Start over choices — mirroring the PIN flow (2C) — and nothing is saved
-/// until a confirmed match. Minimum 4 dots, enforced inline.
+/// when the redrawn sequence matches the first one **exactly, in order**
+/// (direction-sensitive via [PatternCodec.matches]). Mismatches land on a
+/// dedicated state with Re-confirm / Start over choices — mirroring the PIN
+/// flow (2C) — and nothing is saved until a confirmed match. Minimum 4
+/// dots, enforced inline.
 class PatternSetupScreen extends StatefulWidget {
   const PatternSetupScreen({
     super.key,
@@ -110,8 +111,8 @@ class _PatternSetupScreenState extends State<PatternSetupScreen>
       return;
     }
 
-    // Confirmation: compare shapes (direction-independent).
-    if (PatternCodec.sameShape(_firstPattern!, drawn)) {
+    // Confirmation: the exact ordered sequence must match.
+    if (PatternCodec.matches(_firstPattern!, drawn)) {
       _enroll(drawn);
     } else {
       shake();

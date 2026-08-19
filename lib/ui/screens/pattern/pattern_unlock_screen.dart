@@ -16,9 +16,9 @@ enum _UnlockView { loading, ready, noCredential, lockedOut }
 
 /// Full-screen pattern authentication (Phase 2I).
 ///
-/// Uses the **saved pattern**: drawing is direction-independent
-/// (PatternCodec canonicalization), so the same shape unlocks regardless of
-/// the direction it was drawn in. Every attempt flows through
+/// Uses the **saved pattern**: the exact ordered node sequence drawn at
+/// setup must be reproduced — direction and order are part of the
+/// credential (Android-style). Every attempt flows through
 /// [CredentialManager] — wrong patterns count toward the escalating
 /// lockout (2F), lockouts persist across restarts, and only the derived
 /// hash is ever consulted (2D).

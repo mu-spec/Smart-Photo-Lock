@@ -6,6 +6,7 @@ import 'package:smart_app_lock/data/storage/impl/in_memory_local_database.dart';
 import 'package:smart_app_lock/security/credentials/auth_result.dart';
 import 'package:smart_app_lock/security/credentials/auth_type.dart';
 import 'package:smart_app_lock/security/credentials/biometric_options.dart';
+import 'package:smart_app_lock/security/credentials/credential_hash.dart';
 import 'package:smart_app_lock/security/credentials/credential_state.dart';
 import 'package:smart_app_lock/security/credentials/credential_state_machine.dart';
 import 'package:smart_app_lock/security/credentials/impl/default_credential_manager.dart';
@@ -202,13 +203,62 @@ void main() {
       expect((result as AuthSuccess).type, AuthType.pattern);
     });
 
-    test('the same shape drawn in reverse authenticates (direction-free)',
-        () async {
+    test('REVERSE direction fails (direction-sensitive)', () async {
       await harness.manager.enrollPattern(const <int>[1, 2, 3, 6]);
       final AuthAttemptResult result = (await harness.manager
               .authenticatePattern(const <int>[6, 3, 2, 1]))
           .valueOrNull!;
-      expect(result, isA<AuthSuccess>());
+      expect(result, isA<AuthFailure>());
+      expect(
+        (result as AuthFailure).reason,
+        AuthFailureReason.wrongCredential,
+      );
+    });
+
+    test('DIFFERENT ordering fails (order-sensitive)', () async {
+      await harness.manager.enrollPattern(const <int>[1, 2, 3, 6]);
+      final AuthAttemptResult result = (await harness.manager
+              .authenticatePattern(const <int>[1, 3, 2, 6]))
+          .valueOrNull!;
+      expect(result, isA<AuthFailure>());
+    });
+
+    test('a legacy (unversioned) pattern record requires re-enrollment',
+        () async {
+      await harness.manager.enrollPattern(const <int>[1, 2, 3, 6]);
+      // Strip the scheme version from the persisted record — simulating a
+      // pre-fix direction-insensitive credential.
+      final settings = (await harness.settings.getSettings()).valueOrNull!;
+      final CredentialHash legacy = CredentialHash(
+        salt: settings.patternHash!.salt,
+        digest: settings.patternHash!.digest,
+        iterations: settings.patternHash!.iterations,
+        keyLength: settings.patternHash!.keyLength,
+      );
+      await harness.settings
+          .saveSettings(settings.copyWith(patternHash: legacy));
+
+      final restarted = harness.newManager();
+
+      // Not enrolled anymore: flows will require setting the pattern again.
+      expect(
+        (await restarted.status()).valueOrNull!.hasEnrolled(AuthType.pattern),
+        isFalse,
+      );
+      // Verification fails closed for both orientations — never ambiguous.
+      final r1 = (await restarted.authenticatePattern(const <int>[1, 2, 3, 6]))
+          .valueOrNull!;
+      expect(r1, isA<AuthFailure>());
+      expect(
+        (r1 as AuthFailure).reason,
+        AuthFailureReason.noCredentialEnrolled,
+      );
+      final r2 = (await restarted.authenticatePattern(const <int>[6, 3, 2, 1]))
+          .valueOrNull!;
+      expect(
+        (r2 as AuthFailure).reason,
+        AuthFailureReason.noCredentialEnrolled,
+      );
     });
   });
 
@@ -383,8 +433,9 @@ void main() {
         (await restarted.authenticatePin('1234')).valueOrNull,
         isA<AuthSuccess>(),
       );
+      // The exact ordered sequence survives the restart.
       expect(
-        (await restarted.authenticatePattern(const <int>[6, 3, 2, 1]))
+        (await restarted.authenticatePattern(const <int>[1, 2, 3, 6]))
             .valueOrNull,
         isA<AuthSuccess>(),
       );

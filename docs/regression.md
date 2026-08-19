@@ -95,7 +95,7 @@ instances behave exactly like successive app processes.
 | 1 | Correct PIN | 4 & 6 digit auth; `AuthSuccess(type: pin)`; success resets the failure counter |
 | 2 | Incorrect PIN | `AuthFailure(wrongCredential)` with decreasing remaining attempts; wrong-length rejected; missing credential → `noCredentialEnrolled` |
 | 3 | Cooldown | threshold → `AuthLockedOut` (~30s, streak 1); correct PIN blocked during cooldown; escalation 30s → 60s; post-cooldown success resets attempts + streak |
-| 4 | Correct pattern | auth succeeds; **direction-independent** (reversed drawing unlocks) |
+| 4 | Correct pattern | auth succeeds with the **exact ordered sequence**; reverse and reordered drawings are rejected |
 | 5 | Incorrect pattern | `AuthFailure` counted; patterns share the PIN lockout state |
 | 6 | Biometric success | `AuthSuccess(type: biometric)`; resets counters |
 | 7 | Biometric failure | counted as a failed attempt; 3 failures → shared lockout |

@@ -9,6 +9,7 @@ class CredentialHash {
     required this.digest,
     required this.iterations,
     required this.keyLength,
+    this.schemeVersion,
   });
 
   /// Random salt, base64-encoded.
@@ -23,11 +24,17 @@ class CredentialHash {
   /// Derived key length in bytes.
   final int keyLength;
 
+  /// Scheme version of the preimage encoding (null = legacy/unversioned).
+  /// Pattern hashes use this to distinguish the ordered scheme from the
+  /// pre-fix direction-insensitive one (see `Pbkdf2PatternHasher`).
+  final int? schemeVersion;
+
   Map<String, dynamic> toJson() => <String, dynamic>{
         'salt': salt,
         'digest': digest,
         'iterations': iterations,
         'keyLength': keyLength,
+        'schemeVersion': schemeVersion,
       };
 
   factory CredentialHash.fromJson(Map<String, dynamic> json) => CredentialHash(
@@ -35,6 +42,7 @@ class CredentialHash {
         digest: json['digest'] as String,
         iterations: json['iterations'] as int,
         keyLength: json['keyLength'] as int,
+        schemeVersion: json['schemeVersion'] as int?,
       );
 
   @override
@@ -43,14 +51,17 @@ class CredentialHash {
       other.salt == salt &&
       other.digest == digest &&
       other.iterations == iterations &&
-      other.keyLength == keyLength;
+      other.keyLength == keyLength &&
+      other.schemeVersion == schemeVersion;
 
   @override
-  int get hashCode => Object.hash(salt, digest, iterations, keyLength);
+  int get hashCode =>
+      Object.hash(salt, digest, iterations, keyLength, schemeVersion);
 
   @override
   String toString() =>
-      'CredentialHash(iterations: $iterations, keyLength: $keyLength)';
+      'CredentialHash(iterations: $iterations, keyLength: $keyLength, '
+      'schemeVersion: ${schemeVersion ?? 'legacy'})';
 }
 
 /// Backward-compatible name for the hashed PIN credential (Phase 1).

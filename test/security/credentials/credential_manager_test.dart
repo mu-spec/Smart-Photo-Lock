@@ -104,7 +104,7 @@ void main() {
     expect(blocked, isA<AuthLockedOut>());
   });
 
-  test('pattern enrollment validates, is direction-independent and primary',
+  test('pattern enrollment validates, is direction-sensitive and primary',
       () async {
     expect(
       (await manager.enrollPattern(const <int>[1, 2])).isFailure,
@@ -120,17 +120,23 @@ void main() {
     expect(state.hasEnrolled(AuthType.pattern), isTrue);
     expect(state.primary, AuthType.pattern);
 
-    // Same shape, reversed drawing direction — must authenticate.
+    // The exact ordered sequence must authenticate.
     final AuthAttemptResult result =
-        (await manager.authenticatePattern(const <int>[6, 3, 2, 1]))
+        (await manager.authenticatePattern(const <int>[1, 2, 3, 6]))
             .valueOrNull!;
     expect(result, isA<AuthSuccess>());
 
-    // Different shape — must fail.
-    final AuthAttemptResult wrong =
-        (await manager.authenticatePattern(const <int>[1, 2, 3, 5]))
+    // The reverse must FAIL (direction-sensitive).
+    final AuthAttemptResult reversed =
+        (await manager.authenticatePattern(const <int>[6, 3, 2, 1]))
             .valueOrNull!;
-    expect(wrong, isA<AuthFailure>());
+    expect(reversed, isA<AuthFailure>());
+
+    // A different ordering must FAIL.
+    final AuthAttemptResult reordered =
+        (await manager.authenticatePattern(const <int>[1, 3, 2, 6]))
+            .valueOrNull!;
+    expect(reordered, isA<AuthFailure>());
   });
 
   test('both credentials can be enrolled; latest enrollment is primary',
