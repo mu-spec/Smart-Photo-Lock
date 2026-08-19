@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -16,10 +18,12 @@ import 'package:smart_app_lock/ui/screens/pin/pin_unlock_screen.dart';
 /// the not-configured state.
 void main() {
   /// Builds the host: AppScope + a page that pushes the unlock screen and
-  /// records its pop result.
+  /// records its pop result. [seed] injects a deterministic RNG for the
+  /// randomized-keypad tests.
   Future<AppContainer> pumpHosted(
     WidgetTester tester, {
     DateTime Function()? now,
+    int? seed,
   }) async {
     final AppContainer container = AppContainer.inMemory();
     // Fast hashers + a low lockout threshold so the suite stays quick.
@@ -52,6 +56,7 @@ void main() {
                           builder: (_) => PinUnlockScreen(
                             credentialManager: manager,
                             now: now,
+                            random: seed == null ? null : math.Random(seed),
                           ),
                         ));
                         results.add(res);
@@ -98,6 +103,17 @@ void main() {
 
   int dotsTotal(WidgetTester tester) =>
       tester.widget<DsPinDots>(find.byType(DsPinDots)).total;
+
+  /// The ten digit labels rendered by the pad, in visual order.
+  List<String> padOrder(WidgetTester tester) => tester
+      .widgetList<Text>(
+        find.descendant(
+          of: find.byType(DsPinPad),
+          matching: find.byType(Text),
+        ),
+      )
+      .map((Text t) => t.data!)
+      .toList();
 
   testWidgets('dots match the configured PIN length (4 and 6)',
       (WidgetTester tester) async {
@@ -258,6 +274,9 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
+  // -------------------------------------------------------------------
+  // Phase 2G — randomized keypad (optional, default off)
+  // -------------------------------------------------------------------
   testWidgets('no configured PIN shows the guided recovery view',
       (WidgetTester tester) async {
     await pumpHosted(tester);
@@ -272,6 +291,54 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('open_unlock')), findsOneWidget);
     expect(_ManagerResults.results.last, false);
+  });
+
+  testWidgets('default keypad order is the accessible 1-9 layout',
+      (WidgetTester tester) async {
+    await pumpHosted(tester);
+    await enrollPin(tester, '1234');
+    await openUnlock(tester);
+
+    expect(padOrder(tester), DsPinPad.defaultDigitOrder);
+    expect(find.text('Keypad order randomized'), findsNothing);
+  });
+
+  testWidgets('randomized keypad shuffles and reshuffles after failures',
+      (WidgetTester tester) async {
+    await pumpHosted(tester, seed: 42);
+    await enrollPin(tester, '1234');
+    await _ManagerResults.manager.setRandomizedKeypadEnabled(true);
+    await openUnlock(tester);
+
+    // Replay the screen's RNG sequence to predict the layouts.
+    final math.Random replay = math.Random(42);
+    final List<String> firstExpected = shuffledDigitOrder(replay);
+    expect(padOrder(tester), firstExpected);
+    expect(find.text('Keypad order randomized'), findsOneWidget);
+
+    // One wrong attempt -> the pad reshuffles for the retry.
+    await tapDigits(tester, '9999');
+    expect(find.text('Incorrect PIN — 2 attempts left.'), findsOneWidget);
+    final List<String> secondExpected = shuffledDigitOrder(replay);
+    expect(padOrder(tester), secondExpected);
+    expect(secondExpected, isNot(equals(firstExpected)));
+
+    // Tapping by digit value still works regardless of position.
+    await tapDigits(tester, '1234');
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('open_unlock')), findsOneWidget);
+    expect(_ManagerResults.results.last, true);
+  });
+
+  testWidgets('randomized keypad stays off by default and is opt-in only',
+      (WidgetTester tester) async {
+    await pumpHosted(tester);
+    await enrollPin(tester, '1234');
+    await openUnlock(tester);
+
+    final state = (await _ManagerResults.manager.status()).valueOrNull!;
+    expect(state.randomizedKeypadEnabled, isFalse);
+    expect(padOrder(tester), DsPinPad.defaultDigitOrder);
   });
 }
 

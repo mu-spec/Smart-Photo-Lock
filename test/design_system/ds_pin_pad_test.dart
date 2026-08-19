@@ -1,3 +1,6 @@
+import 'dart:math' as math;
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -92,6 +95,82 @@ void main() {
       await tester.tap(find.byKey(const Key('pin_key_backspace')));
       expect(tapped, isEmpty);
       expect(deletes, 0);
+    });
+
+    // -------------------------------------------------------------------
+    // Phase 2G — randomized keypad
+    // -------------------------------------------------------------------
+    List<String> renderedOrder(WidgetTester tester) => tester
+        .widgetList<Text>(
+          find.descendant(
+            of: find.byType(DsPinPad),
+            matching: find.byType(Text),
+          ),
+        )
+        .map((Text t) => t.data!)
+        .toList();
+
+    testWidgets('default digitOrder keeps the accessible 1-9 layout',
+        (WidgetTester tester) async {
+      await tester.pumpWidget(
+        wrap(DsPinPad(onDigit: (_) {}, onDelete: () {})),
+      );
+      expect(renderedOrder(tester), DsPinPad.defaultDigitOrder);
+    });
+
+    testWidgets('a custom digitOrder renders digits in the given sequence',
+        (WidgetTester tester) async {
+      const List<String> order = <String>[
+        '9', '8', '7', '6', '5', '4', '3', '2', '1', '0',
+      ];
+      await tester.pumpWidget(
+        wrap(
+          DsPinPad(onDigit: (_) {}, onDelete: () {}, digitOrder: order),
+        ),
+      );
+      expect(renderedOrder(tester), order);
+    });
+
+    testWidgets('custom digitOrder still reports taps by digit value',
+        (WidgetTester tester) async {
+      final List<String> tapped = <String>[];
+      await tester.pumpWidget(
+        wrap(
+          DsPinPad(
+            onDigit: tapped.add,
+            onDelete: () {},
+            digitOrder: const <String>[
+              '9', '8', '7', '6', '5', '4', '3', '2', '1', '0',
+            ],
+          ),
+        ),
+      );
+      // '5' is rendered wherever the order places it; its key follows it.
+      await tester.tap(find.byKey(const Key('pin_key_5')));
+      expect(tapped, <String>['5']);
+    });
+  });
+
+  group('shuffledDigitOrder', () {
+    test('returns a permutation of the ten digits', () {
+      final List<String> order = shuffledDigitOrder(math.Random(1));
+      expect(order, hasLength(10));
+      expect(order.toSet(), DsPinPad.defaultDigitOrder.toSet());
+    });
+
+    test('is deterministic for a given seed', () {
+      final List<String> a = shuffledDigitOrder(math.Random(7));
+      final List<String> b = shuffledDigitOrder(math.Random(7));
+      expect(listEquals(a, b), isTrue);
+    });
+
+    test('different seeds produce (at least one) different order', () {
+      final List<String> base = shuffledDigitOrder(math.Random(1));
+      final List<List<String>> candidates = <List<String>>[
+        for (int seed = 2; seed <= 20; seed++)
+          shuffledDigitOrder(math.Random(seed)),
+      ];
+      expect(candidates.any((List<String> o) => !listEquals(o, base)), isTrue);
     });
   });
 }

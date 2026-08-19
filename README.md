@@ -28,6 +28,7 @@ setup screen. Locking is not implemented yet.
 | 2D | Secure PIN storage (derived/verifiable material only, never raw PIN) | ✅ |
 | 2E | PIN unlock screen (authentication with the configured PIN) | ✅ |
 | 2F | Failed PIN attempts (tracking + increasing cooldown) | ✅ |
+| 2G | Randomized keypad (optional, default off for accessibility) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -234,6 +235,23 @@ Failed attempts are tracked per credential state, and the lockout cooldown
   duration and shows "Cooldown increases with repeated failures." from the
   second lockout onward.
 
+### Phase 2G ✅ — Randomized Keypad (optional)
+
+Opt-in anti-shoulder-surfing; **the accessible 1-9 layout stays the default**
+until the user enables it:
+
+- `DsPinPad` accepts a parent-supplied `digitOrder` (keys keep their
+  identity by value); `shuffledDigitOrder()` does a seeded-testable
+  Fisher-Yates shuffle.
+- The setting persists via `SecuritySettings.randomizedKeypadEnabled`
+  (default **false**) → `CredentialState` → `CredentialManager`.
+- The unlock screen shuffles **once per attempt window** — stable while
+  typing, reshuffled after a wrong attempt or when a lockout expires — and
+  shows a "Keypad order randomized" hint. The setup screen intentionally
+  stays unshuffled (predictable while creating a PIN).
+- A live toggle lives on the **Security tab** (first functional option
+  there).
+
 ```
 lib/
 ├── main.dart                 # entry point (boots AppContainer.create())
@@ -316,13 +334,16 @@ lib/
     └── time_utils.dart       # minutes-of-day, overnight windows, formatting
 ```
 
-**Tests** (run with `flutter test`): PIN unlock suites (configured-length
-dots 4/6, correct PIN pops true, wrong PIN error + remaining attempts,
-lockout view + disabled pad, pre-existing lockout on open, countdown expiry
-via injected clock, no-credential recovery, escalating second lockout with
-60s countdown + notice), cooldown policy suite (schedule, cap, custom
-factor, opt-out), state machine escalation tests (streak increments,
-success resets, expired-lockout semantics), PIN storage suites (hash
+**Tests** (run with `flutter test`): randomized keypad suites (pad digit
+order rendering, deterministic seeded shuffle, opt-in unlock behavior with
+reshuffle-on-failure, Security tab toggle persistence + disabled-without-
+container), PIN unlock suites (configured-length dots 4/6, correct PIN pops
+true, wrong PIN error + remaining attempts, lockout view + disabled pad,
+pre-existing lockout on open, countdown expiry via injected clock,
+no-credential recovery, escalating second lockout with 60s cooldown +
+notice), cooldown policy suite (schedule, cap, custom factor, opt-out),
+state machine escalation tests (streak increments, success resets,
+expired-lockout semantics), PIN storage suites (hash
 policy violations, save/load round-trip, raw-PIN-never-in-storage byte
 inspection, fail-closed corrupted records, manager integration), PIN setup
 flow (4-digit happy path, 6-digit happy path, mismatch state incl.
@@ -353,7 +374,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.1.0 / 9.3.1 / 2.4.0 |
 | Java | 17 |
-| versionName / versionCode | `0.13.0` / `14` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.14.0` / `15` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM) |
 
 ## Prerequisites (on your machine)

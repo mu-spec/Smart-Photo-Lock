@@ -319,6 +319,20 @@ correct PIN   ──► everything resets (attempts AND streak)
 | `AuthLockedOut` | carries `lockoutStreak` for the UI |
 | Unlock screen | lockout countdown shows the escalated duration; streak ≥ 2 shows "Cooldown increases with repeated failures." |
 
+## 2G. Randomized keypad (optional)
+
+An opt-in anti-shoulder-surfing feature. **Default behaviour stays the
+accessible 1-9 layout** — randomization is off until the user enables it.
+
+| Piece | Behaviour |
+| ----- | --------- |
+| `DsPinPad.digitOrder` | parent-supplied digit positions (first 9 = grid, 10th = bottom-center); keys keep their identity by value |
+| `shuffledDigitOrder()` | Fisher-Yates over the ten digits; RNG injectable for deterministic tests |
+| `SecuritySettings.randomizedKeypadEnabled` | persisted flag (default false), mirrored into `CredentialState`; toggled via `CredentialManager.setRandomizedKeypadEnabled` |
+| Unlock screen | shuffles **once per attempt window** — layout is stable while typing; reshuffles after a wrong attempt, a verify failure, or when a lockout expires; shows a "Keypad order randomized" hint |
+| Security tab | live switch row (first functional option on that tab) |
+| Setup screen | intentionally **not** randomized — creating a PIN needs the predictable layout |
+
 ---
 
 ## 1. The eight modules

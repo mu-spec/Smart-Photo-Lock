@@ -128,6 +128,17 @@ class DefaultCredentialManager implements CredentialManager {
     );
   }
 
+  @override
+  Future<Result<void>> setRandomizedKeypadEnabled(bool enabled) async {
+    final Result<SecuritySettings> loaded = await _settings.getSettings();
+    return loaded.fold(
+      (SecuritySettings s) => _settings.saveSettings(
+        s.copyWith(randomizedKeypadEnabled: enabled),
+      ),
+      Result.failure,
+    );
+  }
+
   // -- authentication -----------------------------------------------------
 
   @override
@@ -233,6 +244,7 @@ class DefaultCredentialManager implements CredentialManager {
       lockedOutUntil: s.lockedOutUntil,
       pinLength: s.pinLength,
       lockoutStreak: s.lockoutStreak,
+      randomizedKeypadEnabled: s.randomizedKeypadEnabled,
     );
   }
 

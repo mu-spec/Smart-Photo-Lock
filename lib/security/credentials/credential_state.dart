@@ -23,6 +23,7 @@ class CredentialState {
     this.lockedOutUntil,
     this.pinLength,
     this.lockoutStreak = 0,
+    this.randomizedKeypadEnabled = false,
   });
 
   /// Every enrolled credential type.
@@ -45,6 +46,10 @@ class CredentialState {
   /// Consecutive lockout count (0 = never locked out in this failure
   /// sequence). Drives the escalating cooldown schedule (Phase 2F).
   final int lockoutStreak;
+
+  /// Randomizes the unlock keypad (Phase 2G). Default false: the standard
+  /// 1-9 layout remains the accessible default.
+  final bool randomizedKeypadEnabled;
 
   /// Status resolved against [now].
   CredentialStatus statusAt(DateTime now) {
@@ -72,6 +77,7 @@ class CredentialState {
     bool clearLockout = false,
     int? pinLength,
     int? lockoutStreak,
+    bool? randomizedKeypadEnabled,
   }) {
     return CredentialState(
       enrolled: enrolled ?? this.enrolled,
@@ -81,6 +87,8 @@ class CredentialState {
           clearLockout ? null : (lockedOutUntil ?? this.lockedOutUntil),
       pinLength: pinLength ?? this.pinLength,
       lockoutStreak: lockoutStreak ?? this.lockoutStreak,
+      randomizedKeypadEnabled:
+          randomizedKeypadEnabled ?? this.randomizedKeypadEnabled,
     );
   }
 
@@ -91,6 +99,7 @@ class CredentialState {
         'lockedOutUntilEpochMs': lockedOutUntil?.millisecondsSinceEpoch,
         'pinLength': pinLength,
         'lockoutStreak': lockoutStreak,
+        'randomizedKeypadEnabled': randomizedKeypadEnabled,
       };
 
   factory CredentialState.fromJson(Map<String, dynamic> json) =>
@@ -109,6 +118,8 @@ class CredentialState {
               ),
         pinLength: json['pinLength'] as int?,
         lockoutStreak: json['lockoutStreak'] as int? ?? 0,
+        randomizedKeypadEnabled:
+            json['randomizedKeypadEnabled'] as bool? ?? false,
       );
 
   @override

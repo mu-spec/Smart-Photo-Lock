@@ -29,6 +29,7 @@ class SecuritySettings {
     this.lockedOutUntil,
     this.pinLength,
     this.lockoutStreak = 0,
+    this.randomizedKeypadEnabled = false,
   });
 
   /// Factory-default settings (nothing configured yet).
@@ -84,6 +85,10 @@ class SecuritySettings {
   /// schedule (Phase 2F); persists so restarts do not reset it.
   final int lockoutStreak;
 
+  /// Randomizes the unlock-screen keypad layout (Phase 2G). Off by default
+  /// so the standard 1-9 layout stays the accessible baseline.
+  final bool randomizedKeypadEnabled;
+
   /// True once a PIN credential exists (the original primary secret).
   bool get hasPin => pinHash != null;
 
@@ -115,6 +120,7 @@ class SecuritySettings {
     int? pinLength,
     bool clearPinLength = false,
     int? lockoutStreak,
+    bool? randomizedKeypadEnabled,
   }) {
     return SecuritySettings(
       pinHash: clearPin ? null : (pinHash ?? this.pinHash),
@@ -139,6 +145,8 @@ class SecuritySettings {
       pinLength:
           clearPinLength ? null : (pinLength ?? this.pinLength),
       lockoutStreak: lockoutStreak ?? this.lockoutStreak,
+      randomizedKeypadEnabled:
+          randomizedKeypadEnabled ?? this.randomizedKeypadEnabled,
     );
   }
 
@@ -158,6 +166,7 @@ class SecuritySettings {
         'lockedOutUntilEpochMs': lockedOutUntil?.millisecondsSinceEpoch,
         'pinLength': pinLength,
         'lockoutStreak': lockoutStreak,
+        'randomizedKeypadEnabled': randomizedKeypadEnabled,
       };
 
   factory SecuritySettings.fromJson(Map<String, dynamic> json) =>
@@ -202,6 +211,8 @@ class SecuritySettings {
               ),
         pinLength: json['pinLength'] as int?,
         lockoutStreak: json['lockoutStreak'] as int? ?? 0,
+        randomizedKeypadEnabled:
+            json['randomizedKeypadEnabled'] as bool? ?? false,
       );
 
   @override

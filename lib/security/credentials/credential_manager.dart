@@ -29,6 +29,11 @@ abstract interface class CredentialManager {
   /// Configures (or removes) the biometric accelerator.
   Future<Result<void>> updateBiometricOptions(BiometricOptions options);
 
+  // -- security options ---------------------------------------------------
+
+  /// Enables/disables the randomized unlock keypad (Phase 2G).
+  Future<Result<void>> setRandomizedKeypadEnabled(bool enabled);
+
   // -- authentication -----------------------------------------------------
 
   Future<Result<AuthAttemptResult>> authenticatePin(String pin);

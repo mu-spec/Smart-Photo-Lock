@@ -82,6 +82,23 @@ void main() {
     expect(updated.copyWith(failedAttempts: 2).lockoutStreak, 3);
   });
 
+  test('randomizedKeypadEnabled defaults off, round-trips and copies',
+      () {
+    const CredentialState fresh =
+        CredentialState(enrolled: <AuthType>{AuthType.pin});
+    expect(fresh.randomizedKeypadEnabled, isFalse);
+
+    final CredentialState enabled =
+        fresh.copyWith(randomizedKeypadEnabled: true);
+    expect(enabled.randomizedKeypadEnabled, isTrue);
+    expect(
+      CredentialState.fromJson(enabled.toJson()).randomizedKeypadEnabled,
+      isTrue,
+    );
+    // copyWith of unrelated fields preserves the flag.
+    expect(enabled.copyWith(failedAttempts: 2).randomizedKeypadEnabled, isTrue);
+  });
+
   test('copyWith preserves pinLength when updating counters', () {
     final CredentialState state = const CredentialState(
       enrolled: <AuthType>{AuthType.pin},

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
@@ -32,6 +33,7 @@ class PinUnlockScreen extends StatefulWidget {
     this.credentialManager,
     this.title = 'Enter your PIN',
     this.now,
+    this.random,
   });
 
   /// Overrides the manager resolved from [AppScope] (tests/previews).
@@ -42,6 +44,10 @@ class PinUnlockScreen extends StatefulWidget {
 
   /// Clock seam for tests (defaults to [DateTime.now]).
   final DateTime Function()? now;
+
+  /// RNG seam for the randomized keypad (Phase 2G) — tests inject a seeded
+  /// [math.Random] for deterministic shuffles.
+  final math.Random? random;
 
   static const String wrongPinPrefix = 'Incorrect PIN';
   static const String verifyFailedMessage =
@@ -71,6 +77,11 @@ class _PinUnlockScreenState extends State<PinUnlockScreen>
   int _lockoutStreak = 0;
   Timer? _timer;
 
+  // Phase 2G — randomized keypad.
+  bool _randomized = false;
+  List<String> _digitOrder = DsPinPad.defaultDigitOrder;
+  late final math.Random _random;
+
   CredentialManager get _manager =>
       widget.credentialManager ?? AppScope.read(context)!.auth;
 
@@ -80,6 +91,7 @@ class _PinUnlockScreenState extends State<PinUnlockScreen>
   void initState() {
     super.initState();
     initShake();
+    _random = widget.random ?? math.Random();
     _loadStatus();
   }
 
@@ -105,6 +117,10 @@ class _PinUnlockScreenState extends State<PinUnlockScreen>
       return;
     }
     _pinLength = length;
+    _randomized = state.randomizedKeypadEnabled;
+    if (_randomized) {
+      _digitOrder = shuffledDigitOrder(_random);
+    }
     final DateTime? lockout = state.lockedOutUntil;
     if (lockout != null && _now().isBefore(lockout)) {
       _startLockout(lockout, streak: state.lockoutStreak);
@@ -181,6 +197,9 @@ class _PinUnlockScreenState extends State<PinUnlockScreen>
             ? '${PinUnlockScreen.wrongPinPrefix} — '
                 '${outcome.remainingAttempts} attempts left.'
             : PinUnlockScreen.wrongPinPrefix;
+        if (_randomized) {
+          _digitOrder = shuffledDigitOrder(_random);
+        }
       });
       shake();
       return;
@@ -191,6 +210,9 @@ class _PinUnlockScreenState extends State<PinUnlockScreen>
       _verifying = false;
       _entered = '';
       _error = PinUnlockScreen.verifyFailedMessage;
+      if (_randomized) {
+        _digitOrder = shuffledDigitOrder(_random);
+      }
     });
     shake();
   }
@@ -220,6 +242,10 @@ class _PinUnlockScreenState extends State<PinUnlockScreen>
         _view = _UnlockView.ready;
         _lockoutUntil = null;
         _lockoutRemaining = Duration.zero;
+        if (_randomized) {
+          // Fresh layout for the new attempt window.
+          _digitOrder = shuffledDigitOrder(_random);
+        }
       });
     } else {
       setState(() => _lockoutRemaining = remaining);
@@ -287,7 +313,19 @@ class _PinUnlockScreenState extends State<PinUnlockScreen>
           onDelete: _onDelete,
           onDeleteAll: _onDeleteAll,
           enabled: !_verifying,
+          digitOrder: _digitOrder,
         ),
+        if (_randomized) ...<Widget>[
+          const SizedBox(height: DsSpacing.sm),
+          Center(
+            child: Text(
+              'Keypad order randomized',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: palette.textSecondary,
+              ),
+            ),
+          ),
+        ],
         if (_verifying) ...<Widget>[
           const SizedBox(height: DsSpacing.lg),
           const Center(
@@ -357,7 +395,12 @@ class _PinUnlockScreenState extends State<PinUnlockScreen>
         const SizedBox(height: DsSpacing.xl),
         Center(child: DsPinDots(filled: 0, total: length, error: true)),
         const SizedBox(height: DsSpacing.xl),
-        DsPinPad(onDigit: (_) {}, onDelete: () {}, enabled: false),
+        DsPinPad(
+          onDigit: (_) {},
+          onDelete: () {},
+          enabled: false,
+          digitOrder: _digitOrder,
+        ),
         const SizedBox(height: DsSpacing.lg),
         Center(
           child: DsButton(

@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../ds_context.dart';
@@ -14,6 +16,11 @@ import '../ds_palette.dart';
 /// ```
 /// The bottom-left slot renders a biometric shortcut when
 /// [showBiometric] is true, otherwise it stays empty.
+///
+/// [digitOrder] controls where digits appear: the first 9 entries fill the
+/// grid (row-major) and the 10th sits at the bottom-center. The default is
+/// the familiar 1-9 layout (understandable & accessible); pass a shuffled
+/// order (see [shuffledDigitOrder]) to randomize the keypad.
 class DsPinPad extends StatelessWidget {
   const DsPinPad({
     super.key,
@@ -23,7 +30,13 @@ class DsPinPad extends StatelessWidget {
     this.onBiometric,
     this.showBiometric = false,
     this.enabled = true,
+    this.digitOrder = defaultDigitOrder,
   });
+
+  /// The standard, accessible 1-9 layout (with 0 bottom-center).
+  static const List<String> defaultDigitOrder = <String>[
+    '1', '2', '3', '4', '5', '6', '7', '8', '9', '0',
+  ];
 
   /// Fired with '0'..'9'.
   final ValueChanged<String> onDigit;
@@ -42,26 +55,30 @@ class DsPinPad extends StatelessWidget {
   /// When false, all keys are inert.
   final bool enabled;
 
-  static const List<List<String>> _rows = <List<String>>[
-    <String>['1', '2', '3'],
-    <String>['4', '5', '6'],
-    <String>['7', '8', '9'],
-  ];
+  /// Position order of the ten digits (length 10, must contain each digit
+  /// 0-9 exactly once). Keys keep their identity by value —
+  /// `Key('pin_key_5')` always refers to digit '5' wherever it is rendered.
+  final List<String> digitOrder;
 
   @override
   Widget build(BuildContext context) {
+    final List<String> grid = digitOrder.sublist(0, 9);
+    final String bottomCenter = digitOrder[9];
+
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
-        for (final List<String> row in _rows)
+        for (int row = 0; row < 3; row++)
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: <Widget>[
-              for (final String digit in row)
+              for (int col = 0; col < 3; col++)
                 _PinKey(
-                  key: Key('pin_key_$digit'),
-                  label: digit,
-                  onTap: enabled ? () => onDigit(digit) : null,
+                  key: Key('pin_key_${grid[row * 3 + col]}'),
+                  label: grid[row * 3 + col],
+                  onTap: enabled
+                      ? () => onDigit(grid[row * 3 + col])
+                      : null,
                 ),
             ],
           ),
@@ -77,9 +94,9 @@ class DsPinPad extends StatelessWidget {
                   : null,
             ),
             _PinKey(
-              key: const Key('pin_key_0'),
-              label: '0',
-              onTap: enabled ? () => onDigit('0') : null,
+              key: Key('pin_key_$bottomCenter'),
+              label: bottomCenter,
+              onTap: enabled ? () => onDigit(bottomCenter) : null,
             ),
             _PinKey(
               key: const Key('pin_key_backspace'),
@@ -93,6 +110,21 @@ class DsPinPad extends StatelessWidget {
       ],
     );
   }
+}
+
+/// Fisher-Yates shuffle of the standard digit order.
+///
+/// [random] is injectable so tests can replay a deterministic sequence.
+List<String> shuffledDigitOrder([math.Random? random]) {
+  final math.Random rng = random ?? math.Random();
+  final List<String> order = List<String>.from(DsPinPad.defaultDigitOrder);
+  for (int i = order.length - 1; i > 0; i--) {
+    final int j = rng.nextInt(i + 1);
+    final String tmp = order[i];
+    order[i] = order[j];
+    order[j] = tmp;
+  }
+  return order;
 }
 
 /// A single circular key with ripple feedback.

@@ -67,6 +67,20 @@ void main() {
     expect(legacy.lockoutStreak, 0);
   });
 
+  test('randomizedKeypadEnabled defaults off and round-trips', () {
+    expect(SecuritySettings.defaults.randomizedKeypadEnabled, isFalse);
+    final SecuritySettings enabled =
+        SecuritySettings.defaults.copyWith(randomizedKeypadEnabled: true);
+    expect(
+      SecuritySettings.fromJson(enabled.toJson()).randomizedKeypadEnabled,
+      isTrue,
+    );
+    // Legacy JSON has no field -> defaults to false (accessible default).
+    final SecuritySettings legacy =
+        SecuritySettings.fromJson(<String, dynamic>{'pinLength': 4});
+    expect(legacy.randomizedKeypadEnabled, isFalse);
+  });
+
   test('legacy JSON (Phase 1) still parses with the new defaults', () {
     final SecuritySettings restored = SecuritySettings.fromJson(
       <String, dynamic>{
