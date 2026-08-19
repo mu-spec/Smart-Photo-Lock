@@ -69,7 +69,7 @@ class _SecurityScreenState extends State<SecurityScreen> {
   }
 
   /// Handles the "Pattern unlock" row: opens pattern setup when nothing is
-  /// enrolled; otherwise hints at the upcoming unlock screen (next phase).
+  /// enrolled, otherwise opens the unlock challenge (Phase 2I).
   Future<void> _onPatternTap() async {
     final auth = AppScope.read(context)?.auth;
     if (auth == null) {
@@ -83,8 +83,13 @@ class _SecurityScreenState extends State<SecurityScreen> {
       await Navigator.of(context).pushNamed(RouteNames.patternSetup);
       return;
     }
+    final bool? unlocked =
+        await Navigator.of(context).pushNamed<bool>(RouteNames.patternUnlock);
+    if (!mounted || unlocked != true) {
+      return;
+    }
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Pattern unlock arrives in the next phase.')),
+      const SnackBar(content: Text('Authenticated ✓')),
     );
   }
 

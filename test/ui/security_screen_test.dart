@@ -6,6 +6,7 @@ import 'package:smart_app_lock/app/app_container.dart';
 import 'package:smart_app_lock/app/router.dart';
 import 'package:smart_app_lock/app/theme/app_theme.dart';
 import 'package:smart_app_lock/ui/screens/pattern/pattern_setup_screen.dart';
+import 'package:smart_app_lock/ui/screens/pattern/pattern_unlock_screen.dart';
 import 'package:smart_app_lock/ui/screens/security/security_screen.dart';
 
 /// Phase 2G: the Security tab's randomized-keypad toggle reflects and
@@ -98,6 +99,33 @@ void main() {
 
     // No pattern enrolled -> the setup flow opens.
     expect(find.text(PatternSetupScreen.enterTitle), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('pattern row opens the unlock screen when a pattern is enrolled',
+      (WidgetTester tester) async {
+    final AppContainer container = AppContainer.inMemory();
+    await container.auth.enrollPattern(const <int>[1, 2, 3, 6]);
+    await tester.pumpWidget(
+      AppScope(
+        container: container,
+        child: MaterialApp(
+          theme: AppTheme.dark,
+          routes: <String, WidgetBuilder>{
+            RouteNames.patternSetup: (_) => const PatternSetupScreen(),
+            RouteNames.patternUnlock: (_) => const PatternUnlockScreen(),
+          },
+          home: const Scaffold(body: SecurityScreen()),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.text('Pattern unlock'));
+    await tester.pumpAndSettle();
+
+    // Enrolled -> the unlock challenge opens instead of setup.
+    expect(find.text(PatternUnlockScreen.readyHint), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

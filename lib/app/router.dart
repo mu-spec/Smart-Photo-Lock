@@ -22,6 +22,9 @@ abstract final class RouteNames {
   /// Pattern creation + confirmation (Phase 2H).
   static const String patternSetup = '/pattern/setup';
 
+  /// Full-screen pattern authentication (Phase 2I). Pops `true` on success.
+  static const String patternUnlock = '/pattern/unlock';
+
   // Reserved for later phases — uncomment as the screens land:
   // static const String onboarding  = '/onboarding';
   // static const String lockScreen  = '/lock'; // overlay PIN challenge
@@ -35,5 +38,7 @@ abstract final class AppRouter {
     RouteNames.pinUnlock: (BuildContext context) => const PinUnlockScreen(),
     RouteNames.patternSetup: (BuildContext context) =>
         const PatternSetupScreen(),
+    RouteNames.patternUnlock: (BuildContext context) =>
+        const PatternUnlockScreen(),
   };
 }

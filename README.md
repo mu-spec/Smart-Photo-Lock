@@ -30,6 +30,7 @@ setup screen. Locking is not implemented yet.
 | 2F | Failed PIN attempts (tracking + increasing cooldown) | ✅ |
 | 2G | Randomized keypad (optional, default off for accessibility) | ✅ |
 | 2H | Pattern setup (creation + confirmation) | ✅ |
+| 2I | Pattern authentication (unlock with the saved pattern) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -270,6 +271,22 @@ the PIN flow's UX:
   canonical shape, encrypted at rest); the Security tab's "Pattern unlock"
   row opens the setup when no pattern is enrolled.
 
+### Phase 2I ✅ — Pattern Authentication
+
+Full-screen authentication with the **saved pattern**
+(`RouteNames.patternUnlock`, pops `true` on success):
+
+- Draw the pattern on the shared `DsPatternGrid`; verification is
+  **direction-independent** — the same shape unlocks however it was drawn.
+- Too-short draws get an inline hint and **do not count** as failed
+  attempts; wrong patterns show the remaining-attempts error + shake.
+- Lockouts reuse the 2F machinery: live countdown with the grid disabled,
+  pre-existing lockouts picked up on open, escalating cooldowns with the
+  "Cooldown increases with repeated failures." notice.
+- No pattern configured → guided recovery (Set up pattern / Back).
+- The Security tab's "Pattern unlock" row opens the unlock when a pattern
+  is enrolled (setup otherwise); success shows "Authenticated ✓".
+
 ```
 lib/
 ├── main.dart                 # entry point (boots AppContainer.create())
@@ -301,7 +318,7 @@ lib/
 │   │   ├── security/         # Security tab (status banner + control list)
 │   │   ├── settings/         # Settings tab (placeholder)
 │   │   ├── pin/              # PIN setup (2B) + unlock (2E) flows
-│   │   └── pattern/          # Pattern setup flow (2H)
+│   │   └── pattern/          # Pattern setup (2H) + unlock (2I) flows
 │   └── widgets/              # PlaceholderScreen, EntryShakeMixin (shared
 │                             # PIN-entry shake feedback)
 ├── data/                     # persistence (Phase 1E)
@@ -354,15 +371,20 @@ lib/
     └── time_utils.dart       # minutes-of-day, overnight windows, formatting
 ```
 
-**Tests** (run with `flutter test`): pattern setup suites (draw → confirm →
-enroll with direction independence, mismatch state + nothing-saved,
-re-confirm, start-over, too-short inline error, clear, enrollment-failure
-recovery, route reachability), pattern grid component suites (hit-testing,
-stroke sequences, no-repeat, disabled, error painter state, geometry),
-Security tab pattern-row navigation, randomized keypad suites (pad digit
-order rendering, deterministic seeded shuffle, opt-in unlock behavior with
-reshuffle-on-failure, Security tab toggle persistence + disabled-without-
-container), PIN unlock suites (configured-length dots 4/6, correct PIN pops
+**Tests** (run with `flutter test`): pattern unlock suites (correct pattern
+pops true, reversed-direction unlock, wrong pattern error + cleared grid,
+too-short draws don't count, lockout view + disabled grid, pre-existing
+lockout on open, countdown expiry via injected clock, escalating second
+lockout, no-credential recovery, clear button), pattern setup suites (draw
+→ confirm → enroll with direction independence, mismatch state +
+nothing-saved, re-confirm, start-over, too-short inline error, clear,
+enrollment-failure recovery, route reachability), pattern grid component
+suites (hit-testing, stroke sequences, no-repeat, disabled, error painter
+state, geometry), Security tab pattern-row navigation (setup + unlock),
+randomized keypad suites (pad digit order rendering, deterministic seeded
+shuffle, opt-in unlock behavior with reshuffle-on-failure, Security tab
+toggle persistence + disabled-without-container), PIN unlock suites
+(configured-length dots 4/6, correct PIN pops
 true, wrong PIN error + remaining attempts, lockout view + disabled pad,
 pre-existing lockout on open, countdown expiry via injected clock,
 no-credential recovery, escalating second lockout with 60s cooldown +
@@ -399,7 +421,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.1.0 / 9.3.1 / 2.4.0 |
 | Java | 17 |
-| versionName / versionCode | `0.15.0` / `16` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.16.0` / `17` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM) |
 
 ## Prerequisites (on your machine)

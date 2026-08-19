@@ -362,6 +362,34 @@ Draw pattern (min 4 dots) ──► Confirm (redraw) ──► Enroll ──► 
   PBKDF2 over canonical shape → encrypted settings); the Security tab's
   "Pattern unlock" row opens the setup when no pattern is enrolled.
 
+## 2I. Pattern authentication
+
+`ui/screens/pattern/pattern_unlock_screen.dart` authenticates with the
+**saved pattern** (RouteNames.patternUnlock, pops `true` on success):
+
+```
+open ──► status(): pattern enrolled? / lockout active?
+         │
+         ├─ no pattern ──► guided recovery (Set up pattern / Back)
+         ├─ lockout active ──► live countdown, grid disabled
+         └─ ready ──► draw on the grid ──► authenticatePattern
+              │
+              ├─ correct ──► pop(true)   (direction-independent!)
+              ├─ too short ──► inline hint, does NOT count as an attempt
+              ├─ wrong ──► inline error + remaining attempts + shake
+              └─ locked ──► countdown (persisted; escalating cooldown 2F)
+```
+
+- Reuses `DsPatternGrid`, `EntryShakeMixin`, and the `PatternPolicy`
+  minimum; every attempt flows through `CredentialManager`, so wrong
+  patterns count toward the same escalating lockout as PIN failures and
+  only the derived hash is ever consulted.
+- Drawing direction does not matter — `PatternCodec.sameShape`
+  canonicalization applies at verification.
+- The Security tab's "Pattern unlock" row now opens this screen when a
+  pattern is enrolled (setup otherwise); success shows the shared
+  "Authenticated ✓" snackbar.
+
 ---
 
 ## 1. The eight modules
@@ -447,7 +475,8 @@ implementation is deferred.
 | -------------- | ------------------------- |
 | PIN setup | `ui` (setup screen ready in 2B), `security/credentials` (manager ready in 2A), `data` (SecuritySettingsRepository — ready in 1E) |
 | PIN unlock | `ui` (unlock screen ready in 2E), `security/credentials` (verify + lockout ready in 2A/2D) |
-| Pattern & biometric setup | `ui` (screens), `security/credentials` (hashers/options ready in 2A), `services/biometric_service` impl |
+| Pattern setup & unlock | `ui` (screens ready in 2H/2I), `security/credentials` (hasher + policy ready in 2A) |
+| Biometric setup & unlock | `ui` (screens), `security/credentials` (options ready in 2A), `services/biometric_service` impl |
 | App list | `ui` (list screen — replaces Apps placeholder), `services/installed_apps_service` (native impl), `data/installed_apps_repository` (cache impl), `ProtectedAppsRepository` (ready in 1E) |
 | Smart automations | `ui` (replaces Smart placeholder), `rules` (already done), `data` (ready in 1E) |
 | Security settings | `ui` (PIN flows on the Security tab), `security` (encryption-at-rest ready in 1F) |
