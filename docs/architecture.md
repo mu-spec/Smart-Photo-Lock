@@ -2,7 +2,8 @@
 
 This document describes the layered architecture introduced in **Phase 1B**,
 the navigation foundation of **Phase 1C**, the base design system of
-**Phase 1D**, and the local persistence foundation of **Phase 1E**.
+**Phase 1D**, the local persistence foundation of **Phase 1E**, and the
+secure storage foundation of **Phase 1F**.
 Locking behaviour is **not** implemented yet; these phases establish the
 folders, contracts, and rules that every later phase must follow.
 
@@ -98,6 +99,45 @@ Rules:
 
 ---
 
+## 1F. Secure storage foundation
+
+Sensitive values follow a strict storage chain; **raw PINs/passwords are
+never stored anywhere** — only derived values, and those are encrypted.
+
+```
+PIN entry ──► PBKDF2-HMAC-SHA256 (50k iters, salted) ──► PinHash   (never raw PIN)
+                                                        │ JSON
+                                                        ▼
+                              SecuritySettings document (settings + PinHash)
+                                                        │ AES-256-GCM (fresh nonce per write)
+                                                        ▼
+                               enc:v1:<base64(nonce ‖ ciphertext ‖ tag)>  ──► SQLite
+                                                        ▲
+                                   256-bit master key │  (created once, first boot)
+                                                        │
+                       FlutterSecureSecretStore ── Android Keystore-backed
+                       (EncryptedSharedPreferences; TEE/StrongBox where present)
+```
+
+| Layer | Component | Protection |
+| ----- | --------- | ---------- |
+| Secrets | `SecretStore` → `FlutterSecureSecretStore` | Android Keystore: device-bound AES key, values encrypted with EncryptedSharedPreferences |
+| Encryption | `SettingsCipher` → `AesGcmSettingsCipher` | AES-256-GCM: confidentiality + tamper-evident auth tag, random nonce per write |
+| Settings | `SecuritySettingsRepositoryImpl` | stores only `enc:v1:` ciphertext; legacy 1E plaintext readable (upgrade path) and re-encrypted on next save; fails **closed** when the cipher is unavailable |
+| Backups | `android:allowBackup="false"` | Keystore keys do not survive device-to-device restore; restoring ciphertext without its key would corrupt the vault |
+
+Hardening guarantees:
+
+- The master key never leaves the Keystore-backed store (only loaded into
+  memory while encrypting).
+- Tampering with the stored document fails decryption (GCM auth) → the
+  repository returns a `Failure` — never partial data.
+- Tests cover: round-trips, fresh nonces, tamper detection, key reuse across
+  restarts, 256-bit key material, encrypted-at-rest assertions, legacy
+  fallback, and the no-raw-PIN invariant.
+
+---
+
 ## 1. The eight modules
 
 ```
@@ -123,7 +163,7 @@ Rules:
 | UI | `lib/ui` | Screens, shared widgets | `shell/main_shell.dart`, `screens/{home,apps,smart,security,settings}/`, `widgets/placeholder_screen.dart` | 1C (tab shell + placeholders) |
 | Design System | `lib/design_system` | Visual tokens + base components + security status widgets | `ds_palette.dart`, `ds_theme.dart`, `ds_spacing.dart`, `ds_typography.dart`, `widgets/`, `security/` | 1D (implemented) |
 | Data | `lib/data` | Models, storage (prefs + SQLite), repository contracts + impls | `models/`, `storage/`, `repositories/` | 1E (implemented) |
-| Security | `lib/security` | PIN hashing & strength policy | `pin_hasher.dart` ✅, `pin_policy.dart` ✅ | **working primitives** |
+| Security | `lib/security` | PIN hashing & policy, secret store, settings encryption | `pin_hasher.dart` ✅, `pin_policy.dart` ✅, `storage/` ✅, `encryption/` ✅ | **working (1F: Keystore-backed)** |
 | Protection | `lib/protection` | Lock engine, access control, unlock sessions | `lock_engine.dart`, `access_controller.dart`, `lock_session.dart` | contracts (+session model) |
 | Rules | `lib/rules` | Lock rule model + pure evaluation | `lock_rule.dart`, `rule_engine.dart` ✅ | **working pure logic** |
 | Profiles | `lib/profiles` | Lock profiles (groups of locked apps) | `lock_profile.dart`, `profile_manager.dart` | contracts (+model) |
@@ -182,6 +222,6 @@ implementation is deferred.
 | Onboarding / PIN setup | `ui` (screens), `security` (verify via hasher), `data` (SecuritySettingsRepository — ready in 1E) |
 | App list | `ui` (list screen — replaces Apps placeholder), `services/installed_apps_service` (native impl), `data/installed_apps_repository` (cache impl), `ProtectedAppsRepository` (ready in 1E) |
 | Smart automations | `ui` (replaces Smart placeholder), `rules` (already done), `data` (ready in 1E) |
-| Security settings | `ui` (PIN flows on the Security tab), `security` (Keystore hardening) |
+| Security settings | `ui` (PIN flows on the Security tab), `security` (encryption-at-rest ready in 1F) |
 | Lock screen & enforcement | `ui` (challenge screen), `protection` (engine + controller impls), `services` (overlay/accessibility impls) |
 | Hardening | `services/device_admin_service` impl, Keystore-backed secrets, R8 keep-rules |

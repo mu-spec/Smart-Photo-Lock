@@ -6,11 +6,17 @@
       (PACKAGE_USAGE_STATS, SYSTEM_ALERT_WINDOW, BIND_ACCESSIBILITY_SERVICE,
       Device Admin receiver, QUERY_ALL_PACKAGES / <queries>) are added in the
       phases that implement those features.
+
+      allowBackup=false (Phase 1F): sensitive values are protected by the
+      Android Keystore, and Keystore keys do NOT survive a backup/restore to
+      a new device. Restoring encrypted data without its key would corrupt
+      the vault, so cloud backups are disabled for this app.
     -->
     <application
         android:label="Smart App Lock"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:allowBackup="false">
 
         <activity
             android:name=".MainActivity"

@@ -5,7 +5,7 @@ publish_to: "none"
 
 # App version. versionCode (left of '+') and versionName (right of '+')
 # are consumed by the Android Gradle config (see android/app/build.gradle.kts).
-version: 0.5.0+5
+version: 0.6.0+6
 
 environment:
   sdk: ">=3.5.0 <4.0.0"
@@ -23,6 +23,10 @@ dependencies:
   sqflite: ^2.4.0
   # Path utilities used by the SQLite store.
   path: ^1.9.0
+  # Android Keystore-backed storage for sensitive values (master keys, tokens).
+  flutter_secure_storage: ^11.0.0
+  # Pure-Dart AES-GCM used to encrypt the security settings at rest.
+  cryptography: ^2.9.0
 
 dev_dependencies:
   flutter_test:

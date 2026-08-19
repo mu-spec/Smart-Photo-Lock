@@ -4,9 +4,10 @@ Privacy-first Android app locker built with **Flutter**.
 Development follows the PRD phase plan; this repository is the production
 Android project.
 
-**Current status: Phase 1A + 1B + 1C + 1D + 1E complete** — production project
-scaffold, core architecture, five-tab navigation, base design system, and
-local persistence. Locking is not implemented yet.
+**Current status: Phase 1A–1F complete** — production project scaffold, core
+architecture, five-tab navigation, base design system, local persistence, and
+secure storage (Android Keystore-backed encryption). Locking is not
+implemented yet.
 
 ---
 
@@ -19,6 +20,7 @@ local persistence. Locking is not implemented yet.
 | 1C | Navigation foundation (5-tab shell + placeholder screens) | ✅ |
 | 1D | Base design system (tokens, components, light/dark, security status) | ✅ |
 | 1E | Local persistence foundation (preferences, protected apps, security settings, profiles, rules) | ✅ |
+| 1F | Secure storage foundation (Android Keystore-backed encryption, no raw PINs) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -83,6 +85,31 @@ Repositories return `Result<T>`; screens get them from `AppContainer`
 (`create()` in `main()`, `inMemory()` in tests). No protection logic yet —
 this layer only stores and retrieves.
 
+### Phase 1F ✅ — Secure Storage Foundation
+
+Sensitive values are protected end-to-end; **raw PINs/passwords are never
+stored anywhere**.
+
+```
+PIN ──► PBKDF2 (salted) ──► PinHash ──► SecuritySettings JSON
+                                          │ AES-256-GCM (fresh nonce)
+                                          ▼
+                        enc:v1:<base64> ──► SQLite security_settings
+                                          ▲
+                   256-bit master key ────┘  (Android Keystore-backed
+                                             flutter_secure_storage)
+```
+
+- **`SecretStore`** (`flutter_secure_storage`) — master key lives only in the
+  Android Keystore (EncryptedSharedPreferences, TEE/StrongBox where present).
+- **`SettingsCipher`** (AES-256-GCM, `cryptography`) — settings encrypted at
+  rest with a fresh nonce per write; any tampering fails decryption loudly.
+- **Repository** stores only `enc:v1:` ciphertext; legacy 1E plaintext is
+  still readable (auto re-encrypts on next save); fails closed without the
+  cipher.
+- **`android:allowBackup="false"`** — Keystore keys can't survive device
+  restore, so cloud backup is disabled to protect the vault.
+
 ```
 lib/
 ├── main.dart                 # entry point (boots AppContainer.create())
@@ -118,9 +145,12 @@ lib/
 │   │   └── impl/             # shared_preferences, sqflite, in-memory stores
 │   └── repositories/         # contracts + impls (protected apps, security
 │                             # settings, profiles & rules)
-├── security/                 # PIN hashing & policy (working)
+├── security/                 # PIN hashing, secret store, settings encryption
 │   ├── pin_hasher.dart       # PBKDF2-HMAC-SHA256 (crypto package)
-│   └── pin_policy.dart       # 4-6 digit PIN validation
+│   ├── pin_policy.dart       # 4-6 digit PIN validation
+│   ├── storage/              # SecretStore + FlutterSecureSecretStore
+│   │                         # (Android Keystore-backed) + in-memory impl
+│   └── encryption/           # SettingsCipher + AES-256-GCM implementation
 ├── protection/               # lock enforcement contracts
 │   ├── lock_engine.dart      # LockEngine interface (overlay/accessibility/admin)
 │   ├── access_controller.dart# AccessDecision: allow / challenge / deny
@@ -142,13 +172,15 @@ lib/
     └── time_utils.dart       # minutes-of-day, overnight windows, formatting
 ```
 
-**Tests** (run with `flutter test`): persistence suites (preferences store,
-protected apps, security settings incl. PIN round-trip, profiles & rules,
-container integration), navigation tests (tab switching, quick-access tiles,
-offstage assertions), design-system component tests (button, input, card,
-section title, security status pill/item/banner, theme + palette + scales),
-PIN hasher round-trip, rule engine (incl. midnight-wrapping windows), lock
-session expiry, Result type.
+**Tests** (run with `flutter test`): secure-storage suites (secret store,
+AES-GCM cipher incl. tamper detection & key reuse, encrypted settings
+repository incl. legacy fallback and no-raw-PIN invariant), persistence
+suites (preferences store, protected apps, security settings, profiles &
+rules, container integration), navigation tests (tab switching,
+quick-access tiles, offstage assertions), design-system component tests
+(button, input, card, section title, security status pill/item/banner,
+theme + palette + scales), PIN hasher round-trip, rule engine (incl.
+midnight-wrapping windows), lock session expiry, Result type.
 
 ---
 
@@ -160,8 +192,8 @@ session expiry, Result type.
 | minSdk / targetSdk / compileSdk | 24 / 36 / 36 |
 | AGP / Gradle / Kotlin | 9.1.0 / 9.3.1 / 2.4.0 |
 | Java | 17 |
-| versionName / versionCode | `0.5.0` / `5` (in `pubspec.yaml`) |
-| Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database) |
+| versionName / versionCode | `0.6.0` / `6` (in `pubspec.yaml`) |
+| Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM) |
 
 ## Prerequisites (on your machine)
 
