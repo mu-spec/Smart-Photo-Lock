@@ -1,0 +1,28 @@
+name: smart_app_lock
+description: "Smart App Lock — privacy-first app locker for Android, built with Flutter."
+# Package is not published to pub.dev.
+publish_to: "none"
+
+# App version. versionCode (left of '+') and versionName (right of '+')
+# are consumed by the Android Gradle config (see android/app/build.gradle.kts).
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.5.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # Default icon set used by the template; swap for a custom set in a later phase.
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+
+  # Assets, fonts, and native plugin declarations get added here in later
+  # phases (Phase 2+ brings app-list UI, security storage, native services).

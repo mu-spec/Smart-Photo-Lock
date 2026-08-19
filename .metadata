@@ -1,0 +1,17 @@
+# This file tracks properties of this Flutter project.
+# Used by Flutter tool to assess capabilities and perform upgrades etc.
+#
+# This file should be version controlled and should not be manually edited.
+# The `flutter` tool rewrites it on the first `flutter pub get`/`flutter run`.
+
+version:
+  revision: "0000000000000000000000000000000000000000"
+  channel: "stable"
+
+project_type: app
+
+# Tracks metadata for the flutter migrate command
+migration:
+  platforms:
+    - platform: android
+      creationDate: 2026-08-19

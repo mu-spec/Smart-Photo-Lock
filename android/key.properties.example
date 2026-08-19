@@ -1,0 +1,17 @@
+# ------------------------------------------------------------------
+# Release signing credentials — DO NOT COMMIT THIS FILE.
+#
+# 1. Generate a keystore (run from android/app/):
+#      keytool -genkey -v -keystore upload-keystore.jks \
+#        -storetype JKS -keyalg RSA -keysize 2048 -validity 10000 -alias upload
+#
+# 2. Copy this file to `key.properties` (same folder) and fill in the
+#    passwords you chose. `storeFile` is resolved relative to android/app/.
+#
+# The release build automatically falls back to debug signing while this
+# file is absent, so the project always compiles. See README for details.
+# ------------------------------------------------------------------
+storePassword=CHANGE_ME
+keyPassword=CHANGE_ME
+keyAlias=upload
+storeFile=upload-keystore.jks
