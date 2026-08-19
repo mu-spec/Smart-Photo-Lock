@@ -54,19 +54,26 @@ void main() {
   }
 
   Future<void> drawPattern(WidgetTester tester, List<int> nodes) async {
-    // Settle any pending step transition so exactly one grid is mounted.
+    // Settle any pending step/view transition so exactly one grid is
+    // mounted (getTopLeft throws when the switcher still holds two).
     await tester.pump(const Duration(milliseconds: 250));
     final Offset origin = tester.getTopLeft(find.byType(DsPatternGrid));
     final TestGesture gesture =
         await tester.startGesture(origin + nodeCenter(nodes.first));
-    await tester.pump(const Duration(milliseconds: 20));
+    await tester.pump();
+    // Win the gesture arena with a small HORIZONTAL movement before any
+    // vertical leg: the enclosing scrollable would otherwise claim
+    // vertical drags and the grid's pan callbacks would never fire.
+    await gesture.moveBy(const Offset(24, 0));
+    await tester.pump();
     for (final int node in nodes.skip(1)) {
       await gesture.moveTo(origin + nodeCenter(node));
-      await tester.pump(const Duration(milliseconds: 20));
+      await tester.pump();
     }
     await gesture.up();
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 50));
+    // Let async verification/enrollment and step transitions finish.
+    await tester.pump(const Duration(milliseconds: 400));
   }
 
   testWidgets('draw → confirm → enroll → success (exact ordered sequence)',

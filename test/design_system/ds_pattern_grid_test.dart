@@ -11,7 +11,7 @@ void main() {
 
   /// Shared state for the controlled-grid gesture tests (the widget's
   /// parent owns the selected sequence, mirroring the real screens).
-  List<int> _current = <int>[];
+  List<int> current = <int>[];
 
   Widget wrap({required Widget grid}) => MaterialApp(
         theme: AppTheme.dark,
@@ -52,15 +52,15 @@ void main() {
     // DsPatternGrid is a CONTROLLED widget: the parent owns the selected
     // sequence. Drive it through a stateful host exactly like the real
     // screens do, otherwise every onNodeAdded re-reads the stale prop.
-    _current = <int>[];
+    current = <int>[];
     await tester.pumpWidget(
       wrap(
         grid: StatefulBuilder(
           builder: (BuildContext context, StateSetter setState) {
             return DsPatternGrid(
-              nodes: _current,
+              nodes: current,
               onNodeAdded: (List<int> sequence) {
-                setState(() => _current = sequence);
+                setState(() => current = sequence);
                 sequences.add(sequence);
               },
               onDragEnd: () => ended = true,
@@ -90,15 +90,15 @@ void main() {
   testWidgets('a node cannot be visited twice in one stroke',
       (WidgetTester tester) async {
     final List<List<int>> sequences = <List<int>>[];
-    _current = <int>[];
+    current = <int>[];
     await tester.pumpWidget(
       wrap(
         grid: StatefulBuilder(
           builder: (BuildContext context, StateSetter setState) {
             return DsPatternGrid(
-              nodes: _current,
+              nodes: current,
               onNodeAdded: (List<int> sequence) {
-                setState(() => _current = sequence);
+                setState(() => current = sequence);
                 sequences.add(sequence);
               },
             );

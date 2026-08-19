@@ -72,11 +72,6 @@ void main() {
                       },
                       child: const Text('open'),
                     ),
-                    TextButton(
-                      key: const Key('close_unlock'),
-                      onPressed: () => Navigator.of(context).pop(),
-                      child: const Text('back'),
-                    ),
                   ],
                 ),
               ),
@@ -138,7 +133,8 @@ void main() {
     await openUnlock(tester);
     expect(dotsTotal(tester), 4);
 
-    await tester.tap(find.byKey(const Key('close_unlock')));
+    // Close the unlock screen via its app-bar back button.
+    await tester.pageBack();
     await tester.pumpAndSettle();
 
     await enrollPin(tester, '246810');

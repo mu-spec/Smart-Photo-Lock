@@ -310,8 +310,14 @@ void main() {
         ),
       );
 
-      // Tap the banner action -> the PIN setup flow opens, no exceptions.
-      await tester.tap(find.text('Set up PIN'));
+      // Tap the banner's action (scoped: the PIN row also reads
+      // 'Set up PIN', so an unscoped text finder is ambiguous).
+      await tester.tap(
+        find.descendant(
+          of: find.byType(SecurityStatusBanner),
+          matching: find.text('Set up PIN'),
+        ),
+      );
       await tester.pumpAndSettle();
       expect(find.text(PinSetupScreen.chooseLengthTitle), findsOneWidget);
       expect(tester.takeException(), isNull);
