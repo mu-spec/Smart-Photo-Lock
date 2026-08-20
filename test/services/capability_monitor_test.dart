@@ -128,6 +128,7 @@ void main() {
       state[CapabilityKind.overlay] = false;
       await m.probe();
       expect(changes, hasLength(1));
+      expect(changes.single.kind, CapabilityKind.overlay);
 
       // User re-grants: the next revocation is a NEW edge.
       state[CapabilityKind.overlay] = true;
@@ -137,6 +138,7 @@ void main() {
       state[CapabilityKind.overlay] = false;
       await m.probe();
       expect(changes, hasLength(2));
+      expect(changes.last.kind, CapabilityKind.overlay);
 
       await m.dispose();
     });

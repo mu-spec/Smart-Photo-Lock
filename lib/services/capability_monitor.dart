@@ -71,6 +71,12 @@ class CapabilityMonitor {
   Timer? _timer;
   bool _started = false;
 
+  /// Guards against overlapping probe passes (timer tick + resume probe):
+  /// the per-capability transition evaluation must be strictly serial or
+  /// two concurrent passes could both read the old baseline before
+  /// either stores the new one.
+  bool _probing = false;
+
   Stream<CapabilityChange> get changes => _controller.stream;
 
   /// Starts periodic monitoring: baseline probe + periodic timer.
@@ -99,20 +105,32 @@ class CapabilityMonitor {
     _started = false;
   }
 
-  /// Probes all three capabilities and emits transitions.
+  /// Probes all three capabilities and emits transitions. This is the
+  /// SINGLE canonical transition evaluator — the periodic timer, the
+  /// resume hook and manual test refreshes all go through here. A pass
+  /// that starts while another is still running is skipped (the next
+  /// pass observes the then-current state).
   Future<void> probe() async {
-    await _probeOne(
-      CapabilityKind.usageAccess,
-      hasUsageAccess,
-    );
-    await _probeOne(
-      CapabilityKind.accessibility,
-      isAccessibilityEnabled,
-    );
-    await _probeOne(
-      CapabilityKind.overlay,
-      canDrawOverlays,
-    );
+    if (_probing) {
+      return;
+    }
+    _probing = true;
+    try {
+      await _probeOne(
+        CapabilityKind.usageAccess,
+        hasUsageAccess,
+      );
+      await _probeOne(
+        CapabilityKind.accessibility,
+        isAccessibilityEnabled,
+      );
+      await _probeOne(
+        CapabilityKind.overlay,
+        canDrawOverlays,
+      );
+    } finally {
+      _probing = false;
+    }
   }
 
   Future<void> _probeOne(
