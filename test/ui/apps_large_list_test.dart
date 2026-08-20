@@ -62,19 +62,12 @@ void main() {
     await tester.fling(find.byType(ListView), const Offset(0, -2000), 6000);
     await tester.pumpAndSettle();
 
-    // The tail of the catalog becomes reachable and rows stay consistent.
-    // (The list is the primary scrollable; scope explicitly to avoid the
-    // screen's other scrollable surface.)
-    await tester.scrollUntilVisible(
-      find.text('Example App 0999'),
-      500,
-      scrollable: find
-          .descendant(
-            of: find.byType(ListView),
-            matching: find.byType(Scrollable),
-          )
-          .first,
-    );
+    // The tail of the catalog becomes reachable and rows stay consistent:
+    // one large drag reaches the bottom of the ~72,000px list (drag deltas
+    // are not screen-clamped and the scroll clamps at the edge).
+    await tester.drag(find.byType(ListView), const Offset(0, -80000));
+    await tester.pumpAndSettle();
+
     expect(find.text('Example App 0999'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });

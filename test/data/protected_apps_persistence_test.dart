@@ -185,10 +185,8 @@ void main() {
       );
 
       // Background then resume the app: the screen re-reads the store.
-      // The legal lifecycle chain must pass through `inactive` (a direct
-      // paused -> resumed transition is rejected by the framework).
-      tester.binding
-          .handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      // The framework only allows inactive -> resumed from the test's
+      // initial state (paused requires a hidden step in between).
       tester.binding
           .handleAppLifecycleStateChanged(AppLifecycleState.inactive);
       tester.binding
@@ -222,9 +220,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // Legal lifecycle chain: paused -> inactive -> resumed.
-      tester.binding
-          .handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      // Legal lifecycle chain from the initial state: inactive -> resumed.
       tester.binding
           .handleAppLifecycleStateChanged(AppLifecycleState.inactive);
       tester.binding
