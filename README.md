@@ -38,6 +38,7 @@ passes, and installed-apps discovery. App locking is not implemented yet.
 | 3A | Installed apps discovery (PackageManager bridge + repository) | ✅ |
 | 3B | Apps list UI (icon + name + protection status) | ✅ |
 | 3C | Apps search (filter by application name) | ✅ |
+| 3D | App filtering (All / Protected / Unprotected) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -394,13 +395,14 @@ lib/
 │   ├── design_system.dart    # barrel export
 │   ├── widgets/              # DsButton, DsCard, DsTextField, DsStatusPill,
 │   │                         # DsSectionTitle, DsPinDots, DsPinPad,
-│   │                         # DsPatternGrid (3x3 draggable, 2H)
+│   │                         # DsPatternGrid (3x3 draggable, 2H),
+│   │                         # DsSegmented (3D)
 │   └── security/             # SecurityLevel, SecurityStatusPill/Item/Banner
 ├── ui/                       # screens & shared widgets
 │   ├── shell/                # MainShell: bottom NavigationBar + IndexedStack
 │   ├── screens/
 │   │   ├── home/             # Home tab (welcome, status, quick access)
-│   │   ├── apps/             # Apps tab (3B list + 3C search)
+│   │   ├── apps/             # Apps tab (3B list + 3C search + 3D filters)
 │   │   ├── smart/            # Smart tab (placeholder)
 │   │   ├── security/         # Security tab (status banner + control list)
 │   │   ├── settings/         # Settings tab (placeholder)
@@ -463,9 +465,12 @@ lib/
     └── time_utils.dart       # minutes-of-day, overnight windows, formatting
 ```
 
-**Tests** (run with `flutter test`): apps search suites (presence,
-filtering, case-insensitivity, substring matching, no-match state with
-clear action, clear-icon restore, protection pills in filtered results),
+**Tests** (run with `flutter test`): apps filter suites (segments render,
+default All, Protected/Unprotected grouping, filter+search combination,
+filtered/total pill, filter-empty states with Show all), apps search
+suites (presence, filtering, case-insensitivity, substring matching,
+no-match state with clear action, clear-icon restore, protection pills
+in filtered results),
 apps list UI suites (names + icons + protection pills, real icon bytes,
 empty/error states with retry, repository-driven status flips), installed-apps discovery suites
 (MethodChannel wire format incl. getAppIcon decode/null/cache/platform
@@ -535,7 +540,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.1.0 / 9.3.1 / 2.4.0 |
 | Java | 17 |
-| versionName / versionCode | `0.22.0` / `28` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.23.0` / `29` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM), `local_auth` (biometrics) |
 
 ## Prerequisites (on your machine)
@@ -632,6 +637,19 @@ The Apps tab gained a **search field** filtering by application name:
   empties the field and restores the full list.
 - No-match state ("No apps match") with a **Clear search** action;
   protection pills keep rendering inside filtered results.
+
+### Phase 3D ✅ — App Filtering
+
+The Apps tab gained a **All / Protected / Unprotected** segmented filter
+(new reusable `DsSegmented` design-system control):
+
+- **All** — the full catalog; **Protected** — only locked apps;
+  **Unprotected** — only unlocked apps. Filters combine with the name
+  search, and the header pill shows `filtered / total`.
+- Filter-empty states: "No protected apps" and "All apps are protected",
+  each with a **Show all** action that resets query + filter.
+- Row status pills were renamed **Locked / Unlocked** so the filter
+  segment labels stay unambiguous.
 
 ## Next phases
 

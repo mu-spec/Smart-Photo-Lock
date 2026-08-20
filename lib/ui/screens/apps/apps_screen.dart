@@ -5,14 +5,25 @@ import '../../../data/models/app_entry.dart';
 import '../../../design_system/design_system.dart';
 import '../../widgets/app_icon.dart';
 
-/// Apps tab — the installed-apps list with search (Phase 3C).
+/// Filter groups of the Apps tab (Phase 3D).
+enum AppsFilter {
+  all('All'),
+  protected('Protected'),
+  unprotected('Unprotected');
+
+  const AppsFilter(this.label);
+
+  final String label;
+}
+
+/// Apps tab — the installed-apps list with search (3C) and filters (3D).
 ///
 /// Shows every app that is appropriate for App Lock selection with its
 /// launcher icon, name, and current protection status. The search field
-/// filters the catalog by application name (case-insensitive substring).
-/// Data flows through the shared container (Phase 3A): the discovery
-/// repository for the catalog and the protected-apps repository for the
-/// status.
+/// filters by name; the segmented control groups the list into
+/// All / Protected / Unprotected. Data flows through the shared container
+/// (Phase 3A): the discovery repository for the catalog and the
+/// protected-apps repository for the status.
 class AppsScreen extends StatefulWidget {
   const AppsScreen({super.key});
 
@@ -21,8 +32,8 @@ class AppsScreen extends StatefulWidget {
       'Choose which apps to protect and manage your locked list.';
 
   static const String title = 'Protect your apps';
-  static const String protectedLabel = 'Protected';
-  static const String unlockedLabel = 'Not locked';
+  static const String protectedLabel = 'Locked';
+  static const String unlockedLabel = 'Unlocked';
   static const String errorTitle = 'Could not load apps';
   static const String retryLabel = 'Retry';
   static const String emptyTitle = 'No apps found';
@@ -33,6 +44,13 @@ class AppsScreen extends StatefulWidget {
   static const String noMatchTitle = 'No apps match';
   static const String noMatchMessage = 'Try a different name.';
   static const String clearSearchLabel = 'Clear search';
+  static const String noProtectedTitle = 'No protected apps';
+  static const String noProtectedMessage =
+      'Protect apps to see them here.';
+  static const String allProtectedTitle = 'All apps are protected';
+  static const String allProtectedMessage =
+      'Nothing is left unlocked.';
+  static const String showAllLabel = 'Show all';
 
   @override
   State<AppsScreen> createState() => _AppsScreenState();
@@ -48,6 +66,7 @@ class _AppsScreenState extends State<AppsScreen> {
 
   final TextEditingController _searchController = TextEditingController();
   String _query = '';
+  AppsFilter _filter = AppsFilter.all;
 
   @override
   void initState() {
@@ -70,17 +89,49 @@ class _AppsScreenState extends State<AppsScreen> {
     setState(() => _query = '');
   }
 
-  /// The visible catalog after applying the name filter.
-  List<AppEntry> get _filteredApps {
+  void _setFilter(AppsFilter filter) {
+    setState(() => _filter = filter);
+  }
+
+  void _showAll() {
+    _searchController.clear();
+    setState(() {
+      _query = '';
+      _filter = AppsFilter.all;
+    });
+  }
+
+  /// The catalog after the NAME filter only.
+  List<AppEntry> get _nameFiltered {
     if (_query.isEmpty) {
       return _apps;
     }
     final String needle = _query.toLowerCase();
     return _apps
-        .where((AppEntry app) =>
-            app.label.toLowerCase().contains(needle))
+        .where(
+          (AppEntry app) => app.label.toLowerCase().contains(needle),
+        )
         .toList(growable: false);
   }
+
+  /// The visible list after both the name query and the group filter.
+  List<AppEntry> get _visibleApps {
+    final List<AppEntry> base = _nameFiltered;
+    switch (_filter) {
+      case AppsFilter.all:
+        return base;
+      case AppsFilter.protected:
+        return base
+            .where((AppEntry a) => _protected.contains(a.packageName))
+            .toList(growable: false);
+      case AppsFilter.unprotected:
+        return base
+            .where((AppEntry a) => !_protected.contains(a.packageName))
+            .toList(growable: false);
+    }
+  }
+
+  bool get _isFiltered => _query.isNotEmpty || _filter != AppsFilter.all;
 
   Future<void> _load() async {
     final int generation = ++_fetchGeneration;
@@ -124,10 +175,10 @@ class _AppsScreenState extends State<AppsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final int visibleCount = _filteredApps.length;
-    final String countLabel = _query.isEmpty
-        ? '${_apps.length} apps'
-        : '$visibleCount / ${_apps.length}';
+    final int visibleCount = _visibleApps.length;
+    final String countLabel = _isFiltered
+        ? '$visibleCount / ${_apps.length}'
+        : '${_apps.length} apps';
     return SafeArea(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -189,6 +240,26 @@ class _AppsScreenState extends State<AppsScreen> {
               onChanged: _onSearchChanged,
             ),
           ),
+          if (_state == _LoadState.ready)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                DsSpacing.lg,
+                0,
+                DsSpacing.lg,
+                DsSpacing.sm,
+              ),
+              child: DsSegmented<AppsFilter>(
+                segments: <DsSegment<AppsFilter>>[
+                  for (final AppsFilter filter in AppsFilter.values)
+                    DsSegment<AppsFilter>(
+                      value: filter,
+                      label: filter.label,
+                    ),
+                ],
+                selected: _filter,
+                onSelected: _setFilter,
+              ),
+            ),
           Expanded(child: _buildBody()),
         ],
       ),
@@ -219,16 +290,9 @@ class _AppsScreenState extends State<AppsScreen> {
             onAction: _load,
           );
         }
-        final List<AppEntry> visible = _filteredApps;
+        final List<AppEntry> visible = _visibleApps;
         if (visible.isEmpty) {
-          // Catalog exists but the search matched nothing.
-          return _MessageCard(
-            icon: Icons.search_off,
-            title: AppsScreen.noMatchTitle,
-            message: AppsScreen.noMatchMessage,
-            actionLabel: AppsScreen.clearSearchLabel,
-            onAction: _clearSearch,
-          );
+          return _buildFilterEmptyState();
         }
         final container = AppScope.read(context);
         final repository = container?.installedApps;
@@ -260,6 +324,32 @@ class _AppsScreenState extends State<AppsScreen> {
           },
         );
     }
+  }
+
+  /// Distinguishes why the visible list is empty: the name query matched
+  /// nothing, or the group filter has no members.
+  Widget _buildFilterEmptyState() {
+    if (_query.isNotEmpty && _nameFiltered.isEmpty) {
+      return _MessageCard(
+        icon: Icons.search_off,
+        title: AppsScreen.noMatchTitle,
+        message: AppsScreen.noMatchMessage,
+        actionLabel: AppsScreen.clearSearchLabel,
+        onAction: _clearSearch,
+      );
+    }
+    final bool protectedFilter = _filter == AppsFilter.protected;
+    return _MessageCard(
+      icon: protectedFilter ? Icons.lock_outline : Icons.lock_open,
+      title: protectedFilter
+          ? AppsScreen.noProtectedTitle
+          : AppsScreen.allProtectedTitle,
+      message: protectedFilter
+          ? AppsScreen.noProtectedMessage
+          : AppsScreen.allProtectedMessage,
+      actionLabel: AppsScreen.showAllLabel,
+      onAction: _showAll,
+    );
   }
 }
 

@@ -529,6 +529,18 @@ The Apps tab filters the catalog **by application name**:
 - Pure UI-layer filtering — the repository still delivers the full
   catalog once; no platform round-trips per keystroke.
 
+## 3D. App filtering
+
+The Apps tab groups the catalog with a segmented **All / Protected /
+Unprotected** filter (new reusable `DsSegmented` design-system control):
+
+- Filters combine with the name search; the header pill shows
+  `filtered / total` while either is active.
+- Filter-empty states: "No protected apps" / "All apps are protected",
+  each with a **Show all** action that resets both query and filter.
+- Row pills renamed to **Locked / Unlocked** so the segment labels stay
+  unambiguous.
+
 ---
 
 ## 1. The eight modules
