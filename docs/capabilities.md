@@ -79,7 +79,7 @@ Foreground-app detection ──► Lock decision ──► PIN challenge on top 
 | `SYSTEM_ALERT_WINDOW` | Lock-screen phase | Normal permission, listed only |
 | Overlay service (`<service>` for the challenge window) | Lock-screen phase | The overlay is Flutter-rendered via a service/activity with `TYPE_APPLICATION_OVERLAY` |
 | Watcher foreground service + `FOREGROUND_SERVICE[_SPECIAL_USE]` + `POST_NOTIFICATIONS` | Watcher phase | Includes the `PROPERTY_SPECIAL_USE_FGS_SUBTYPE` declaration |
-| Accessibility `<service>` + `res/xml/accessibility_service_config.xml` | Accessibility phase | `android:canRetrieveWindowContent="false"` — no content capture |
+| Accessibility `<service>` + `res/xml/accessibility_service_config.xml` | ✅ **Landed in 4C** | `android:canRetrieveWindowContent="false"` + `typeWindowStateChanged` only — detection-only, no content capture; detection wiring itself ships with the lock engine |
 | (Optional, future PRD) Device-admin receiver | Only if hardening activates it | Requires an explicit decision; not part of this phase |
 
 ---

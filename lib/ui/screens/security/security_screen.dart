@@ -55,6 +55,9 @@ class _SecurityScreenState extends State<SecurityScreen> {
   /// Phase 4B: usage-access capability state (false until loaded).
   bool _usageAccessGranted = false;
 
+  /// Phase 4C: accessibility fallback state (false until loaded).
+  bool _accessibilityEnabled = false;
+
   @override
   void initState() {
     super.initState();
@@ -78,6 +81,13 @@ class _SecurityScreenState extends State<SecurityScreen> {
       final result = await service.hasUsageAccess();
       usageAccessGranted = result.isSuccess && result.valueOrNull == true;
     }
+    // Phase 4C: accessibility fallback state from the shared bridge.
+    bool accessibilityEnabled = false;
+    final accessibility = AppScope.read(context)?.accessibility;
+    if (accessibility != null) {
+      final result = await accessibility.isServiceEnabled();
+      accessibilityEnabled = result.isSuccess && result.valueOrNull == true;
+    }
     if (!mounted) {
       return;
     }
@@ -88,6 +98,7 @@ class _SecurityScreenState extends State<SecurityScreen> {
       _hasPattern = state.hasEnrolled(AuthType.pattern);
       _biometricEnrolled = state.hasEnrolled(AuthType.biometric);
       _usageAccessGranted = usageAccessGranted;
+      _accessibilityEnabled = accessibilityEnabled;
     });
   }
 
@@ -127,6 +138,19 @@ class _SecurityScreenState extends State<SecurityScreen> {
       return;
     }
     await Navigator.of(context).pushNamed(RouteNames.usageAccess);
+    if (mounted) {
+      await _loadStatus();
+    }
+  }
+
+  /// Phase 4C: opens the accessibility setup flow (disclosure → system
+  /// settings → recheck), then refreshes the capability state.
+  Future<void> _onAccessibilityTap() async {
+    final container = AppScope.read(context);
+    if (container == null) {
+      return;
+    }
+    await Navigator.of(context).pushNamed(RouteNames.accessibilitySetup);
     if (mounted) {
       await _loadStatus();
     }
@@ -361,6 +385,17 @@ class _SecurityScreenState extends State<SecurityScreen> {
                       : SecurityLevel.atRisk,
                   statusLabel: _usageAccessGranted ? 'Granted' : 'Needed',
                   onTap: _onUsageAccessTap,
+                ),
+                const Divider(),
+                SecurityStatusItem(
+                  icon: Icons.accessibility_new,
+                  title: 'Accessibility service',
+                  subtitle: 'Detection fallback if usage access is off',
+                  level: _accessibilityEnabled
+                      ? SecurityLevel.secured
+                      : SecurityLevel.notSet,
+                  statusLabel: _accessibilityEnabled ? 'Enabled' : 'Needed',
+                  onTap: _onAccessibilityTap,
                 ),
               ],
             ),

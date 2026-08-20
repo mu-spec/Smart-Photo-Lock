@@ -47,6 +47,7 @@ locking is not implemented yet.
 | 3H | Apps management QA (large-list responsiveness) | ✅ |
 | 4A | Capability requirements (exact Android capabilities for locking) | ✅ |
 | 4B | Usage Access setup (detect → explain → settings → recheck) | ✅ |
+| 4C | Accessibility setup (detection-only fallback + prominent disclosure) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -560,7 +561,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.1.0 / 9.3.1 / 2.4.0 |
 | Java | 17 |
-| versionName / versionCode | `0.29.0` / `35` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.30.0` / `36` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM), `local_auth` (biometrics) |
 
 ## Prerequisites (on your machine)
@@ -773,6 +774,24 @@ The first capability flow, end to end:
   after the intent, flipping to the granted state automatically.
 - The Security tab gains an **App lock permissions** section with a live
   Usage access row (Granted / Needed) that opens the flow.
+
+### Phase 4C ✅ — Accessibility Setup
+
+Accessibility is used for **one purpose only** — the detection fallback —
+and the UI says so prominently:
+
+- **Detection-only service** — declared with `canRetrieveWindowContent="false"`
+  and `typeWindowStateChanged` events only; the service body is inert
+  until the lock engine wires foreground reporting. It never reads
+  screen content, never acts for the user, never stores or sends data.
+- **Prominent disclosure** — the setup screen's disclosure card states
+  the exact purpose, the non-uses, and a bold "Not used for anything
+  else." line before any button.
+- **Full flow** — status probe (`ENABLED_ACCESSIBILITY_SERVICES`),
+  system Accessibility settings routing, resume re-check → Enabled
+  state; the Security tab row shows Enabled/Needed and opens the flow.
+- The system's own accessibility warning remains part of the flow (the
+  screen explains it is normal).
 
 ## Next phases
 

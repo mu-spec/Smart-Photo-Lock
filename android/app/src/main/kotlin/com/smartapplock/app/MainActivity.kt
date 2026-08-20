@@ -25,5 +25,6 @@ class MainActivity : FlutterFragmentActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         InstalledAppsChannel.register(flutterEngine, this)
+        AccessibilityStatusChannel.register(flutterEngine, this)
     }
 }

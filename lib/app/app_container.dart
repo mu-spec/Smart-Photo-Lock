@@ -28,9 +28,12 @@ import '../security/credentials/impl/default_pin_credential_store.dart';
 import '../security/storage/impl/flutter_secure_secret_store.dart';
 import '../security/storage/impl/in_memory_secret_store.dart';
 import '../security/storage/secret_store.dart';
+import '../services/accessibility_lock_service.dart';
 import '../services/biometric_service.dart';
 import '../services/impl/local_auth_biometric_service.dart';
+import '../services/impl/method_channel_accessibility_lock_service.dart';
 import '../services/impl/method_channel_installed_apps_service.dart';
+import '../services/impl/static_accessibility_lock_service.dart';
 import '../services/impl/static_installed_apps_service.dart';
 import '../services/installed_apps_service.dart';
 
@@ -49,11 +52,13 @@ class AppContainer {
     required LocalDatabase database,
     required SecretStore secretStore,
     required InstalledAppsService installedAppsService,
+    required AccessibilityLockService accessibilityService,
     BiometricService? biometricsOverride,
   })  : _keyValueStore = keyValueStore,
         _database = database,
         secretStore = secretStore,
-        installedAppsService = installedAppsService {
+        installedAppsService = installedAppsService,
+        accessibility = accessibilityService {
     settingsCipher = AesGcmSettingsCipher(secretStore);
     preferences = PreferencesStoreImpl(_keyValueStore);
     protectedApps = ProtectedAppsRepositoryImpl(_database);
@@ -94,6 +99,7 @@ class AppContainer {
       database: database,
       secretStore: FlutterSecureSecretStore(),
       installedAppsService: MethodChannelInstalledAppsService(),
+      accessibilityService: MethodChannelAccessibilityLockService(),
     );
   }
 
@@ -107,6 +113,7 @@ class AppContainer {
     List<AppEntry> apps = const <AppEntry>[],
     Map<String, Uint8List> appIcons = const <String, Uint8List>{},
     bool usageAccessGranted = true,
+    bool accessibilityEnabled = false,
   }) =>
       AppContainer._(
         keyValueStore: InMemoryKeyValueStore(),
@@ -116,6 +123,9 @@ class AppContainer {
           apps,
           iconBytesFor: appIcons,
           usageAccessGranted: usageAccessGranted,
+        ),
+        accessibilityService: StaticAccessibilityLockService(
+          enabled: accessibilityEnabled,
         ),
         biometricsOverride: biometrics,
       );
@@ -158,4 +168,9 @@ class AppContainer {
   /// UI reads usage-access capability state from here — one instance,
   /// never recreated per screen).
   final InstalledAppsService installedAppsService;
+
+  /// The shared accessibility capability bridge (Phase 4C) — detection
+  /// fallback state + settings routing. One instance for UI and, later,
+  /// the lock engine.
+  final AccessibilityLockService accessibility;
 }

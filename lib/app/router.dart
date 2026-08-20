@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../ui/screens/pattern/pattern_change_screen.dart';
 import '../ui/screens/pattern/pattern_setup_screen.dart';
 import '../ui/screens/pattern/pattern_unlock_screen.dart';
+import '../ui/screens/permissions/accessibility_setup_screen.dart';
 import '../ui/screens/permissions/usage_access_screen.dart';
 import '../ui/screens/pin/pin_change_screen.dart';
 import '../ui/screens/pin/pin_setup_screen.dart';
@@ -38,6 +39,9 @@ abstract final class RouteNames {
 
   /// Usage-access setup (Phase 4B): detect → explain → settings → recheck.
   static const String usageAccess = '/permissions/usage-access';
+
+  /// Accessibility setup (Phase 4C): detect → disclose → settings → recheck.
+  static const String accessibilitySetup = '/permissions/accessibility';
 }
 
 /// Typed route generator consumed by `MaterialApp.onGenerateRoute`.
@@ -90,6 +94,12 @@ abstract final class AppRouter {
         return MaterialPageRoute<bool>(
           settings: settings,
           builder: (BuildContext context) => const UsageAccessScreen(),
+        );
+      case RouteNames.accessibilitySetup:
+        return MaterialPageRoute<bool>(
+          settings: settings,
+          builder: (BuildContext context) =>
+              const AccessibilitySetupScreen(),
         );
       default:
         return null;

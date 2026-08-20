@@ -638,6 +638,32 @@ UsageAccessScreen
 - No manifest changes: the grant lives entirely in AppOps, surfaced
   only through the system settings screen.
 
+## 4C. Accessibility setup
+
+Accessibility is used for ONE purpose — the detection fallback — and the
+disclosure is prominent:
+
+```
+AccessibilitySetupScreen
+  ├─ isServiceEnabled() → ENABLED_ACCESSIBILITY_SERVICES probe (native)
+  ├─ not enabled → DISCLOSURE CARD (exact purpose + non-uses +
+  │               "Not used for anything else.") → Open Settings
+  │     └─ requestServiceEnable() → ACTION_ACCESSIBILITY_SETTINGS intent
+  ├─ WidgetsBindingObserver.resumed → re-check (successful return)
+  └─ enabled / unavailable-with-Retry views
+```
+
+- The service declaration is **detection-only**: `canRetrieveWindowContent
+  ="false"`, `typeWindowStateChanged` events only, inert body until the
+  lock engine wires foreground reporting.
+- The Security tab's App lock permissions section gains an Accessibility
+  service row (Enabled / Needed) opening the flow.
+- `AppContainer.accessibility` is the shared bridge instance.
+
+---
+
+## 1. The eight modules
+
 ---
 
 ## 1. The eight modules

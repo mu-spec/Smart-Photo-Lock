@@ -14,6 +14,7 @@ import 'package:smart_app_lock/ui/screens/pattern/pattern_setup_screen.dart';
 import 'package:smart_app_lock/ui/screens/pattern/pattern_unlock_screen.dart';
 import 'package:smart_app_lock/ui/screens/pin/pin_change_screen.dart';
 import 'package:smart_app_lock/ui/screens/pin/pin_setup_screen.dart';
+import 'package:smart_app_lock/ui/screens/permissions/accessibility_setup_screen.dart';
 import 'package:smart_app_lock/ui/screens/permissions/usage_access_screen.dart';
 import 'package:smart_app_lock/ui/screens/pin/pin_unlock_screen.dart';
 import 'package:smart_app_lock/ui/screens/security/security_screen.dart';
@@ -38,6 +39,8 @@ final Map<String, WidgetBuilder> kSecurityTabRoutes = <String, WidgetBuilder>{
       (BuildContext context) => const PatternChangeScreen(),
   RouteNames.usageAccess:
       (BuildContext context) => const UsageAccessScreen(),
+  RouteNames.accessibilitySetup:
+      (BuildContext context) => const AccessibilitySetupScreen(),
 };
 
 void main() {
@@ -347,6 +350,47 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text(UsageAccessScreen.notGrantedTitle), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  // -------------------------------------------------------------------
+  // Accessibility row (Phase 4C)
+  // -------------------------------------------------------------------
+  testWidgets('accessibility row reports Needed when the service is off',
+      (WidgetTester tester) async {
+    final AppContainer container =
+        AppContainer.inMemory(accessibilityEnabled: false);
+    await pumpWithScope(tester, container: container);
+
+    expect(find.text('Accessibility service'), findsOneWidget);
+    expect(find.text('Needed'), findsOneWidget);
+    expect(find.text('Enabled'), findsNothing);
+  });
+
+  testWidgets('accessibility row reports Enabled when the service is on',
+      (WidgetTester tester) async {
+    final AppContainer container =
+        AppContainer.inMemory(accessibilityEnabled: true);
+    await pumpWithScope(tester, container: container);
+
+    expect(find.text('Accessibility service'), findsOneWidget);
+    expect(find.text('Enabled'), findsOneWidget);
+    expect(find.text('Needed'), findsNothing);
+  });
+
+  testWidgets('tapping the accessibility row opens the disclosure flow',
+      (WidgetTester tester) async {
+    final AppContainer container =
+        AppContainer.inMemory(accessibilityEnabled: false);
+    await pumpWithScope(tester, container: container);
+
+    final Finder row = find.text('Accessibility service');
+    await tester.ensureVisible(row);
+    await tester.pumpAndSettle();
+    await tester.tap(row);
+    await tester.pumpAndSettle();
+
+    expect(find.text(AccessibilitySetupScreen.disclosureTitle), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

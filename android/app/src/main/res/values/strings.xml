@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Phase 4C: honest, prominent explanation shown by the SYSTEM when
+         the user enables the accessibility service. -->
+    <string name="accessibility_service_description">Detects which app is currently open so Smart App Lock can protect selected apps. No screen content is read or collected.</string>
+</resources>
