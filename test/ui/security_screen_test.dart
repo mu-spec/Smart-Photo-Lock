@@ -468,7 +468,7 @@ void main() {
     );
   });
 
-  testWidgets('overlay row reports Granted when enabled',
+  testWidgets('overlay row reports Enabled when granted',
       (WidgetTester tester) async {
     final AppContainer container =
         AppContainer.inMemory(overlayGranted: true);
@@ -478,7 +478,7 @@ void main() {
     expect(
       find.descendant(
         of: find.widgetWithText(SecurityStatusItem, 'Draw over apps'),
-        matching: find.text('Granted'),
+        matching: find.text('Enabled'),
       ),
       findsOneWidget,
     );

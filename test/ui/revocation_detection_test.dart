@@ -11,9 +11,20 @@ import 'package:smart_app_lock/ui/screens/security/security_screen.dart';
 /// Phase 4F: a revoked capability is detected and surfaced on the
 /// Security tab.
 void main() {
+  /// The Security tab is a lazy ListView: at the default 800x600 test
+  /// viewport the App lock permissions section (with its DsDotBadge) is
+  /// never mounted. Tests that assert on those rows need the tall
+  /// surface used across the security suites.
+  void useTallViewport(WidgetTester tester) {
+    tester.view.physicalSize = const Size(800, 1600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+  }
+
   testWidgets(
       'revoking a granted capability shows the alert banner and badge',
       (WidgetTester tester) async {
+    useTallViewport(tester);
     final AppContainer container = AppContainer.inMemory(
       usageAccessGranted: true,
       accessibilityEnabled: true,
@@ -48,6 +59,7 @@ void main() {
 
   testWidgets('the guard starts the monitor and probes on resume',
       (WidgetTester tester) async {
+    useTallViewport(tester);
     final AppContainer container = AppContainer.inMemory(
       usageAccessGranted: true,
       accessibilityEnabled: true,

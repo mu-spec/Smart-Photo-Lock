@@ -62,7 +62,15 @@ class CapabilityMonitor {
   final StreamController<CapabilityChange> _controller =
       StreamController<CapabilityChange>.broadcast();
 
+  /// Last successfully-probed granted state per capability (the baseline
+  /// used to detect `granted → revoked` edges).
   final Map<CapabilityKind, bool> _lastGranted = <CapabilityKind, bool>{};
+
+  /// Capabilities whose revocation has already been reported and has not
+  /// been re-armed by a re-grant. While a capability stays revoked no
+  /// duplicate events are emitted; a re-grant clears the flag so the
+  /// NEXT revocation fires again as a new edge.
+  final Set<CapabilityKind> _reportedRevoked = <CapabilityKind>{};
 
   Timer? _timer;
   bool _started = false;
@@ -105,16 +113,23 @@ class CapabilityMonitor {
     }
     final bool granted = result.valueOrNull == true;
     final bool? previous = _lastGranted[kind];
-    // Only the granted -> revoked EDGE is an event: a revocation fires
-    // once, and repeated probes while it stays revoked emit nothing.
-    if (previous == true && !granted) {
+
+    // Transition: previously granted, now revoked. Emit exactly once per
+    // edge — the reported set suppresses duplicates while it stays
+    // revoked (also covers overlapping probes racing the same edge).
+    if (previous == true && !granted && !_reportedRevoked.contains(kind)) {
       _controller.add(
         CapabilityChange(kind: kind, state: CapabilityState.revoked, at: _now()),
       );
+      _reportedRevoked.add(kind);
     }
-    // Re-arm point: the baseline is updated on EVERY successful probe.
-    // A re-grant (false -> true) records the new granted baseline, so a
-    // later revocation fires again as a NEW event.
+
+    // Re-arm point: a re-grant clears the suppression flag and refreshes
+    // the baseline, so a LATER revocation is a NEW edge. A revoked
+    // capability that stays revoked keeps its flag (no duplicate spam).
+    if (granted) {
+      _reportedRevoked.remove(kind);
+    }
     _lastGranted[kind] = granted;
   }
 

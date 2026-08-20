@@ -266,6 +266,32 @@ void main() {
     });
 
     testWidgets(
+        'granting while backgrounded refreshes the Security rows on return',
+        (WidgetTester tester) async {
+      final AppContainer container = await pumpApp(tester);
+      await openSecurity(tester);
+      expectSecurityLabel(tester, 'Usage access', 'Needed');
+      expectSecurityLabel(tester, 'Accessibility service', 'Needed');
+      expectSecurityLabel(tester, 'Draw over apps', 'Needed');
+
+      // The user grants every capability in Android settings while the
+      // app is backgrounded, then returns — no navigation involved.
+      (container.installedAppsService as StaticInstalledAppsService)
+          .usageAccessGranted = true;
+      (container.accessibility as StaticAccessibilityLockService).enabled =
+          true;
+      (container.overlay as StaticOverlayLockService).overlayGranted = true;
+      await resume(tester);
+
+      expectSecurityLabel(tester, 'Usage access', 'Granted');
+      expectSecurityLabel(tester, 'Accessibility service', 'Enabled');
+      expectSecurityLabel(tester, 'Draw over apps', 'Enabled');
+      expect(find.text(SecurityScreen.revokedTitle), findsNothing);
+
+      await container.capabilityMonitor.dispose();
+    });
+
+    testWidgets(
         'granting usage access inside its flow flips the row to Enabled',
         (WidgetTester tester) async {
       final AppContainer container = await pumpApp(tester);

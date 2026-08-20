@@ -55,7 +55,8 @@ class SecurityScreen extends StatefulWidget {
   State<SecurityScreen> createState() => _SecurityScreenState();
 }
 
-class _SecurityScreenState extends State<SecurityScreen> {
+class _SecurityScreenState extends State<SecurityScreen>
+    with WidgetsBindingObserver {
   /// Cached settings (null while loading).
   bool? _randomized;
   bool? _patternVisible;
@@ -82,6 +83,7 @@ class _SecurityScreenState extends State<SecurityScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadStatus();
     // Phase 4F: a revoked capability (detected anywhere) marks the tab
     // and the next status reload reflects it.
@@ -94,6 +96,24 @@ class _SecurityScreenState extends State<SecurityScreen> {
         _loadStatus();
       },
     );
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  /// Phase 4G repair: grants and revocations happen in the SYSTEM
+  /// settings — when the app returns to the foreground the capability
+  /// rows must reflect reality without an app restart. The setup flows
+  /// and the capability monitor also refresh, but this keeps the
+  /// Security tab itself current on every resume.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _loadStatus();
+    }
   }
 
   Future<void> _loadStatus() async {
@@ -493,7 +513,7 @@ class _SecurityScreenState extends State<SecurityScreen> {
                   level: _overlayGranted
                       ? SecurityLevel.secured
                       : SecurityLevel.notSet,
-                  statusLabel: _overlayGranted ? 'Granted' : 'Needed',
+                  statusLabel: _overlayGranted ? 'Enabled' : 'Needed',
                   onTap: _onOverlayTap,
                 ),
               ],

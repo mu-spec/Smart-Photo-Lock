@@ -58,15 +58,14 @@ class AppContainer {
     required InstalledAppsService installedAppsService,
     required AccessibilityLockService accessibilityService,
     required OverlayLockService overlayService,
-    required CapabilityMonitor capabilityMonitor,
+    required this.capabilityMonitor,
     BiometricService? biometricsOverride,
   })  : _keyValueStore = keyValueStore,
         _database = database,
         secretStore = secretStore,
         installedAppsService = installedAppsService,
         accessibility = accessibilityService,
-        overlay = overlayService,
-        capabilityMonitor = capabilityMonitor {
+        overlay = overlayService {
     settingsCipher = AesGcmSettingsCipher(secretStore);
     preferences = PreferencesStoreImpl(_keyValueStore);
     protectedApps = ProtectedAppsRepositoryImpl(_database);
