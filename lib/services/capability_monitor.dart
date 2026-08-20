@@ -78,6 +78,14 @@ class CapabilityMonitor {
   Map<CapabilityKind, bool> get previousGranted =>
       Map<CapabilityKind, bool>.unmodifiable(_previousGranted);
 
+  /// Diagnostic per-capability evaluation counters (used by tests to
+  /// prove each capability's service closure is invoked on every pass).
+  Map<CapabilityKind, int> get evaluationCounts =>
+      Map<CapabilityKind, int>.unmodifiable(_evaluationCounts);
+
+  /// How many times each capability has been evaluated so far.
+  final Map<CapabilityKind, int> _evaluationCounts = <CapabilityKind, int>{};
+
   /// Starts periodic monitoring: baseline probe + periodic timer.
   ///
   /// Idempotent — calling [start] while already running does nothing
@@ -114,18 +122,19 @@ class CapabilityMonitor {
   /// evaluation — grants included — so a re-grant arms the next
   /// revocation as a new edge.
   Future<void> probe() async {
-    await _evaluateCapability(
-      CapabilityKind.usageAccess,
-      hasUsageAccess,
-    );
-    await _evaluateCapability(
-      CapabilityKind.accessibility,
-      isAccessibilityEnabled,
-    );
-    await _evaluateCapability(
-      CapabilityKind.overlay,
-      canDrawOverlays,
-    );
+    // A single pass evaluates EVERY capability exactly once. Iterating a
+    // list makes it structurally impossible for any one capability's
+    // evaluation to be skipped by the flow of the method.
+    final List<(CapabilityKind, Future<Result<bool>> Function())> checks =
+        <(CapabilityKind, Future<Result<bool>> Function())>[
+      (CapabilityKind.usageAccess, hasUsageAccess),
+      (CapabilityKind.accessibility, isAccessibilityEnabled),
+      (CapabilityKind.overlay, canDrawOverlays),
+    ];
+    for (final (CapabilityKind kind, Future<Result<bool>> Function() read)
+        in checks) {
+      await _evaluateCapability(kind, read);
+    }
   }
 
   /// Reads the CURRENT grant state through [readCurrent] and advances
@@ -142,6 +151,7 @@ class CapabilityMonitor {
     CapabilityKind kind,
     Future<Result<bool>> Function() readCurrent,
   ) async {
+    _evaluationCounts[kind] = (_evaluationCounts[kind] ?? 0) + 1;
     final Result<bool> result = await readCurrent();
     if (result.isFailure) {
       return; // fail-quiet: no fabricated transitions

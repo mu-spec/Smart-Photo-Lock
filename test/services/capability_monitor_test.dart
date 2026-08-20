@@ -123,20 +123,26 @@ void main() {
 
       await m.probe(); // baseline granted
       expect(m.previousGranted[CapabilityKind.overlay], isTrue);
+      expect(m.evaluationCounts[CapabilityKind.overlay], 1);
       overlayGranted = false;
       await m.probe();
+      // Internal state FIRST: proves the overlay evaluation ran and
+      // observed the revoked value, before checking the emitted event.
+      expect(m.evaluationCounts[CapabilityKind.overlay], 2);
+      expect(m.previousGranted[CapabilityKind.overlay], isFalse);
       expect(changes, hasLength(1));
       expect(changes.single.kind, CapabilityKind.overlay);
-      expect(m.previousGranted[CapabilityKind.overlay], isFalse);
 
       // User re-grants: the next revocation is a NEW edge.
       overlayGranted = true;
       await m.probe();
+      expect(m.evaluationCounts[CapabilityKind.overlay], 3);
       expect(changes, hasLength(1)); // re-grant not surfaced
       expect(m.previousGranted[CapabilityKind.overlay], isTrue); // re-armed
 
       overlayGranted = false;
       await m.probe();
+      expect(m.evaluationCounts[CapabilityKind.overlay], 4);
       expect(changes, hasLength(2));
       expect(changes.last.kind, CapabilityKind.overlay);
 
@@ -185,18 +191,24 @@ void main() {
       await m.probe(); // baseline granted
       expect(m.previousGranted[CapabilityKind.usageAccess], isTrue);
       expect(m.previousGranted[CapabilityKind.overlay], isTrue);
+      expect(m.evaluationCounts[CapabilityKind.overlay], 1);
 
       // Revoke BOTH, then re-grant ONLY usage access. Overlay stays
       // revoked (no duplicate spam), usage re-arms.
       usageAccessGranted = false;
       overlayGranted = false;
       await m.probe();
-      expect(changes, hasLength(2));
+      // Internal state FIRST: proves BOTH evaluations ran and observed
+      // the revoked values, before checking the emitted events.
+      expect(m.evaluationCounts[CapabilityKind.usageAccess], 2);
+      expect(m.evaluationCounts[CapabilityKind.overlay], 2);
       expect(m.previousGranted[CapabilityKind.usageAccess], isFalse);
       expect(m.previousGranted[CapabilityKind.overlay], isFalse);
+      expect(changes, hasLength(2));
 
       usageAccessGranted = true;
       await m.probe();
+      expect(m.evaluationCounts[CapabilityKind.overlay], 3);
       expect(changes, hasLength(2)); // re-grant not surfaced
       expect(m.previousGranted[CapabilityKind.usageAccess], isTrue);
       expect(m.previousGranted[CapabilityKind.overlay], isFalse);
