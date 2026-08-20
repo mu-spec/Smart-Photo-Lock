@@ -91,7 +91,13 @@ object InstalledAppsChannel {
             if (packageManager.getLaunchIntentForPackage(packageInfo.packageName) == null) {
                 continue
             }
-            val applicationInfo: ApplicationInfo = packageInfo.applicationInfo
+            // The SDK types this as nullable: a package with no resolvable
+            // ApplicationInfo cannot be labeled or classified — skip it
+            // safely instead of risking a null crash.
+            val applicationInfo: ApplicationInfo? = packageInfo.applicationInfo
+            if (applicationInfo == null) {
+                continue
+            }
             val isSystemApp: Boolean =
                 (applicationInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
             if (isSystemApp && !includeSystemApps) {
