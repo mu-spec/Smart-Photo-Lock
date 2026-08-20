@@ -40,6 +40,7 @@ passes, and installed-apps discovery. App locking is not implemented yet.
 | 3C | Apps search (filter by application name) | ✅ |
 | 3D | App filtering (All / Protected / Unprotected) | ✅ |
 | 3E | Protection toggle (mark apps Protected/Unprotected, no locking) | ✅ |
+| 3F | Protected apps persistence (restart / process / device survival) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -466,7 +467,10 @@ lib/
     └── time_utils.dart       # minutes-of-day, overnight windows, formatting
 ```
 
-**Tests** (run with `flutter test`): protection toggle suites (switches
+**Tests** (run with `flutter test`): protected-apps persistence suites
+(recreation across repository instances: writes, removals, ordering,
+upserts; AppsScreen resume re-sync with and without store changes),
+protection toggle suites (switches
 render off by default, toggle-on persists via repository + snackbar,
 toggle-off, rebuild survival, protected-filter row removal + filter-empty
 state, filtered count pill), apps filter suites (segments render,
@@ -544,7 +548,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.1.0 / 9.3.1 / 2.4.0 |
 | Java | 17 |
-| versionName / versionCode | `0.24.0` / `30` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.25.0` / `31` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM), `local_auth` (biometrics) |
 
 ## Prerequisites (on your machine)
@@ -672,6 +676,23 @@ protected), with the status as subtitle text:
   when nothing is left).
 - **No locking yet** — this only persists the selection the enforcement
   phases will act on.
+
+### Phase 3F ✅ — Protected Apps Persistence
+
+Protection selections are durable across **app restart**, **process
+recreation**, and **device restart**:
+
+- Selections live in the SQLite `protected_apps` table inside the app's
+  private databases directory (`getDatabasesPath()`) — the OS preserves
+  that file across all three scenarios; writes are upserts
+  (`ConflictAlgorithm.replace`), reads are ordered by sortOrder/label.
+- The Apps screen now re-syncs the protection set from the persisted
+  store whenever the app **resumes** (`WidgetsBindingObserver`), so the
+  list always reflects what survived on disk.
+- Tests recreate every layer above the durable store (fresh repository
+  instances over the same store = process recreation) and prove
+  selections, removals, ordering, and upserts survive — plus resume
+  re-sync widget tests.
 
 ## Next phases
 

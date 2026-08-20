@@ -62,7 +62,7 @@ class AppsScreen extends StatefulWidget {
 
 enum _LoadState { loading, ready, error }
 
-class _AppsScreenState extends State<AppsScreen> {
+class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
   _LoadState _state = _LoadState.loading;
   List<AppEntry> _apps = <AppEntry>[];
   Set<String> _protected = <String>{};
@@ -75,13 +75,43 @@ class _AppsScreenState extends State<AppsScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _load();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _searchController.dispose();
     super.dispose();
+  }
+
+  /// Phase 3F: when the app resumes (after suspension, backgrounding, or a
+  /// process hand-off), re-read the protected set from the persisted store
+  /// so the list always reflects what survived on disk.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _refreshProtection();
+    }
+  }
+
+  /// Re-reads ONLY the protection set (the catalog itself changes rarely
+  /// and is cached by the repository).
+  Future<void> _refreshProtection() async {
+    final container = AppScope.read(context);
+    if (container == null) {
+      return;
+    }
+    final result = await container.protectedApps.getProtectedApps();
+    if (!mounted || result.isFailure) {
+      return;
+    }
+    setState(() {
+      _protected = result.valueOrNull!
+          .map((app) => app.packageName)
+          .toSet();
+    });
   }
 
   void _onSearchChanged(String value) {

@@ -554,6 +554,25 @@ Unprotected control (Phase 3E); the status word moved under the name:
   filter removes it from the list and surfaces the filter-empty state
   when the group empties.
 
+## 3F. Protected apps persistence
+
+The durability chain for protection selections:
+
+```
+AppsScreen switch → ProtectedAppsRepository → SQLite protected_apps
+  (app-private databases dir via getDatabasesPath)
+```
+
+- Survives app restart, process recreation and device restart — the
+  SQLite file is OS-persisted on flash; writes are upserts by package
+  name, reads ordered by sortOrder/label.
+- The Apps screen observes the app lifecycle and re-reads the protected
+  set on `resumed`, so a suspended/restarted app always reflects the
+  persisted store.
+- Tests recreate every layer above the durable store and prove
+  selections, removals, ordering and upserts survive, plus resume
+  re-sync behavior.
+
 ---
 
 ## 1. The eight modules
