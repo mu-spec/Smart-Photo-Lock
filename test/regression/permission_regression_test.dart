@@ -61,13 +61,15 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  /// The Security-tab status row for [title] (a [SecurityStatusItem]).
   Finder securityRow(String title) =>
       find.widgetWithText(SecurityStatusItem, title);
 
+  /// Asserts the status label ([label]) shown inside the row for [title].
   void expectSecurityLabel(WidgetTester tester, String title, String label) {
     expect(
       find.descendant(
-        of: find.widgetWithText(SecurityStatusItem, title),
+        of: securityRow(title),
         matching: find.text(label),
       ),
       findsOneWidget,

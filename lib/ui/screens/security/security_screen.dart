@@ -1,11 +1,16 @@
 import 'package:flutter/material.dart';
 
+import '../../../app/app_container.dart';
 import '../../../app/app_scope.dart';
 import '../../../app/router.dart';
 import '../../../design_system/design_system.dart';
 import '../../../security/credentials/auth_type.dart';
 import '../../../security/credentials/biometric_options.dart';
+import '../../../security/credentials/credential_manager.dart';
+import '../../../services/accessibility_lock_service.dart';
 import '../../../services/capability_monitor.dart';
+import '../../../services/installed_apps_service.dart';
+import '../../../services/overlay_lock_service.dart';
 import '../../../utilities/result.dart';
 
 /// Security tab — the authentication settings surface (Phase 2K).
@@ -92,10 +97,17 @@ class _SecurityScreenState extends State<SecurityScreen> {
   }
 
   Future<void> _loadStatus() async {
-    final auth = AppScope.read(context)?.auth;
-    if (auth == null) {
+    final AppContainer? container = AppScope.read(context);
+    if (container == null) {
       return; // no container in scope (pure widget tests)
     }
+    final CredentialManager auth = container.auth;
+    // Phase 4F repair: resolve the shared capability bridges BEFORE any
+    // await — BuildContext must never be read across an async gap.
+    final InstalledAppsService installedApps = container.installedAppsService;
+    final AccessibilityLockService accessibility = container.accessibility;
+    final OverlayLockService overlay = container.overlay;
+
     final state = (await auth.status()).valueOrNull;
     if (!mounted || state == null) {
       return;
@@ -103,25 +115,18 @@ class _SecurityScreenState extends State<SecurityScreen> {
     // Phase 4B: usage-access capability state, read from the SAME shared
     // service the lock engine will use.
     bool usageAccessGranted = false;
-    final service = AppScope.read(context)?.installedAppsService;
-    if (service != null) {
-      final result = await service.hasUsageAccess();
-      usageAccessGranted = result.isSuccess && result.valueOrNull == true;
-    }
+    final Result<bool> usage = await installedApps.hasUsageAccess();
+    usageAccessGranted = usage.isSuccess && usage.valueOrNull == true;
     // Phase 4C: accessibility fallback state from the shared bridge.
     bool accessibilityEnabled = false;
-    final accessibility = AppScope.read(context)?.accessibility;
-    if (accessibility != null) {
-      final result = await accessibility.isServiceEnabled();
-      accessibilityEnabled = result.isSuccess && result.valueOrNull == true;
-    }
+    final Result<bool> accessibilityState =
+        await accessibility.isServiceEnabled();
+    accessibilityEnabled =
+        accessibilityState.isSuccess && accessibilityState.valueOrNull == true;
     // Phase 4D: overlay capability state from the shared bridge.
     bool overlayGranted = false;
-    final overlay = AppScope.read(context)?.overlay;
-    if (overlay != null) {
-      final result = await overlay.canDrawOverlays();
-      overlayGranted = result.isSuccess && result.valueOrNull == true;
-    }
+    final Result<bool> overlayState = await overlay.canDrawOverlays();
+    overlayGranted = overlayState.isSuccess && overlayState.valueOrNull == true;
     if (!mounted) {
       return;
     }

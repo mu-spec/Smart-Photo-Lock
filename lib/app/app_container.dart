@@ -58,13 +58,15 @@ class AppContainer {
     required InstalledAppsService installedAppsService,
     required AccessibilityLockService accessibilityService,
     required OverlayLockService overlayService,
+    required CapabilityMonitor capabilityMonitor,
     BiometricService? biometricsOverride,
   })  : _keyValueStore = keyValueStore,
         _database = database,
         secretStore = secretStore,
         installedAppsService = installedAppsService,
         accessibility = accessibilityService,
-        overlay = overlayService {
+        overlay = overlayService,
+        capabilityMonitor = capabilityMonitor {
     settingsCipher = AesGcmSettingsCipher(secretStore);
     preferences = PreferencesStoreImpl(_keyValueStore);
     protectedApps = ProtectedAppsRepositoryImpl(_database);
@@ -81,13 +83,6 @@ class AppContainer {
     // Tests may override it with a fake for deterministic availability
     // states; production always uses the real local_auth service.
     biometrics = biometricsOverride ?? LocalAuthBiometricService();
-    // Capability revocation monitor (Phase 4F): the SAME probes the
-    // screens use — one watcher instance for the whole app.
-    capabilityMonitor = CapabilityMonitor(
-      hasUsageAccess: installedAppsService.hasUsageAccess,
-      isAccessibilityEnabled: accessibility.isServiceEnabled,
-      canDrawOverlays: overlay.canDrawOverlays,
-    );
     auth = DefaultCredentialManager(
       settings: securitySettings,
       // Production PIN storage: strict hash policy (PBKDF2 work factor,
@@ -107,13 +102,28 @@ class AppContainer {
     final SharedPreferences prefs = await SharedPreferences.getInstance();
     final SqfliteLocalDatabase database = SqfliteLocalDatabase();
     await database.init();
+    // Phase 4F repair: the revocation monitor must probe the SAME
+    // service instances the UI reads. Build the three bridges first,
+    // construct the monitor once over them, and hand both in — the
+    // final field is initialized exactly once by the constructor.
+    final InstalledAppsService installedAppsService =
+        MethodChannelInstalledAppsService();
+    final AccessibilityLockService accessibilityService =
+        MethodChannelAccessibilityLockService();
+    final OverlayLockService overlayService =
+        MethodChannelOverlayLockService();
     return AppContainer._(
       keyValueStore: SharedPreferencesKeyValueStore(prefs),
       database: database,
       secretStore: FlutterSecureSecretStore(),
-      installedAppsService: MethodChannelInstalledAppsService(),
-      accessibilityService: MethodChannelAccessibilityLockService(),
-      overlayService: MethodChannelOverlayLockService(),
+      installedAppsService: installedAppsService,
+      accessibilityService: accessibilityService,
+      overlayService: overlayService,
+      capabilityMonitor: CapabilityMonitor(
+        hasUsageAccess: installedAppsService.hasUsageAccess,
+        isAccessibilityEnabled: accessibilityService.isServiceEnabled,
+        canDrawOverlays: overlayService.canDrawOverlays,
+      ),
     );
   }
 
@@ -129,24 +139,35 @@ class AppContainer {
     bool usageAccessGranted = true,
     bool accessibilityEnabled = false,
     bool overlayGranted = false,
-  }) =>
-      AppContainer._(
-        keyValueStore: InMemoryKeyValueStore(),
-        database: InMemoryLocalDatabase(),
-        secretStore: InMemorySecretStore(),
-        installedAppsService: StaticInstalledAppsService(
-          apps,
-          iconBytesFor: appIcons,
-          usageAccessGranted: usageAccessGranted,
-        ),
-        accessibilityService: StaticAccessibilityLockService(
-          enabled: accessibilityEnabled,
-        ),
-        overlayService: StaticOverlayLockService(
-          overlayGranted: overlayGranted,
-        ),
-        biometricsOverride: biometrics,
-      );
+  }) {
+    final InstalledAppsService installedAppsService =
+        StaticInstalledAppsService(
+      apps,
+      iconBytesFor: appIcons,
+      usageAccessGranted: usageAccessGranted,
+    );
+    final AccessibilityLockService accessibilityService =
+        StaticAccessibilityLockService(
+      enabled: accessibilityEnabled,
+    );
+    final OverlayLockService overlayService = StaticOverlayLockService(
+      overlayGranted: overlayGranted,
+    );
+    return AppContainer._(
+      keyValueStore: InMemoryKeyValueStore(),
+      database: InMemoryLocalDatabase(),
+      secretStore: InMemorySecretStore(),
+      installedAppsService: installedAppsService,
+      accessibilityService: accessibilityService,
+      overlayService: overlayService,
+      capabilityMonitor: CapabilityMonitor(
+        hasUsageAccess: installedAppsService.hasUsageAccess,
+        isAccessibilityEnabled: accessibilityService.isServiceEnabled,
+        canDrawOverlays: overlayService.canDrawOverlays,
+      ),
+      biometricsOverride: biometrics,
+    );
+  }
 
   final KeyValueStore _keyValueStore;
   final LocalDatabase _database;

@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:smart_app_lock/services/accessibility_lock_service.dart';
 import 'package:smart_app_lock/services/impl/method_channel_accessibility_lock_service.dart';
 import 'package:smart_app_lock/services/impl/static_accessibility_lock_service.dart';
+import 'package:smart_app_lock/utilities/result.dart';
 
 /// Phase 4C: the accessibility capability bridge — wire format on the
 /// Dart side and the static test service.

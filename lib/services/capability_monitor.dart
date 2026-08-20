@@ -105,11 +105,16 @@ class CapabilityMonitor {
     }
     final bool granted = result.valueOrNull == true;
     final bool? previous = _lastGranted[kind];
-    if (previous != null && previous && !granted) {
+    // Only the granted -> revoked EDGE is an event: a revocation fires
+    // once, and repeated probes while it stays revoked emit nothing.
+    if (previous == true && !granted) {
       _controller.add(
         CapabilityChange(kind: kind, state: CapabilityState.revoked, at: _now()),
       );
     }
+    // Re-arm point: the baseline is updated on EVERY successful probe.
+    // A re-grant (false -> true) records the new granted baseline, so a
+    // later revocation fires again as a NEW event.
     _lastGranted[kind] = granted;
   }
 

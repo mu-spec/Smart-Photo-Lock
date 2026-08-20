@@ -5,6 +5,7 @@ import '../ui/screens/pattern/pattern_setup_screen.dart';
 import '../ui/screens/pattern/pattern_unlock_screen.dart';
 import '../ui/screens/permissions/accessibility_setup_screen.dart';
 import '../ui/screens/permissions/overlay_setup_screen.dart';
+import '../ui/screens/permissions/permission_setup_screen.dart';
 import '../ui/screens/permissions/usage_access_screen.dart';
 import '../ui/screens/pin/pin_change_screen.dart';
 import '../ui/screens/pin/pin_setup_screen.dart';
