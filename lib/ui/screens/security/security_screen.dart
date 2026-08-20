@@ -5,6 +5,7 @@ import '../../../app/router.dart';
 import '../../../design_system/design_system.dart';
 import '../../../security/credentials/auth_type.dart';
 import '../../../security/credentials/biometric_options.dart';
+import '../../../services/capability_monitor.dart';
 import '../../../utilities/result.dart';
 
 /// Security tab — the authentication settings surface (Phase 2K).
@@ -23,6 +24,11 @@ class SecurityScreen extends StatefulWidget {
 
   static const String description =
       'Your PIN, intruder protection and advanced security controls.';
+
+  static const String revokedTitle = 'A permission was revoked';
+  static const String revokedMessage =
+      'A capability Smart App Lock needs was turned off in system '
+      'settings. Re-enable it to keep protection working.';
 
   static const String randomizedTitle = 'Randomized keypad';
   static const String randomizedSubtitle =
@@ -62,10 +68,27 @@ class _SecurityScreenState extends State<SecurityScreen> {
   /// loaded).
   bool _overlayGranted = false;
 
+  /// Phase 4F: capabilities detected as revoked this session (drives the
+  /// alert banner).
+  final Set<CapabilityKind> _revokedKinds = <CapabilityKind>{};
+
+  bool get _hasRevokedCapability => _revokedKinds.isNotEmpty;
+
   @override
   void initState() {
     super.initState();
     _loadStatus();
+    // Phase 4F: a revoked capability (detected anywhere) marks the tab
+    // and the next status reload reflects it.
+    AppScope.read(context)?.capabilityMonitor.changes.listen(
+          (change) {
+        if (!mounted || change.state != CapabilityState.revoked) {
+          return;
+        }
+        _revokedKinds.add(change.kind);
+        _loadStatus();
+      },
+    );
   }
 
   Future<void> _loadStatus() async {
@@ -335,6 +358,16 @@ class _SecurityScreenState extends State<SecurityScreen> {
         children: <Widget>[
           const DsSectionTitle('Security status'),
           const SizedBox(height: DsSpacing.md),
+          if (_hasRevokedCapability) ...<Widget>[
+            SecurityStatusBanner(
+              level: SecurityLevel.vulnerable,
+              title: SecurityScreen.revokedTitle,
+              message: SecurityScreen.revokedMessage,
+              actionLabel: 'Review permissions',
+              onAction: _onPermissionSetupTap,
+            ),
+            const SizedBox(height: DsSpacing.md),
+          ],
           SecurityStatusBanner(
             level: SecurityLevel.atRisk,
             title: 'Protection is not fully set up',
@@ -408,10 +441,18 @@ class _SecurityScreenState extends State<SecurityScreen> {
             ),
           ),
           const SizedBox(height: DsSpacing.xl),
-          DsSectionTitle(
-            'App lock permissions',
-            actionLabel: 'Set up',
-            onAction: _onPermissionSetupTap,
+          Row(
+            children: <Widget>[
+              DsDotBadge(show: _hasRevokedCapability),
+              const SizedBox(width: DsSpacing.xs),
+              Expanded(
+                child: DsSectionTitle(
+                  'App lock permissions',
+                  actionLabel: 'Set up',
+                  onAction: _onPermissionSetupTap,
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: DsSpacing.md),
           DsCard(

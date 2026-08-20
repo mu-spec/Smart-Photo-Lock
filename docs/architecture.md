@@ -701,6 +701,24 @@ PermissionSetupScreen
 Probe failures degrade to Action Required; the dedicated flows surface
 the details (unavailable/retry states).
 
+## 4F. Capability revocation detection
+
+```
+CapabilityMonitor (one instance, AppContainer.capabilityMonitor)
+  ├─ baseline probe on start (no events for the initial state)
+  ├─ Timer.periodic(2min) probes
+  ├─ prompt probe on app resume (CapabilityWatchGuard)
+  ├─ probes = the SAME shared services the UI uses
+  └─ emits CapabilityChange(kind, revoked) exactly once per
+     granted→revoked edge; fail-quiet on probe errors; re-grants
+     arm the next edge
+```
+
+Surfacing: the Security tab listens to the monitor — a revocation shows
+a vulnerable banner ("A permission was revoked…", action → permission
+hub) plus a `DsDotBadge` on the App lock permissions header; capability
+statuses refresh immediately.
+
 ---
 
 ## 1. The eight modules

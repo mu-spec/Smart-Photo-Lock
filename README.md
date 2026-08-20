@@ -50,6 +50,7 @@ locking is not implemented yet.
 | 4C | Accessibility setup (detection-only fallback + prominent disclosure) | ✅ |
 | 4D | Overlay setup (draw-over-apps capability, required by the architecture) | ✅ |
 | 4E | Permission setup screen (centralized Enabled / Action Required) | ✅ |
+| 4F | Capability revocation detection (granted → revoked monitoring) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -563,7 +564,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.1.0 / 9.3.1 / 2.4.0 |
 | Java | 17 |
-| versionName / versionCode | `0.32.0` / `38` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.33.0` / `39` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM), `local_auth` (biometrics) |
 
 ## Prerequisites (on your machine)
@@ -828,6 +829,22 @@ tab's App lock permissions section):
   directly).
 - Missing-container/probe failures degrade to Action Required without
   crashing.
+
+### Phase 4F ✅ — Capability Revocation Detection
+
+A revoked capability is detected and surfaced:
+
+- **`CapabilityMonitor`** — probes the three grants (same shared
+  services), on a 2-minute timer and promptly on app resume; emits
+  exactly one **granted → revoked** change per kind (no duplicate spam,
+  no fabricated events — probe failures are fail-quiet; re-grants arm
+  the next edge).
+- **`CapabilityWatchGuard`** wraps the app root: starts the monitor and
+  triggers a resume probe.
+- **Surfacing** — the Security tab shows a vulnerable banner ("A
+  permission was revoked…") with a **Review permissions** action and an
+  attention dot on the App lock permissions header; statuses refresh
+  live.
 
 ## Next phases
 

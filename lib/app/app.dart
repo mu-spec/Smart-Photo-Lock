@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'app_container.dart';
 import 'app_scope.dart';
+import 'capability_watch_guard.dart';
 import 'router.dart';
 import 'theme/app_theme.dart';
 
@@ -31,8 +32,12 @@ class SmartAppLockApp extends StatelessWidget {
     );
 
     final AppContainer? container = this.container;
-    return container == null
+    final Widget wrapped = container == null
         ? app
-        : AppScope(container: container, child: app);
+        : AppScope(
+            container: container,
+            child: CapabilityWatchGuard(child: app),
+          );
+    return wrapped;
   }
 }

@@ -37,6 +37,7 @@ import '../services/impl/method_channel_overlay_lock_service.dart';
 import '../services/impl/static_accessibility_lock_service.dart';
 import '../services/impl/static_installed_apps_service.dart';
 import '../services/impl/static_overlay_lock_service.dart';
+import '../services/capability_monitor.dart';
 import '../services/installed_apps_service.dart';
 import '../services/overlay_lock_service.dart';
 
@@ -80,6 +81,13 @@ class AppContainer {
     // Tests may override it with a fake for deterministic availability
     // states; production always uses the real local_auth service.
     biometrics = biometricsOverride ?? LocalAuthBiometricService();
+    // Capability revocation monitor (Phase 4F): the SAME probes the
+    // screens use — one watcher instance for the whole app.
+    capabilityMonitor = CapabilityMonitor(
+      hasUsageAccess: installedAppsService.hasUsageAccess,
+      isAccessibilityEnabled: accessibility.isServiceEnabled,
+      canDrawOverlays: overlay.canDrawOverlays,
+    );
     auth = DefaultCredentialManager(
       settings: securitySettings,
       // Production PIN storage: strict hash policy (PBKDF2 work factor,
@@ -188,4 +196,8 @@ class AppContainer {
   /// state + settings routing; the lock window itself lands with the
   /// lock-screen phase.
   final OverlayLockService overlay;
+
+  /// Revocation watcher (Phase 4F): probes the same services and emits
+  /// granted→revoked changes. Started by the app root.
+  final CapabilityMonitor capabilityMonitor;
 }

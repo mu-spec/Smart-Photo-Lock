@@ -1,0 +1,169 @@
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:smart_app_lock/services/capability_monitor.dart';
+import 'package:smart_app_lock/utilities/result.dart';
+
+/// Phase 4F: the revocation monitor — granted→revoked edges only,
+/// fail-quiet probes, no duplicate spam, timer-driven + resume probes.
+void main() {
+  final DateTime start = DateTime(2026, 8, 20, 12, 0);
+  int tick = 0;
+  DateTime fakeNow() => start.add(Duration(seconds: tick));
+
+  group('CapabilityMonitor', () {
+    test('emits exactly one granted->revoked change per kind', () async {
+      final Map<CapabilityKind, bool> state = <CapabilityKind, bool>{
+        CapabilityKind.usageAccess: true,
+        CapabilityKind.accessibility: true,
+        CapabilityKind.overlay: true,
+      };
+      CapabilityMonitor monitor() => CapabilityMonitor(
+            hasUsageAccess: () async =>
+                Result.success(state[CapabilityKind.usageAccess]!),
+            isAccessibilityEnabled: () async =>
+                Result.success(state[CapabilityKind.accessibility]!),
+            canDrawOverlays: () async =>
+                Result.success(state[CapabilityKind.overlay]!),
+            now: fakeNow,
+          );
+
+      final CapabilityMonitor m = monitor();
+      final List<CapabilityChange> changes = <CapabilityChange>[];
+      m.changes.listen(changes.add);
+
+      await m.probe(); // baseline: granted — NO change emitted
+      expect(changes, isEmpty);
+
+      // Usage access revoked in the system settings.
+      state[CapabilityKind.usageAccess] = false;
+      await m.probe();
+      expect(changes, hasLength(1));
+      expect(changes.single.kind, CapabilityKind.usageAccess);
+      expect(changes.single.state, CapabilityState.revoked);
+      expect(changes.single.at, fakeNow());
+
+      // Repeated probes while it stays revoked: NO duplicate spam.
+      await m.probe();
+      await m.probe();
+      expect(changes, hasLength(1));
+
+      await m.dispose();
+    });
+
+    test('does not emit for revocations that existed before the baseline',
+        () async {
+      final Map<CapabilityKind, bool> state = <CapabilityKind, bool>{
+        CapabilityKind.usageAccess: true,
+        CapabilityKind.accessibility: false, // already revoked at start
+        CapabilityKind.overlay: false, // already revoked at start
+      };
+      final CapabilityMonitor m = CapabilityMonitor(
+        hasUsageAccess: () async =>
+            Result.success(state[CapabilityKind.usageAccess]!),
+        isAccessibilityEnabled: () async =>
+            Result.success(state[CapabilityKind.accessibility]!),
+        canDrawOverlays: () async =>
+            Result.success(state[CapabilityKind.overlay]!),
+        now: fakeNow,
+      );
+      final List<CapabilityChange> changes = <CapabilityChange>[];
+      m.changes.listen(changes.add);
+
+      await m.probe(); // baseline only — nothing emitted
+      expect(changes, isEmpty);
+
+      // A LATER revocation of the granted one fires once.
+      state[CapabilityKind.usageAccess] = false;
+      await m.probe();
+      expect(changes, hasLength(1));
+      expect(changes.single.kind, CapabilityKind.usageAccess);
+
+      await m.dispose();
+    });
+
+    test('probe failures are fail-quiet (no fabricated transitions)',
+        () async {
+      bool fail = false;
+      final CapabilityMonitor m = CapabilityMonitor(
+        hasUsageAccess: () async =>
+            fail ? Result.failure(StateError('boom')) : Result.success(true),
+        isAccessibilityEnabled: () async => Result.success(true),
+        canDrawOverlays: () async => Result.success(true),
+        now: fakeNow,
+      );
+      final List<CapabilityChange> changes = <CapabilityChange>[];
+      m.changes.listen(changes.add);
+
+      await m.probe(); // baseline granted
+
+      fail = true; // probes now fail — NOT a revocation
+      await m.probe();
+      await m.probe();
+      expect(changes, isEmpty);
+
+      fail = false; // back to granted — still no edge
+      await m.probe();
+      expect(changes, isEmpty);
+
+      await m.dispose();
+    });
+
+    test('re-grants do not emit and the next revocation fires again',
+        () async {
+      final Map<CapabilityKind, bool> state = <CapabilityKind, bool>{
+        CapabilityKind.overlay: true,
+      };
+      final CapabilityMonitor m = CapabilityMonitor(
+        hasUsageAccess: () async => Result.success(true),
+        isAccessibilityEnabled: () async => Result.success(true),
+        canDrawOverlays: () async =>
+            Result.success(state[CapabilityKind.overlay]!),
+        now: fakeNow,
+      );
+      final List<CapabilityChange> changes = <CapabilityChange>[];
+      m.changes.listen(changes.add);
+
+      await m.probe(); // baseline granted
+      state[CapabilityKind.overlay] = false;
+      await m.probe();
+      expect(changes, hasLength(1));
+
+      // User re-grants: the next revocation is a NEW edge.
+      state[CapabilityKind.overlay] = true;
+      await m.probe();
+      expect(changes, hasLength(1)); // re-grant not surfaced
+
+      state[CapabilityKind.overlay] = false;
+      await m.probe();
+      expect(changes, hasLength(2));
+
+      await m.dispose();
+    });
+
+    test('manual probes detect revocations made between timer ticks',
+        () async {
+      final Map<CapabilityKind, bool> state = <CapabilityKind, bool>{
+        CapabilityKind.accessibility: true,
+      };
+      final CapabilityMonitor m = CapabilityMonitor(
+        hasUsageAccess: () async => Result.success(true),
+        isAccessibilityEnabled: () async =>
+            Result.success(state[CapabilityKind.accessibility]!),
+        canDrawOverlays: () async => Result.success(true),
+        interval: const Duration(minutes: 5), // long timer
+        now: fakeNow,
+      );
+      final List<CapabilityChange> changes = <CapabilityChange>[];
+      m.changes.listen(changes.add);
+      m.start();
+      await Future<void>.delayed(Duration.zero); // baseline ran
+
+      state[CapabilityKind.accessibility] = false;
+      await m.probe(); // manual (resume-style) probe between ticks
+      expect(changes, hasLength(1));
+      expect(changes.single.kind, CapabilityKind.accessibility);
+
+      await m.dispose();
+    });
+  });
+}
