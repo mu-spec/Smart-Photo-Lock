@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:smart_app_lock/services/capability_monitor.dart';
@@ -164,6 +165,94 @@ void main() {
       expect(changes.single.kind, CapabilityKind.accessibility);
 
       await m.dispose();
+    });
+
+    test('each capability re-arms independently after its own re-grant',
+        () async {
+      final Map<CapabilityKind, bool> state = <CapabilityKind, bool>{
+        CapabilityKind.usageAccess: true,
+        CapabilityKind.overlay: true,
+      };
+      final CapabilityMonitor m = CapabilityMonitor(
+        hasUsageAccess: () async =>
+            Result.success(state[CapabilityKind.usageAccess]!),
+        isAccessibilityEnabled: () async => Result.success(true),
+        canDrawOverlays: () async =>
+            Result.success(state[CapabilityKind.overlay]!),
+        now: fakeNow,
+      );
+      final List<CapabilityChange> changes = <CapabilityChange>[];
+      m.changes.listen(changes.add);
+
+      await m.probe(); // baseline granted
+
+      // Revoke BOTH, then re-grant ONLY usage access. Overlay stays
+      // revoked (no duplicate spam), usage re-arms.
+      state[CapabilityKind.usageAccess] = false;
+      state[CapabilityKind.overlay] = false;
+      await m.probe();
+      expect(changes, hasLength(2));
+
+      state[CapabilityKind.usageAccess] = true;
+      await m.probe();
+      expect(changes, hasLength(2)); // re-grant not surfaced
+
+      // Usage revoked again: a NEW event for usage only.
+      state[CapabilityKind.usageAccess] = false;
+      await m.probe();
+      expect(changes, hasLength(3));
+      expect(changes.last.kind, CapabilityKind.usageAccess);
+
+      // Overlay re-granted: still no event, and it re-arms too.
+      state[CapabilityKind.overlay] = true;
+      await m.probe();
+      expect(changes, hasLength(3));
+      state[CapabilityKind.overlay] = false;
+      await m.probe();
+      expect(changes, hasLength(4));
+      expect(changes.last.kind, CapabilityKind.overlay);
+
+      await m.dispose();
+    });
+  });
+
+  group('CapabilityMonitor lifecycle', () {
+    CapabilityMonitor monitor() => CapabilityMonitor(
+          hasUsageAccess: () async => Result.success(true),
+          isAccessibilityEnabled: () async => Result.success(true),
+          canDrawOverlays: () async => Result.success(true),
+          now: fakeNow,
+        );
+
+    testWidgets('stop cancels the periodic timer', (WidgetTester tester) async {
+      final CapabilityMonitor m = monitor();
+      await tester.pumpWidget(const SizedBox());
+      m.start();
+      await tester.pump();
+      m.stop();
+      // No further cleanup: if the periodic timer were still pending,
+      // the framework fails this test at teardown.
+    });
+
+    testWidgets('start is idempotent (no duplicate timers)',
+        (WidgetTester tester) async {
+      final CapabilityMonitor m = monitor();
+      await tester.pumpWidget(const SizedBox());
+      m.start();
+      m.start(); // must be a no-op — a second timer would leak
+      await tester.pump();
+      m.stop();
+    });
+
+    testWidgets('start after stop resumes periodic monitoring',
+        (WidgetTester tester) async {
+      final CapabilityMonitor m = monitor();
+      await tester.pumpWidget(const SizedBox());
+      m.start();
+      m.stop();
+      m.start();
+      await tester.pump();
+      m.stop();
     });
   });
 }

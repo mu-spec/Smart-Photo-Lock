@@ -3,6 +3,8 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:smart_app_lock/app/app.dart';
 import 'package:smart_app_lock/app/app_container.dart';
+import 'package:smart_app_lock/app/app_scope.dart';
+import 'package:smart_app_lock/app/capability_watch_guard.dart';
 import 'package:smart_app_lock/design_system/design_system.dart';
 import 'package:smart_app_lock/services/impl/static_installed_apps_service.dart';
 import 'package:smart_app_lock/services/impl/static_overlay_lock_service.dart';
@@ -81,5 +83,24 @@ void main() {
     expect(find.text(SecurityScreen.revokedTitle), findsOneWidget);
 
     await container.capabilityMonitor.dispose();
+  });
+
+  testWidgets('guard disposal stops the periodic monitor timer',
+      (WidgetTester tester) async {
+    useTallViewport(tester);
+    final AppContainer container = AppContainer.inMemory();
+
+    await tester.pumpWidget(
+      AppScope(
+        container: container,
+        child: const CapabilityWatchGuard(child: SizedBox()),
+      ),
+    );
+    await tester.pump();
+
+    // Removing the guard must stop the periodic monitor timer it
+    // started — the framework's pending-timer check at teardown
+    // verifies that no timer survives the widget disposal.
+    await tester.pumpWidget(const SizedBox());
   });
 }

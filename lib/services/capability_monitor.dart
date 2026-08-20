@@ -77,7 +77,10 @@ class CapabilityMonitor {
 
   Stream<CapabilityChange> get changes => _controller.stream;
 
-  /// Starts the monitor: baseline probe + periodic timer.
+  /// Starts periodic monitoring: baseline probe + periodic timer.
+  ///
+  /// Idempotent — calling [start] while already running does nothing
+  /// (never creates a second timer).
   void start() {
     if (_started) {
       return;
@@ -85,6 +88,19 @@ class CapabilityMonitor {
     _started = true;
     probe();
     _timer = Timer.periodic(interval, (_) => probe());
+  }
+
+  /// Stops periodic monitoring: cancels the timer so no further timed
+  /// probes fire.
+  ///
+  /// This is the widget-lifecycle hook (the watch guard owns it): the
+  /// change stream stays open, manual [probe] calls still work, and
+  /// [start] may be called again to resume monitoring. The shared
+  /// monitor instance is NOT torn down here — that is [dispose].
+  void stop() {
+    _timer?.cancel();
+    _timer = null;
+    _started = false;
   }
 
   /// Probes all three capabilities and emits transitions.
@@ -133,11 +149,11 @@ class CapabilityMonitor {
     _lastGranted[kind] = granted;
   }
 
-  /// Stops the timer and closes the stream.
+  /// Permanently tears the monitor down: stops the timer and closes the
+  /// change stream. Not recoverable — used when the owning container
+  /// goes away for good.
   Future<void> dispose() async {
-    _timer?.cancel();
-    _timer = null;
-    _started = false;
+    stop();
     await _controller.close();
   }
 }
