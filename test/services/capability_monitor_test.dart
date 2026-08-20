@@ -33,11 +33,13 @@ void main() {
       m.changes.listen(changes.add);
 
       await m.probe(); // baseline: granted — NO change emitted
+      await pumpEventQueue();
       expect(changes, isEmpty);
 
       // Usage access revoked in the system settings.
       state[CapabilityKind.usageAccess] = false;
       await m.probe();
+      await pumpEventQueue();
       expect(changes, hasLength(1));
       expect(changes.single.kind, CapabilityKind.usageAccess);
       expect(changes.single.state, CapabilityState.revoked);
@@ -46,6 +48,7 @@ void main() {
       // Repeated probes while it stays revoked: NO duplicate spam.
       await m.probe();
       await m.probe();
+      await pumpEventQueue();
       expect(changes, hasLength(1));
 
       await m.dispose();
@@ -71,11 +74,13 @@ void main() {
       m.changes.listen(changes.add);
 
       await m.probe(); // baseline only — nothing emitted
+      await pumpEventQueue();
       expect(changes, isEmpty);
 
       // A LATER revocation of the granted one fires once.
       state[CapabilityKind.usageAccess] = false;
       await m.probe();
+      await pumpEventQueue();
       expect(changes, hasLength(1));
       expect(changes.single.kind, CapabilityKind.usageAccess);
 
@@ -96,14 +101,17 @@ void main() {
       m.changes.listen(changes.add);
 
       await m.probe(); // baseline granted
+      await pumpEventQueue();
 
       fail = true; // probes now fail — NOT a revocation
       await m.probe();
       await m.probe();
+      await pumpEventQueue();
       expect(changes, isEmpty);
 
       fail = false; // back to granted — still no edge
       await m.probe();
+      await pumpEventQueue();
       expect(changes, isEmpty);
 
       await m.dispose();
@@ -130,6 +138,7 @@ void main() {
       // observed the revoked value, before checking the emitted event.
       expect(m.evaluationCounts[CapabilityKind.overlay], 2);
       expect(m.previousGranted[CapabilityKind.overlay], isFalse);
+      await pumpEventQueue();
       expect(changes, hasLength(1));
       expect(changes.single.kind, CapabilityKind.overlay);
 
@@ -137,12 +146,14 @@ void main() {
       overlayGranted = true;
       await m.probe();
       expect(m.evaluationCounts[CapabilityKind.overlay], 3);
+      await pumpEventQueue();
       expect(changes, hasLength(1)); // re-grant not surfaced
       expect(m.previousGranted[CapabilityKind.overlay], isTrue); // re-armed
 
       overlayGranted = false;
       await m.probe();
       expect(m.evaluationCounts[CapabilityKind.overlay], 4);
+      await pumpEventQueue();
       expect(changes, hasLength(2));
       expect(changes.last.kind, CapabilityKind.overlay);
 
@@ -169,6 +180,7 @@ void main() {
 
       state[CapabilityKind.accessibility] = false;
       await m.probe(); // manual (resume-style) probe between ticks
+      await pumpEventQueue();
       expect(changes, hasLength(1));
       expect(changes.single.kind, CapabilityKind.accessibility);
 
@@ -204,11 +216,13 @@ void main() {
       expect(m.evaluationCounts[CapabilityKind.overlay], 2);
       expect(m.previousGranted[CapabilityKind.usageAccess], isFalse);
       expect(m.previousGranted[CapabilityKind.overlay], isFalse);
+      await pumpEventQueue();
       expect(changes, hasLength(2));
 
       usageAccessGranted = true;
       await m.probe();
       expect(m.evaluationCounts[CapabilityKind.overlay], 3);
+      await pumpEventQueue();
       expect(changes, hasLength(2)); // re-grant not surfaced
       expect(m.previousGranted[CapabilityKind.usageAccess], isTrue);
       expect(m.previousGranted[CapabilityKind.overlay], isFalse);
@@ -216,16 +230,19 @@ void main() {
       // Usage revoked again: a NEW event for usage only.
       usageAccessGranted = false;
       await m.probe();
+      await pumpEventQueue();
       expect(changes, hasLength(3));
       expect(changes.last.kind, CapabilityKind.usageAccess);
 
       // Overlay re-granted: still no event, and it re-arms too.
       overlayGranted = true;
       await m.probe();
+      await pumpEventQueue();
       expect(changes, hasLength(3));
       expect(m.previousGranted[CapabilityKind.overlay], isTrue);
       overlayGranted = false;
       await m.probe();
+      await pumpEventQueue();
       expect(changes, hasLength(4));
       expect(changes.last.kind, CapabilityKind.overlay);
 
