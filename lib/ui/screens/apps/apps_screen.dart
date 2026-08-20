@@ -5,12 +5,14 @@ import '../../../data/models/app_entry.dart';
 import '../../../design_system/design_system.dart';
 import '../../widgets/app_icon.dart';
 
-/// Apps tab — the installed-apps list (Phase 3B).
+/// Apps tab — the installed-apps list with search (Phase 3C).
 ///
 /// Shows every app that is appropriate for App Lock selection with its
-/// launcher icon, name, and current protection status. Data flows through
-/// the shared container (Phase 3A): the discovery repository for the
-/// catalog and the protected-apps repository for the status.
+/// launcher icon, name, and current protection status. The search field
+/// filters the catalog by application name (case-insensitive substring).
+/// Data flows through the shared container (Phase 3A): the discovery
+/// repository for the catalog and the protected-apps repository for the
+/// status.
 class AppsScreen extends StatefulWidget {
   const AppsScreen({super.key});
 
@@ -27,6 +29,10 @@ class AppsScreen extends StatefulWidget {
   static const String emptyMessage =
       'No lockable apps were found on this device.';
   static const String unavailableMessage = 'App discovery is unavailable.';
+  static const String searchHint = 'Search apps by name';
+  static const String noMatchTitle = 'No apps match';
+  static const String noMatchMessage = 'Try a different name.';
+  static const String clearSearchLabel = 'Clear search';
 
   @override
   State<AppsScreen> createState() => _AppsScreenState();
@@ -40,10 +46,40 @@ class _AppsScreenState extends State<AppsScreen> {
   Set<String> _protected = <String>{};
   int _fetchGeneration = 0;
 
+  final TextEditingController _searchController = TextEditingController();
+  String _query = '';
+
   @override
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _onSearchChanged(String value) {
+    setState(() => _query = value.trim());
+  }
+
+  void _clearSearch() {
+    _searchController.clear();
+    setState(() => _query = '');
+  }
+
+  /// The visible catalog after applying the name filter.
+  List<AppEntry> get _filteredApps {
+    if (_query.isEmpty) {
+      return _apps;
+    }
+    final String needle = _query.toLowerCase();
+    return _apps
+        .where((AppEntry app) =>
+            app.label.toLowerCase().contains(needle))
+        .toList(growable: false);
   }
 
   Future<void> _load() async {
@@ -88,6 +124,10 @@ class _AppsScreenState extends State<AppsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final int visibleCount = _filteredApps.length;
+    final String countLabel = _query.isEmpty
+        ? '${_apps.length} apps'
+        : '$visibleCount / ${_apps.length}';
     return SafeArea(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -108,7 +148,7 @@ class _AppsScreenState extends State<AppsScreen> {
                   ),
                 ),
                 if (_state == _LoadState.ready)
-                  DsStatusPill(label: '${_apps.length} apps', showDot: false),
+                  DsStatusPill(label: countLabel, showDot: false),
               ],
             ),
           ),
@@ -124,6 +164,29 @@ class _AppsScreenState extends State<AppsScreen> {
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: context.dsColors.textSecondary,
                   ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              DsSpacing.lg,
+              DsSpacing.sm,
+              DsSpacing.lg,
+              DsSpacing.sm,
+            ),
+            child: DsTextField(
+              key: const Key('apps_search_field'),
+              controller: _searchController,
+              hint: AppsScreen.searchHint,
+              leadingIcon: const Icon(Icons.search),
+              trailingIcon: _query.isEmpty
+                  ? null
+                  : IconButton(
+                      key: const Key('apps_search_clear'),
+                      tooltip: 'Clear search',
+                      icon: const Icon(Icons.close),
+                      onPressed: _clearSearch,
+                    ),
+              onChanged: _onSearchChanged,
             ),
           ),
           Expanded(child: _buildBody()),
@@ -156,13 +219,24 @@ class _AppsScreenState extends State<AppsScreen> {
             onAction: _load,
           );
         }
+        final List<AppEntry> visible = _filteredApps;
+        if (visible.isEmpty) {
+          // Catalog exists but the search matched nothing.
+          return _MessageCard(
+            icon: Icons.search_off,
+            title: AppsScreen.noMatchTitle,
+            message: AppsScreen.noMatchMessage,
+            actionLabel: AppsScreen.clearSearchLabel,
+            onAction: _clearSearch,
+          );
+        }
         final container = AppScope.read(context);
         final repository = container?.installedApps;
         return ListView.builder(
           padding: const EdgeInsets.only(bottom: DsSpacing.xl),
-          itemCount: _apps.length,
+          itemCount: visible.length,
           itemBuilder: (BuildContext context, int index) {
-            final AppEntry app = _apps[index];
+            final AppEntry app = visible[index];
             final bool isProtected = _protected.contains(app.packageName);
             return ListTile(
               leading: repository == null

@@ -37,6 +37,7 @@ passes, and installed-apps discovery. App locking is not implemented yet.
 | 2L | Authentication regression (9 scenarios incl. process recreation) | ✅ |
 | 3A | Installed apps discovery (PackageManager bridge + repository) | ✅ |
 | 3B | Apps list UI (icon + name + protection status) | ✅ |
+| 3C | Apps search (filter by application name) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -399,7 +400,7 @@ lib/
 │   ├── shell/                # MainShell: bottom NavigationBar + IndexedStack
 │   ├── screens/
 │   │   ├── home/             # Home tab (welcome, status, quick access)
-│   │   ├── apps/             # Apps tab (3B: real installed-apps list)
+│   │   ├── apps/             # Apps tab (3B list + 3C search)
 │   │   ├── smart/            # Smart tab (placeholder)
 │   │   ├── security/         # Security tab (status banner + control list)
 │   │   ├── settings/         # Settings tab (placeholder)
@@ -462,9 +463,11 @@ lib/
     └── time_utils.dart       # minutes-of-day, overnight windows, formatting
 ```
 
-**Tests** (run with `flutter test`): apps list UI suites (names + icons +
-protection pills, real icon bytes, empty/error states with retry,
-repository-driven status flips), installed-apps discovery suites
+**Tests** (run with `flutter test`): apps search suites (presence,
+filtering, case-insensitivity, substring matching, no-match state with
+clear action, clear-icon restore, protection pills in filtered results),
+apps list UI suites (names + icons + protection pills, real icon bytes,
+empty/error states with retry, repository-driven status flips), installed-apps discovery suites
 (MethodChannel wire format incl. getAppIcon decode/null/cache/platform
 failures, static service filtering + icons, repository
 filtering/sorting/label normalization/caching/refresh/failure
@@ -532,7 +535,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.1.0 / 9.3.1 / 2.4.0 |
 | Java | 17 |
-| versionName / versionCode | `0.21.0` / `27` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.22.0` / `28` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM), `local_auth` (biometrics) |
 
 ## Prerequisites (on your machine)
@@ -618,6 +621,17 @@ The Apps tab is now the real installed-apps list:
   (neutral pill) from the protected-apps repository.
 - Loading / error / empty states with a Retry action; system apps stay
   filtered out; header shows the app count.
+
+### Phase 3C ✅ — Apps Search
+
+The Apps tab gained a **search field** filtering by application name:
+
+- Case-insensitive substring matching on the app label (partial names
+  like "what" match WhatsApp).
+- Live filtering with a `filtered / total` count pill; a clear icon
+  empties the field and restores the full list.
+- No-match state ("No apps match") with a **Clear search** action;
+  protection pills keep rendering inside filtered results.
 
 ## Next phases
 

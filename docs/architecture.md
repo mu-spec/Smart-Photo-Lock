@@ -516,6 +516,19 @@ Screen states: loading spinner → ready list / empty state / error state
 with Retry. Icons fall back to a neutral placeholder while loading or
 when the platform provides none; system apps stay filtered out.
 
+## 3C. Apps search
+
+The Apps tab filters the catalog **by application name**:
+
+- Case-insensitive substring match on the repository-normalized label.
+- The search field (`DsTextField` with a search icon and a clear action)
+  lives above the list; filtering is live and shows `filtered / total`
+  in the header pill.
+- A no-match state offers **Clear search**; protection pills keep
+  rendering inside filtered results.
+- Pure UI-layer filtering — the repository still delivers the full
+  catalog once; no platform round-trips per keystroke.
+
 ---
 
 ## 1. The eight modules
