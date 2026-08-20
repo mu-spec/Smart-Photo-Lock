@@ -1,10 +1,15 @@
 package com.smartapplock.app
 
+import android.app.AppOpsManager
+import android.content.Context
+import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.os.Build
+import android.provider.Settings
 import android.util.Base64
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -139,6 +144,50 @@ object InstalledAppsChannel {
             Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)
         } catch (e: Exception) {
             null
+        }
+    }
+
+    /**
+     * True when the user has granted Usage Access to this app.
+     *
+     * The authoritative check is the AppOps state for OPSTR_GET_USAGE_STATS
+     * — the OS grants it exclusively through the Usage Access settings
+     * screen, and no manifest declaration can force it.
+     */
+    fun hasUsageAccess(context: Context): Boolean {
+        val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
+        val uid = context.applicationInfo.uid
+        val packageName = context.packageName
+        val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            appOps.unsafeCheckOpNoThrow(
+                AppOpsManager.OPSTR_GET_USAGE_STATS,
+                uid,
+                packageName,
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            appOps.checkOpNoThrow(
+                AppOpsManager.OPSTR_GET_USAGE_STATS,
+                uid,
+                packageName,
+            )
+        }
+        return mode == AppOpsManager.MODE_ALLOWED
+    }
+
+    /**
+     * Opens the system Usage Access settings screen (the ONLY place the
+     * user can grant this special capability). Returns true when the
+     * intent resolved and was started, false otherwise.
+     */
+    fun openUsageAccessSettings(context: Context): Boolean {
+        return try {
+            val intent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(intent)
+            true
+        } catch (e: Exception) {
+            false
         }
     }
 }

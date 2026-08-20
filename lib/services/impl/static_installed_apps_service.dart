@@ -15,10 +15,19 @@ class StaticInstalledAppsService implements InstalledAppsService {
   StaticInstalledAppsService(
     this._apps, {
     Map<String, Uint8List> iconBytesFor = const <String, Uint8List>{},
+    this.usageAccessGranted = true,
   }) : _icons = Map<String, Uint8List>.from(iconBytesFor);
 
   final List<AppEntry> _apps;
   final Map<String, Uint8List> _icons;
+
+  /// Current usage-access grant state. Mutable so tests can simulate the
+  /// system settings screen granting the capability between checks.
+  bool usageAccessGranted;
+
+  /// Tracks how often the settings screen was requested (tests assert
+  /// the "send user to settings" step actually fired).
+  int requestUsageAccessCalls = 0;
 
   /// Tracks calls so tests can assert caching behavior of consumers.
   int getInstalledAppsCalls = 0;
@@ -45,8 +54,12 @@ class StaticInstalledAppsService implements InstalledAppsService {
   }
 
   @override
-  Future<Result<bool>> hasUsageAccess() async => Result.success(true);
+  Future<Result<bool>> hasUsageAccess() async =>
+      Result.success(usageAccessGranted);
 
   @override
-  Future<Result<void>> requestUsageAccess() async => Result.success(null);
+  Future<Result<void>> requestUsageAccess() async {
+    requestUsageAccessCalls++;
+    return Result.success(null);
+  }
 }

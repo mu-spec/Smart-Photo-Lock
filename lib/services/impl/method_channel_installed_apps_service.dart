@@ -83,24 +83,41 @@ class MethodChannelInstalledAppsService implements InstalledAppsService {
 
   @override
   Future<Result<List<AppEntry>>> getRecentlyUsedApps({int limit = 10}) async {
-    // Usage-stats backend arrives in a later phase; fail closed.
+    // Usage-stats enumeration arrives in the watcher phase; the
+    // capability itself is exposed via hasUsageAccess/requestUsageAccess.
     return Result.failure(
-      StateError('Usage access is not implemented yet.'),
+      StateError('Usage enumeration is not implemented yet.'),
     );
   }
 
   @override
   Future<Result<bool>> hasUsageAccess() async {
-    return Result.failure(
-      StateError('Usage access is not implemented yet.'),
-    );
+    try {
+      final bool? granted = await _channel.invokeMethod<bool>('hasUsageAccess');
+      return Result.success(granted ?? false);
+    } on PlatformException catch (e) {
+      return Result.failure(e);
+    } on MissingPluginException catch (e) {
+      return Result.failure(e);
+    }
   }
 
   @override
   Future<Result<void>> requestUsageAccess() async {
-    return Result.failure(
-      StateError('Usage access is not implemented yet.'),
-    );
+    try {
+      final bool? opened =
+          await _channel.invokeMethod<bool>('requestUsageAccess');
+      if (opened == true) {
+        return Result.success(null);
+      }
+      return Result.failure(
+        StateError('Could not open the usage access settings screen.'),
+      );
+    } on PlatformException catch (e) {
+      return Result.failure(e);
+    } on MissingPluginException catch (e) {
+      return Result.failure(e);
+    }
   }
 
   /// The channel name, exported for tests.

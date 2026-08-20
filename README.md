@@ -46,6 +46,7 @@ locking is not implemented yet.
 | 3G | Bulk selection (multi-select Protect/Unprotect) | ✅ |
 | 3H | Apps management QA (large-list responsiveness) | ✅ |
 | 4A | Capability requirements (exact Android capabilities for locking) | ✅ |
+| 4B | Usage Access setup (detect → explain → settings → recheck) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -559,7 +560,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.1.0 / 9.3.1 / 2.4.0 |
 | Java | 17 |
-| versionName / versionCode | `0.28.0` / `34` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.29.0` / `35` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM), `local_auth` (biometrics) |
 
 ## Prerequisites (on your machine)
@@ -755,6 +756,23 @@ phase**:
   phase only), boot receiver, battery-optimization exemption.
 - A manifest-change table maps each future capability to the phase that
   will land it.
+
+### Phase 4B ✅ — Usage Access Setup
+
+The first capability flow, end to end:
+
+- **Detect status** — the native channel now probes the AppOps state for
+  `OPSTR_GET_USAGE_STATS` (the authoritative check; no manifest
+  declaration exists or is needed).
+- **Explain purpose** — `UsageAccessScreen` explains why detection is
+  required before asking anything of the user.
+- **Send to the right settings** — "Open Settings" fires
+  `ACTION_USAGE_ACCESS_SETTINGS` via the channel (the only legal grant
+  location).
+- **Detect successful return** — the screen re-checks on app resume and
+  after the intent, flipping to the granted state automatically.
+- The Security tab gains an **App lock permissions** section with a live
+  Usage access row (Granted / Needed) that opens the flow.
 
 ## Next phases
 

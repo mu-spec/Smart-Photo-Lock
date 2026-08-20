@@ -618,6 +618,26 @@ The authoritative document is `docs/capabilities.md`. Summary:
 - A manifest-change table maps each capability to its landing phase; a
   denial matrix defines behavior when the user refuses any grant.
 
+## 4B. Usage Access setup
+
+The first implemented capability flow:
+
+```
+UsageAccessScreen
+  ├─ hasUsageAccess() → AppOps OPSTR_GET_USAGE_STATS probe (native)
+  ├─ not granted → explanation + "Open Settings"
+  │     └─ requestUsageAccess() → ACTION_USAGE_ACCESS_SETTINGS intent
+  ├─ WidgetsBindingObserver.resumed → re-check (successful return)
+  └─ granted view / unavailable view with Retry
+```
+
+- The Security tab hosts an **App lock permissions** section whose Usage
+  access row shows Granted/Needed and opens the flow.
+- `AppContainer.installedAppsService` is the single shared service — the
+  UI and (later) the lock engine read the same instance.
+- No manifest changes: the grant lives entirely in AppOps, surfaced
+  only through the system settings screen.
+
 ---
 
 ## 1. The eight modules

@@ -52,7 +52,8 @@ class AppContainer {
     BiometricService? biometricsOverride,
   })  : _keyValueStore = keyValueStore,
         _database = database,
-        secretStore = secretStore {
+        secretStore = secretStore,
+        installedAppsService = installedAppsService {
     settingsCipher = AesGcmSettingsCipher(secretStore);
     preferences = PreferencesStoreImpl(_keyValueStore);
     protectedApps = ProtectedAppsRepositoryImpl(_database);
@@ -99,11 +100,13 @@ class AppContainer {
   /// Volatile container for tests and previews (no platform plugins).
   /// [biometrics] overrides the real platform service (test fakes);
   /// [apps] seeds the static installed-apps service; [appIcons] provides
-  /// PNG bytes for specific packages.
+  /// PNG bytes for specific packages; [usageAccessGranted] controls the
+  /// capability state the static service reports.
   static AppContainer inMemory({
     BiometricService? biometrics,
     List<AppEntry> apps = const <AppEntry>[],
     Map<String, Uint8List> appIcons = const <String, Uint8List>{},
+    bool usageAccessGranted = true,
   }) =>
       AppContainer._(
         keyValueStore: InMemoryKeyValueStore(),
@@ -112,6 +115,7 @@ class AppContainer {
         installedAppsService: StaticInstalledAppsService(
           apps,
           iconBytesFor: appIcons,
+          usageAccessGranted: usageAccessGranted,
         ),
         biometricsOverride: biometrics,
       );
@@ -149,4 +153,9 @@ class AppContainer {
   /// platform package-manager bridge, filtered to apps appropriate for
   /// App Lock selection.
   late final InstalledAppsRepository installedApps;
+
+  /// The shared platform service behind [installedApps] (Phase 4B: the
+  /// UI reads usage-access capability state from here — one instance,
+  /// never recreated per screen).
+  final InstalledAppsService installedAppsService;
 }

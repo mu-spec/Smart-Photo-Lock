@@ -95,11 +95,53 @@ void main() {
       expect(result.errorOrNull, isA<PlatformException>());
     });
 
-    test('usage-access methods fail closed until that phase lands', () async {
+    test('hasUsageAccess decodes the native grant state', () async {
+      messenger.setMockMethodCallHandler(channel, (MethodCall call) async {
+        expect(call.method, 'hasUsageAccess');
+        return true;
+      });
       final InstalledAppsService service = MethodChannelInstalledAppsService();
-      expect((await service.getRecentlyUsedApps()).isFailure, isTrue);
+      final result = await service.hasUsageAccess();
+      expect(result.isSuccess, isTrue);
+      expect(result.valueOrNull, isTrue);
+    });
+
+    test('hasUsageAccess treats a null native result as denied', () async {
+      messenger.setMockMethodCallHandler(channel, (MethodCall call) async => null);
+      final InstalledAppsService service = MethodChannelInstalledAppsService();
+      final result = await service.hasUsageAccess();
+      expect(result.isSuccess, isTrue);
+      expect(result.valueOrNull, isFalse);
+    });
+
+    test('requestUsageAccess reports the native intent result', () async {
+      messenger.setMockMethodCallHandler(channel, (MethodCall call) async {
+        expect(call.method, 'requestUsageAccess');
+        return true;
+      });
+      final InstalledAppsService service = MethodChannelInstalledAppsService();
+      expect((await service.requestUsageAccess()).isSuccess, isTrue);
+
+      messenger.setMockMethodCallHandler(channel, (MethodCall call) async => false);
+      final result = await service.requestUsageAccess();
+      expect(result.isFailure, isTrue);
+      expect(result.errorOrNull.toString(),
+          contains('Could not open the usage access settings'));
+    });
+
+    test('usage-access platform errors fail closed', () async {
+      messenger.setMockMethodCallHandler(channel, (MethodCall call) async {
+        throw PlatformException(code: 'usage_access_error', message: 'boom');
+      });
+      final InstalledAppsService service = MethodChannelInstalledAppsService();
       expect((await service.hasUsageAccess()).isFailure, isTrue);
       expect((await service.requestUsageAccess()).isFailure, isTrue);
+    });
+
+    test('usage enumeration still fails closed until the watcher phase',
+        () async {
+      final InstalledAppsService service = MethodChannelInstalledAppsService();
+      expect((await service.getRecentlyUsedApps()).isFailure, isTrue);
     });
 
     test('getAppIcon decodes the native base64 payload', () async {

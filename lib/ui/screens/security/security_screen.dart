@@ -52,6 +52,9 @@ class _SecurityScreenState extends State<SecurityScreen> {
   bool _hasPattern = false;
   bool _biometricEnrolled = false;
 
+  /// Phase 4B: usage-access capability state (false until loaded).
+  bool _usageAccessGranted = false;
+
   @override
   void initState() {
     super.initState();
@@ -67,12 +70,24 @@ class _SecurityScreenState extends State<SecurityScreen> {
     if (!mounted || state == null) {
       return;
     }
+    // Phase 4B: usage-access capability state, read from the SAME shared
+    // service the lock engine will use.
+    bool usageAccessGranted = false;
+    final service = AppScope.read(context)?.installedAppsService;
+    if (service != null) {
+      final result = await service.hasUsageAccess();
+      usageAccessGranted = result.isSuccess && result.valueOrNull == true;
+    }
+    if (!mounted) {
+      return;
+    }
     setState(() {
       _randomized = state.randomizedKeypadEnabled;
       _patternVisible = state.patternVisibilityEnabled;
       _hasPin = state.hasEnrolled(AuthType.pin);
       _hasPattern = state.hasEnrolled(AuthType.pattern);
       _biometricEnrolled = state.hasEnrolled(AuthType.biometric);
+      _usageAccessGranted = usageAccessGranted;
     });
   }
 
@@ -102,6 +117,19 @@ class _SecurityScreenState extends State<SecurityScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text(SecurityScreen.pinChangedMessage)),
     );
+  }
+
+  /// Phase 4B: opens the usage-access setup flow (detect → explain →
+  /// settings → recheck), then refreshes the capability state.
+  Future<void> _onUsageAccessTap() async {
+    final container = AppScope.read(context);
+    if (container == null) {
+      return;
+    }
+    await Navigator.of(context).pushNamed(RouteNames.usageAccess);
+    if (mounted) {
+      await _loadStatus();
+    }
   }
 
   Future<void> _onPatternTap() async {
@@ -313,6 +341,26 @@ class _SecurityScreenState extends State<SecurityScreen> {
                       : SecurityLevel.notSet,
                   statusLabel: _biometricEnrolled ? 'Enabled' : null,
                   onTap: _onBiometricTap,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: DsSpacing.xl),
+          const DsSectionTitle('App lock permissions'),
+          const SizedBox(height: DsSpacing.md),
+          DsCard(
+            padding: const EdgeInsets.symmetric(vertical: DsSpacing.xs),
+            child: Column(
+              children: <Widget>[
+                SecurityStatusItem(
+                  icon: Icons.insights,
+                  title: 'Usage access',
+                  subtitle: 'Detect which app you open so it can be locked',
+                  level: _usageAccessGranted
+                      ? SecurityLevel.secured
+                      : SecurityLevel.atRisk,
+                  statusLabel: _usageAccessGranted ? 'Granted' : 'Needed',
+                  onTap: _onUsageAccessTap,
                 ),
               ],
             ),
