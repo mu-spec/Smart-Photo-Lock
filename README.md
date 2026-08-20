@@ -41,6 +41,7 @@ passes, and installed-apps discovery. App locking is not implemented yet.
 | 3D | App filtering (All / Protected / Unprotected) | ✅ |
 | 3E | Protection toggle (mark apps Protected/Unprotected, no locking) | ✅ |
 | 3F | Protected apps persistence (restart / process / device survival) | ✅ |
+| 3G | Bulk selection (multi-select Protect/Unprotect) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -467,9 +468,13 @@ lib/
     └── time_utils.dart       # minutes-of-day, overnight windows, formatting
 ```
 
-**Tests** (run with `flutter test`): protected-apps persistence suites
-(recreation across repository instances: writes, removals, ordering,
-upserts; AppsScreen resume re-sync with and without store changes),
+**Tests** (run with `flutter test`): bulk selection suites (selection mode
+entry, row-tap toggles + count, filter-aware select-all, bulk protect
+incl. skip-already-protected + persistence, bulk unprotect, disabled
+actions when empty, cancel without changes), protected-apps persistence
+suites (recreation across repository instances: writes, removals,
+ordering, upserts; AppsScreen resume re-sync with and without store
+changes),
 protection toggle suites (switches
 render off by default, toggle-on persists via repository + snackbar,
 toggle-off, rebuild survival, protected-filter row removal + filter-empty
@@ -548,7 +553,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.1.0 / 9.3.1 / 2.4.0 |
 | Java | 17 |
-| versionName / versionCode | `0.25.0` / `31` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.26.0` / `32` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM), `local_auth` (biometrics) |
 
 ## Prerequisites (on your machine)
@@ -693,6 +698,21 @@ recreation**, and **device restart**:
   instances over the same store = process recreation) and prove
   selections, removals, ordering, and upserts survive — plus resume
   re-sync widget tests.
+
+### Phase 3G ✅ — Bulk Selection
+
+Sensible multi-select operations on the Apps tab:
+
+- **Select** (header) enters selection mode: checkboxes replace the
+  per-row switches and a bottom bar appears with the selected count,
+  **Select all**, **Protect** and **Unprotect**.
+- **Select all** honors the active filter/search — only currently visible
+  rows are selected.
+- **Bulk Protect/Unprotect** apply through the repository (skip rows
+  already in the target state); the mode exits on success with a
+  "N apps protected ✓" / "N apps unprotected" snackbar.
+- Partial repository failures keep the failed rows selected with a
+  "Could not update N apps." snackbar; **Cancel** exits without changes.
 
 ## Next phases
 

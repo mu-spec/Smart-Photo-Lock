@@ -573,6 +573,19 @@ AppsScreen switch → ProtectedAppsRepository → SQLite protected_apps
   selections, removals, ordering and upserts survive, plus resume
   re-sync behavior.
 
+## 3G. Bulk selection
+
+Selection mode on the Apps tab:
+
+```
+Select (header) → checkbox rows + bottom bar
+  · Select all — honors the active filter/search (visible rows only)
+  · Protect / Unprotect — bulk ops through ProtectedAppsRepository,
+    skipping rows already in the target state
+  · partial failures keep the failed rows selected
+  · Cancel exits without changes
+```
+
 ---
 
 ## 1. The eight modules

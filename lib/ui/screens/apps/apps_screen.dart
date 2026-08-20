@@ -72,6 +72,11 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
   String _query = '';
   AppsFilter _filter = AppsFilter.all;
 
+  // Phase 3G — bulk selection state.
+  bool _selectionMode = false;
+  Set<String> _selected = <String>{};
+  bool _bulkBusy = false;
+
   @override
   void initState() {
     super.initState();
@@ -133,6 +138,155 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
       _query = '';
       _filter = AppsFilter.all;
     });
+  }
+
+  // -- Phase 3G: bulk selection --------------------------------------------
+
+  void _enterSelectionMode() {
+    setState(() {
+      _selectionMode = true;
+      _selected = <String>{};
+    });
+  }
+
+  void _exitSelectionMode() {
+    setState(() {
+      _selectionMode = false;
+      _selected = <String>{};
+    });
+  }
+
+  void _toggleSelected(String packageName) {
+    setState(() {
+      _selected.contains(packageName)
+          ? _selected.remove(packageName)
+          : _selected.add(packageName);
+    });
+  }
+
+  /// Selects every currently visible row (honors the active filter and
+  /// search query).
+  void _selectAllVisible() {
+    setState(() {
+      _selected = _visibleApps
+          .map((AppEntry app) => app.packageName)
+          .toSet();
+    });
+  }
+
+  /// Marks every selected app protected (skips apps already protected).
+  Future<void> _bulkProtect() async {
+    final container = AppScope.read(context);
+    if (container == null || _selected.isEmpty || _bulkBusy) {
+      return;
+    }
+    setState(() => _bulkBusy = true);
+
+    int changed = 0;
+    final Set<String> failed = <String>{};
+    for (final String packageName in _selected) {
+      if (_protected.contains(packageName)) {
+        continue; // already protected — sensible no-op
+      }
+      AppEntry? app;
+      for (final AppEntry candidate in _apps) {
+        if (candidate.packageName == packageName) {
+          app = candidate;
+          break;
+        }
+      }
+      if (app == null) {
+        failed.add(packageName);
+        continue;
+      }
+      final result = await container.protectedApps.add(
+        ProtectedApp(
+          packageName: app.packageName,
+          label: app.label,
+          addedAt: DateTime.now(),
+        ),
+      );
+      if (result.isSuccess) {
+        changed++;
+      } else {
+        failed.add(packageName);
+      }
+    }
+
+    if (!mounted) {
+      return;
+    }
+    if (failed.isNotEmpty) {
+      setState(() {
+        _bulkBusy = false;
+        _selected = failed; // keep only the failed ones selected
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(AppsScreen.bulkPartialFailure(failed.length))),
+      );
+      return;
+    }
+
+    // Refresh the protection set and leave selection mode.
+    setState(() {
+      _protected = <String>{
+        ..._protected,
+        ..._selected,
+      };
+      _bulkBusy = false;
+      _selectionMode = false;
+      _selected = <String>{};
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(AppsScreen.bulkProtected(changed))),
+    );
+  }
+
+  /// Marks every selected app unprotected (skips apps already unlocked).
+  Future<void> _bulkUnprotect() async {
+    final container = AppScope.read(context);
+    if (container == null || _selected.isEmpty || _bulkBusy) {
+      return;
+    }
+    setState(() => _bulkBusy = true);
+
+    int changed = 0;
+    final Set<String> failed = <String>{};
+    for (final String packageName in _selected) {
+      if (!_protected.contains(packageName)) {
+        continue; // already unprotected — sensible no-op
+      }
+      final result = await container.protectedApps.remove(packageName);
+      if (result.isSuccess) {
+        changed++;
+      } else {
+        failed.add(packageName);
+      }
+    }
+
+    if (!mounted) {
+      return;
+    }
+    if (failed.isNotEmpty) {
+      setState(() {
+        _bulkBusy = false;
+        _selected = failed;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(AppsScreen.bulkPartialFailure(failed.length))),
+      );
+      return;
+    }
+
+    setState(() {
+      _protected = _protected.difference(_selected);
+      _bulkBusy = false;
+      _selectionMode = false;
+      _selected = <String>{};
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(AppsScreen.bulkUnprotected(changed))),
+    );
   }
 
   /// Phase 3E: marks one application Protected or Unprotected through the
@@ -283,8 +437,21 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
                     style: Theme.of(context).textTheme.headlineSmall,
                   ),
                 ),
-                if (_state == _LoadState.ready)
+                if (_state == _LoadState.ready) ...<Widget>[
+                  TextButton(
+                    key: const Key('apps_select_button'),
+                    onPressed: _selectionMode
+                        ? _exitSelectionMode
+                        : _enterSelectionMode,
+                    child: Text(
+                      _selectionMode
+                          ? AppsScreen.cancelLabel
+                          : AppsScreen.selectLabel,
+                    ),
+                  ),
+                  const SizedBox(width: DsSpacing.xs),
                   DsStatusPill(label: countLabel, showDot: false),
+                ],
               ],
             ),
           ),
@@ -346,7 +513,74 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
               ),
             ),
           Expanded(child: _buildBody()),
+          if (_selectionMode && _state == _LoadState.ready)
+            _buildBulkBar(),
         ],
+      ),
+    );
+  }
+
+  /// Bottom action bar shown only in selection mode (Phase 3G).
+  Widget _buildBulkBar() {
+    final DsPalette palette = context.dsColors;
+    final bool nothingSelected = _selected.isEmpty;
+    return Container(
+      decoration: BoxDecoration(
+        color: palette.surface,
+        border: Border(
+          top: BorderSide(color: palette.border.withValues(alpha: 0.6)),
+        ),
+      ),
+      padding: const EdgeInsets.fromLTRB(
+        DsSpacing.lg,
+        DsSpacing.sm,
+        DsSpacing.lg,
+        DsSpacing.sm,
+      ),
+      child: SafeArea(
+        top: false,
+        child: Row(
+          children: <Widget>[
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Text(
+                    AppsScreen.selectedCount(_selected.length),
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                  TextButton(
+                    key: const Key('apps_select_all'),
+                    style: TextButton.styleFrom(
+                      padding: EdgeInsets.zero,
+                      minimumSize: const Size(0, 32),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    onPressed: _bulkBusy ? null : _selectAllVisible,
+                    child: const Text(AppsScreen.selectAllLabel),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: DsSpacing.md),
+            DsButton(
+              key: const Key('apps_bulk_unprotect'),
+              label: AppsScreen.unprotectBulkLabel,
+              variant: DsButtonVariant.outline,
+              size: DsButtonSize.small,
+              onPressed:
+                  (nothingSelected || _bulkBusy) ? null : _bulkUnprotect,
+            ),
+            const SizedBox(width: DsSpacing.sm),
+            DsButton(
+              key: const Key('apps_bulk_protect'),
+              label: AppsScreen.protectBulkLabel,
+              size: DsButtonSize.small,
+              onPressed: (nothingSelected || _bulkBusy) ? null : _bulkProtect,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -387,6 +621,37 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
           itemBuilder: (BuildContext context, int index) {
             final AppEntry app = visible[index];
             final bool isProtected = _protected.contains(app.packageName);
+
+            // Selection mode: checkbox row (the protection switch is
+            // hidden — bulk actions decide the new state).
+            if (_selectionMode) {
+              return ListTile(
+                key: Key('app_row_${app.packageName}'),
+                leading: Checkbox(
+                  key: Key('app_check_${app.packageName}'),
+                  value: _selected.contains(app.packageName),
+                  activeColor: context.dsColors.primary,
+                  onChanged: (_) => _toggleSelected(app.packageName),
+                ),
+                title: Text(
+                  app.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                subtitle: Text(
+                  isProtected
+                      ? AppsScreen.protectedLabel
+                      : AppsScreen.unlockedLabel,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: isProtected
+                            ? context.dsColors.success
+                            : context.dsColors.textSecondary,
+                      ),
+                ),
+                onTap: () => _toggleSelected(app.packageName),
+              );
+            }
+
             return ListTile(
               leading: repository == null
                   ? null
