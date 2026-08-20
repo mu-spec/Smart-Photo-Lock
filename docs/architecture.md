@@ -541,6 +541,19 @@ Unprotected** filter (new reusable `DsSegmented` design-system control):
 - Row pills renamed to **Locked / Unlocked** so the segment labels stay
   unambiguous.
 
+## 3E. Protection toggle
+
+Each row carries a trailing **switch** — the explicit Protected /
+Unprotected control (Phase 3E); the status word moved under the name:
+
+- Toggle → `ProtectedAppsRepository.add/remove(packageName)`; state is
+  persisted (survives rebuilds/restarts). **No locking yet.**
+- Optimistic update with revert + snackbar on repository failure;
+  success snackbars ("X protected ✓" / "X unprotected").
+- Integrates with the filters: turning a row off inside the Protected
+  filter removes it from the list and surfaces the filter-empty state
+  when the group empties.
+
 ---
 
 ## 1. The eight modules

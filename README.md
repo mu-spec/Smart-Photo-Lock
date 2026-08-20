@@ -39,6 +39,7 @@ passes, and installed-apps discovery. App locking is not implemented yet.
 | 3B | Apps list UI (icon + name + protection status) | ✅ |
 | 3C | Apps search (filter by application name) | ✅ |
 | 3D | App filtering (All / Protected / Unprotected) | ✅ |
+| 3E | Protection toggle (mark apps Protected/Unprotected, no locking) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -465,7 +466,10 @@ lib/
     └── time_utils.dart       # minutes-of-day, overnight windows, formatting
 ```
 
-**Tests** (run with `flutter test`): apps filter suites (segments render,
+**Tests** (run with `flutter test`): protection toggle suites (switches
+render off by default, toggle-on persists via repository + snackbar,
+toggle-off, rebuild survival, protected-filter row removal + filter-empty
+state, filtered count pill), apps filter suites (segments render,
 default All, Protected/Unprotected grouping, filter+search combination,
 filtered/total pill, filter-empty states with Show all), apps search
 suites (presence, filtering, case-insensitivity, substring matching,
@@ -540,7 +544,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.1.0 / 9.3.1 / 2.4.0 |
 | Java | 17 |
-| versionName / versionCode | `0.23.0` / `29` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.24.0` / `30` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM), `local_auth` (biometrics) |
 
 ## Prerequisites (on your machine)
@@ -650,6 +654,24 @@ The Apps tab gained a **All / Protected / Unprotected** segmented filter
   each with a **Show all** action that resets query + filter.
 - Row status pills were renamed **Locked / Unlocked** so the filter
   segment labels stay unambiguous.
+
+### Phase 3E ✅ — Protection Toggle
+
+Every app row now carries a **Protected/Unprotected switch** (on =
+protected), with the status as subtitle text:
+
+- Toggling persists immediately through `ProtectedAppsRepository`
+  (add/remove by package name) — the app's protection state survives
+  screen rebuilds and app restarts.
+- Optimistic UI: the switch flips instantly; a repository failure
+  reverts it with a "Could not update protection." snackbar.
+- Success feedback: "WhatsApp protected ✓" / "WhatsApp unprotected"
+  snackbars.
+- Works with the filters: toggling a row off inside the Protected
+  filter removes it from the list (and shows the filter-empty state
+  when nothing is left).
+- **No locking yet** — this only persists the selection the enforcement
+  phases will act on.
 
 ## Next phases
 

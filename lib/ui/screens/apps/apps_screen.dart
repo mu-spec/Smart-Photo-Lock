@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../app/app_scope.dart';
 import '../../../data/models/app_entry.dart';
+import '../../../data/models/protected_app.dart';
 import '../../../design_system/design_system.dart';
 import '../../widgets/app_icon.dart';
 
@@ -51,6 +52,9 @@ class AppsScreen extends StatefulWidget {
   static const String allProtectedMessage =
       'Nothing is left unlocked.';
   static const String showAllLabel = 'Show all';
+  static const String protectedSnack = ' protected ✓';
+  static const String unprotectedSnack = ' unprotected';
+  static const String updateFailedMessage = 'Could not update protection.';
 
   @override
   State<AppsScreen> createState() => _AppsScreenState();
@@ -99,6 +103,57 @@ class _AppsScreenState extends State<AppsScreen> {
       _query = '';
       _filter = AppsFilter.all;
     });
+  }
+
+  /// Phase 3E: marks one application Protected or Unprotected through the
+  /// protected-apps repository (persisted; no locking yet).
+  ///
+  /// Optimistic: the list updates immediately and reverts with a snackbar
+  /// when the repository rejects the change.
+  Future<void> _toggleProtection(AppEntry app) async {
+    final container = AppScope.read(context);
+    if (container == null) {
+      return;
+    }
+    final bool wasProtected = _protected.contains(app.packageName);
+    setState(() {
+      wasProtected
+          ? _protected.remove(app.packageName)
+          : _protected.add(app.packageName);
+    });
+
+    final result = wasProtected
+        ? await container.protectedApps.remove(app.packageName)
+        : await container.protectedApps.add(
+            ProtectedApp(
+              packageName: app.packageName,
+              label: app.label,
+              addedAt: DateTime.now(),
+            ),
+          );
+    if (!mounted) {
+      return;
+    }
+    if (result.isFailure) {
+      setState(() {
+        wasProtected
+            ? _protected.add(app.packageName)
+            : _protected.remove(app.packageName);
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text(AppsScreen.updateFailedMessage)),
+      );
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          wasProtected
+              ? '${app.label}${AppsScreen.unprotectedSnack}'
+              : '${app.label}${AppsScreen.protectedSnack}',
+        ),
+      ),
+    );
   }
 
   /// The catalog after the NAME filter only.
@@ -314,12 +369,26 @@ class _AppsScreenState extends State<AppsScreen> {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
-              trailing: isProtected
-                  ? const DsStatusPill(
-                      label: AppsScreen.protectedLabel,
-                      tone: DsTone.success,
-                    )
-                  : const DsStatusPill(label: AppsScreen.unlockedLabel),
+              // Status text sits under the name; the trailing switch is
+              // the explicit Protected/Unprotected toggle (Phase 3E).
+              subtitle: Text(
+                isProtected
+                    ? AppsScreen.protectedLabel
+                    : AppsScreen.unlockedLabel,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: isProtected
+                          ? context.dsColors.success
+                          : context.dsColors.textSecondary,
+                    ),
+              ),
+              trailing: Switch(
+                key: Key('app_toggle_${app.packageName}'),
+                value: isProtected,
+                activeThumbColor: context.dsColors.primary,
+                onChanged: container == null
+                    ? null
+                    : (_) => _toggleProtection(app),
+              ),
             );
           },
         );
