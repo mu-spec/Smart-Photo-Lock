@@ -5,13 +5,12 @@ Development follows the PRD phase plan; this repository is the production
 Android project.
 
 **Current status: Phase 1 complete (1A–1G), Phase 2 complete (2A–2L),
-Phase 3 complete (3A–3H)** — production scaffold, architecture,
-navigation, design system, persistence, secure storage, full
-authentication (PIN, pattern, biometric) with settings, regression
-passes, installed-apps discovery, the Apps list UI (icons, names,
-protection status, search, filters, toggles, bulk selection,
-persistence), and large-list performance QA. App locking is not
-implemented yet.
+Phase 3 complete (3A–3H), Phase 4 underway (4A done)** — production
+scaffold, architecture, navigation, design system, persistence, secure
+storage, full authentication with settings, installed-apps management
+(discovery, list, search, filters, toggles, bulk, persistence, perf QA),
+and the capability requirements definition for the lock engine. App
+locking is not implemented yet.
 
 ---
 
@@ -46,6 +45,7 @@ implemented yet.
 | 3F | Protected apps persistence (restart / process / device survival) | ✅ |
 | 3G | Bulk selection (multi-select Protect/Unprotect) | ✅ |
 | 3H | Apps management QA (large-list responsiveness) | ✅ |
+| 4A | Capability requirements (exact Android capabilities for locking) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -559,7 +559,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.1.0 / 9.3.1 / 2.4.0 |
 | Java | 17 |
-| versionName / versionCode | `0.27.0` / `33` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.28.0` / `34` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM), `local_auth` (biometrics) |
 
 ## Prerequisites (on your machine)
@@ -736,8 +736,29 @@ Large installed-app lists stay responsive:
   select-all across the whole catalog.
 - On-device QA checklist recorded in `docs/regression.md` (§Phase 3H).
 
+### Phase 4A ✅ — Capability Requirements
+
+`docs/capabilities.md` is the single source of truth for the lock
+engine's Android capabilities — **no manifest changes were made in this
+phase**:
+
+- **Required (user-granted):** Usage Access (foreground detection,
+  primary), Draw-over-other-apps / `SYSTEM_ALERT_WINDOW` (the challenge
+  window), and an Accessibility service (detection fallback) — each
+  with its denial matrix and the system-settings request flow.
+- **Required (normal):** `POST_NOTIFICATIONS` + `FOREGROUND_SERVICE[_SPECIAL_USE]`
+  for the background watcher, plus the existing `<queries>` visibility.
+- **Explicitly rejected:** device admin (deferred — optional hardening,
+  needs a PRD decision), `QUERY_ALL_PACKAGES`, `PACKAGE_USAGE_STATS` in
+  the manifest (the OS ignores it — AppOps grants it via the settings
+  screen), full-screen intents, storage, camera (later intruder-selfie
+  phase only), boot receiver, battery-optimization exemption.
+- A manifest-change table maps each future capability to the phase that
+  will land it.
+
 ## Next phases
 
-Phase 4 begins the enforcement work: the lock engine (overlay /
-accessibility), smart automations (Smart tab), and hardening. Each
-phase's module ownership is mapped in `docs/architecture.md`.
+Phase 4 continues: the permission/capability setup wizard and the lock
+engine (overlay challenge, usage-access + accessibility detection,
+watcher service). Each capability is pre-defined in
+`docs/capabilities.md`.

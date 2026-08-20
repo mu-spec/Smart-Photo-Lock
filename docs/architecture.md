@@ -599,6 +599,25 @@ Large-list responsiveness:
   correctness, search/filter precision at scale, and select-all scale.
 - On-device QA checklist: `docs/regression.md` (§Phase 3H).
 
+## 4A. Capability requirements
+
+**Architecture definition only — no implementation, no manifest changes.**
+The authoritative document is `docs/capabilities.md`. Summary:
+
+- **User-granted:** Usage Access (detection, primary) · overlay
+  (`SYSTEM_ALERT_WINDOW`, the challenge window) · Accessibility service
+  (detection fallback).
+- **Normal/install-time:** `POST_NOTIFICATIONS` + `FOREGROUND_SERVICE`
+  (with `_SPECIAL_USE` + property) for the watcher; `<queries>` already
+  shipped in 3A.
+- **Rejected (with reasons):** device admin deferred as optional
+  hardening (needs a PRD decision), `QUERY_ALL_PACKAGES`,
+  `PACKAGE_USAGE_STATS` manifest noise (AppOps-only), full-screen
+  intents, storage, boot receiver, camera (intruder-selfie phase only),
+  battery exemption.
+- A manifest-change table maps each capability to its landing phase; a
+  denial matrix defines behavior when the user refuses any grant.
+
 ---
 
 ## 1. The eight modules
