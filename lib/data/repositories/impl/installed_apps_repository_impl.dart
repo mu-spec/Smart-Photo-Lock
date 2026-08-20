@@ -21,11 +21,12 @@ class InstalledAppsRepositoryImpl implements InstalledAppsRepository {
     this._service, {
     String ownPackage = 'com.smartapplock.app',
     List<String> excludedPackages = const <String>[],
-  })  : _ownPackage = ownPackage,
-        _excluded = Set<String>.from(excludedPackages)..add(ownPackage);
+  }) : _excluded = Set<String>.from(excludedPackages)..add(ownPackage);
 
   final InstalledAppsService _service;
-  final String _ownPackage;
+
+  /// Package names never shown (always includes this app's own package —
+  /// locking yourself would break the UI).
   final Set<String> _excluded;
 
   /// Cache per system-apps flag (a flag-specific list is a different

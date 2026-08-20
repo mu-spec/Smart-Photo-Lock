@@ -8,6 +8,7 @@ import 'package:smart_app_lock/data/models/app_entry.dart';
 import 'package:smart_app_lock/services/impl/method_channel_installed_apps_service.dart';
 import 'package:smart_app_lock/services/impl/static_installed_apps_service.dart';
 import 'package:smart_app_lock/services/installed_apps_service.dart';
+import 'package:smart_app_lock/utilities/result.dart';
 
 /// Phase 3A: the native bridge's wire format (Dart side) and the static
 /// test service.

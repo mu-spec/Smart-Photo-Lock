@@ -138,7 +138,7 @@ void main() {
 
   testWidgets('protected status counts flow into the filtered pill',
       (WidgetTester tester) async {
-    final AppContainer container = await pumpApps(tester);
+    await pumpApps(tester);
 
     await tester.tap(switchFor('com.whatsapp'));
     await tester.pumpAndSettle();

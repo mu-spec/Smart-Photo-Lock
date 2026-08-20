@@ -55,6 +55,18 @@ class AppsScreen extends StatefulWidget {
   static const String protectedSnack = ' protected ✓';
   static const String unprotectedSnack = ' unprotected';
   static const String updateFailedMessage = 'Could not update protection.';
+  static const String selectLabel = 'Select';
+  static const String cancelLabel = 'Cancel';
+  static const String selectAllLabel = 'Select all';
+  static const String protectBulkLabel = 'Protect';
+  static const String unprotectBulkLabel = 'Unprotect';
+  static String selectedCount(int n) => '$n selected';
+  static String bulkProtected(int n) =>
+      n == 1 ? '1 app protected ✓' : '$n apps protected ✓';
+  static String bulkUnprotected(int n) =>
+      n == 1 ? '1 app unprotected' : '$n apps unprotected';
+  static String bulkPartialFailure(int n) =>
+      'Could not update $n ${n == 1 ? 'app' : 'apps'}.';
 
   @override
   State<AppsScreen> createState() => _AppsScreenState();
