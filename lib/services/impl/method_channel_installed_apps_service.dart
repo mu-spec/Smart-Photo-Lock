@@ -1,8 +1,4 @@
 import 'dart:convert';
-// NOTE: `dart:typed_data` is REQUIRED here for Uint8List — flutter/services
-// re-exports only ByteData, so removing this import would break the icon
-// decoding types.
-import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
 

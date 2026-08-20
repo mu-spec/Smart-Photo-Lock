@@ -63,10 +63,17 @@ void main() {
     await tester.pumpAndSettle();
 
     // The tail of the catalog becomes reachable and rows stay consistent.
+    // (The list is the primary scrollable; scope explicitly to avoid the
+    // screen's other scrollable surface.)
     await tester.scrollUntilVisible(
       find.text('Example App 0999'),
       500,
-      scrollable: find.byType(Scrollable),
+      scrollable: find
+          .descendant(
+            of: find.byType(ListView),
+            matching: find.byType(Scrollable),
+          )
+          .first,
     );
     expect(find.text('Example App 0999'), findsOneWidget);
     expect(tester.takeException(), isNull);

@@ -737,11 +737,23 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
   }
 
   /// Distinguishes why the visible list is empty: the name query matched
-  /// nothing, or the group filter has no members.
+  /// nothing, the query matches something but the group filter has no
+  /// members, or the group filter is empty globally.
   Widget _buildFilterEmptyState() {
     if (_query.isNotEmpty && _nameFiltered.isEmpty) {
       return _MessageCard(
         icon: Icons.search_off,
+        title: AppsScreen.noMatchTitle,
+        message: AppsScreen.noMatchMessage,
+        actionLabel: AppsScreen.clearSearchLabel,
+        onAction: _clearSearch,
+      );
+    }
+    if (_query.isNotEmpty) {
+      // The query matches apps, but none of them are in the active group:
+      // clear the query to see them again.
+      return _MessageCard(
+        icon: Icons.filter_alt_off,
         title: AppsScreen.noMatchTitle,
         message: AppsScreen.noMatchMessage,
         actionLabel: AppsScreen.clearSearchLabel,
