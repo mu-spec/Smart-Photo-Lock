@@ -111,31 +111,31 @@ void main() {
 
     test('re-grants do not emit and the next revocation fires again',
         () async {
-      final Map<CapabilityKind, bool> state = <CapabilityKind, bool>{
-        CapabilityKind.overlay: true,
-      };
+      bool overlayGranted = true;
       final CapabilityMonitor m = CapabilityMonitor(
         hasUsageAccess: () async => Result.success(true),
         isAccessibilityEnabled: () async => Result.success(true),
-        canDrawOverlays: () async =>
-            Result.success(state[CapabilityKind.overlay]!),
+        canDrawOverlays: () async => Result.success(overlayGranted),
         now: fakeNow,
       );
       final List<CapabilityChange> changes = <CapabilityChange>[];
       m.changes.listen(changes.add);
 
       await m.probe(); // baseline granted
-      state[CapabilityKind.overlay] = false;
+      expect(m.previousGranted[CapabilityKind.overlay], isTrue);
+      overlayGranted = false;
       await m.probe();
       expect(changes, hasLength(1));
       expect(changes.single.kind, CapabilityKind.overlay);
+      expect(m.previousGranted[CapabilityKind.overlay], isFalse);
 
       // User re-grants: the next revocation is a NEW edge.
-      state[CapabilityKind.overlay] = true;
+      overlayGranted = true;
       await m.probe();
       expect(changes, hasLength(1)); // re-grant not surfaced
+      expect(m.previousGranted[CapabilityKind.overlay], isTrue); // re-armed
 
-      state[CapabilityKind.overlay] = false;
+      overlayGranted = false;
       await m.probe();
       expect(changes, hasLength(2));
       expect(changes.last.kind, CapabilityKind.overlay);
@@ -171,45 +171,48 @@ void main() {
 
     test('each capability re-arms independently after its own re-grant',
         () async {
-      final Map<CapabilityKind, bool> state = <CapabilityKind, bool>{
-        CapabilityKind.usageAccess: true,
-        CapabilityKind.overlay: true,
-      };
+      bool usageAccessGranted = true;
+      bool overlayGranted = true;
       final CapabilityMonitor m = CapabilityMonitor(
-        hasUsageAccess: () async =>
-            Result.success(state[CapabilityKind.usageAccess]!),
+        hasUsageAccess: () async => Result.success(usageAccessGranted),
         isAccessibilityEnabled: () async => Result.success(true),
-        canDrawOverlays: () async =>
-            Result.success(state[CapabilityKind.overlay]!),
+        canDrawOverlays: () async => Result.success(overlayGranted),
         now: fakeNow,
       );
       final List<CapabilityChange> changes = <CapabilityChange>[];
       m.changes.listen(changes.add);
 
       await m.probe(); // baseline granted
+      expect(m.previousGranted[CapabilityKind.usageAccess], isTrue);
+      expect(m.previousGranted[CapabilityKind.overlay], isTrue);
 
       // Revoke BOTH, then re-grant ONLY usage access. Overlay stays
       // revoked (no duplicate spam), usage re-arms.
-      state[CapabilityKind.usageAccess] = false;
-      state[CapabilityKind.overlay] = false;
+      usageAccessGranted = false;
+      overlayGranted = false;
       await m.probe();
       expect(changes, hasLength(2));
+      expect(m.previousGranted[CapabilityKind.usageAccess], isFalse);
+      expect(m.previousGranted[CapabilityKind.overlay], isFalse);
 
-      state[CapabilityKind.usageAccess] = true;
+      usageAccessGranted = true;
       await m.probe();
       expect(changes, hasLength(2)); // re-grant not surfaced
+      expect(m.previousGranted[CapabilityKind.usageAccess], isTrue);
+      expect(m.previousGranted[CapabilityKind.overlay], isFalse);
 
       // Usage revoked again: a NEW event for usage only.
-      state[CapabilityKind.usageAccess] = false;
+      usageAccessGranted = false;
       await m.probe();
       expect(changes, hasLength(3));
       expect(changes.last.kind, CapabilityKind.usageAccess);
 
       // Overlay re-granted: still no event, and it re-arms too.
-      state[CapabilityKind.overlay] = true;
+      overlayGranted = true;
       await m.probe();
       expect(changes, hasLength(3));
-      state[CapabilityKind.overlay] = false;
+      expect(m.previousGranted[CapabilityKind.overlay], isTrue);
+      overlayGranted = false;
       await m.probe();
       expect(changes, hasLength(4));
       expect(changes.last.kind, CapabilityKind.overlay);

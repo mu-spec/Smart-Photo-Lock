@@ -71,13 +71,12 @@ class CapabilityMonitor {
   Timer? _timer;
   bool _started = false;
 
-  /// Guards against overlapping probe passes (timer tick + resume probe):
-  /// the per-capability transition evaluation must be strictly serial or
-  /// two concurrent passes could both read the old baseline before
-  /// either stores the new one.
-  bool _probing = false;
-
   Stream<CapabilityChange> get changes => _controller.stream;
+
+  /// Diagnostic view of the per-capability baselines (used by tests to
+  /// assert the stored state directly after each transition).
+  Map<CapabilityKind, bool> get previousGranted =>
+      Map<CapabilityKind, bool>.unmodifiable(_previousGranted);
 
   /// Starts periodic monitoring: baseline probe + periodic timer.
   ///
@@ -107,37 +106,43 @@ class CapabilityMonitor {
 
   /// Probes all three capabilities and emits transitions. This is the
   /// SINGLE canonical transition evaluator — the periodic timer, the
-  /// resume hook and manual test refreshes all go through here. A pass
-  /// that starts while another is still running is skipped (the next
-  /// pass observes the then-current state).
+  /// resume hook and manual test refreshes all go through here.
+  ///
+  /// Each capability is evaluated independently: the service closure is
+  /// called fresh on EVERY pass (nothing is cached or snapshotted), and
+  /// the per-capability baseline is updated on every successful
+  /// evaluation — grants included — so a re-grant arms the next
+  /// revocation as a new edge.
   Future<void> probe() async {
-    if (_probing) {
-      return;
-    }
-    _probing = true;
-    try {
-      await _probeOne(
-        CapabilityKind.usageAccess,
-        hasUsageAccess,
-      );
-      await _probeOne(
-        CapabilityKind.accessibility,
-        isAccessibilityEnabled,
-      );
-      await _probeOne(
-        CapabilityKind.overlay,
-        canDrawOverlays,
-      );
-    } finally {
-      _probing = false;
-    }
+    await _evaluateCapability(
+      CapabilityKind.usageAccess,
+      hasUsageAccess,
+    );
+    await _evaluateCapability(
+      CapabilityKind.accessibility,
+      isAccessibilityEnabled,
+    );
+    await _evaluateCapability(
+      CapabilityKind.overlay,
+      canDrawOverlays,
+    );
   }
 
-  Future<void> _probeOne(
+  /// Reads the CURRENT grant state through [readCurrent] and advances
+  /// the per-capability state machine:
+  ///
+  ///  * first observation  → record the baseline, emit nothing;
+  ///  * granted → revoked  → emit ONE revocation event;
+  ///  * stayed the same    → record, emit nothing (staying revoked never
+  ///                          re-emits);
+  ///  * revoked → granted  → record the new granted baseline, emit
+  ///                          nothing (this is the RE-ARM: the next
+  ///                          revocation fires again as a new edge).
+  Future<void> _evaluateCapability(
     CapabilityKind kind,
-    Future<Result<bool>> Function() probe,
+    Future<Result<bool>> Function() readCurrent,
   ) async {
-    final Result<bool> result = await probe();
+    final Result<bool> result = await readCurrent();
     if (result.isFailure) {
       return; // fail-quiet: no fabricated transitions
     }
@@ -145,23 +150,16 @@ class CapabilityMonitor {
     final bool? previous = _previousGranted[kind];
 
     if (previous == null) {
-      // First observation: store the baseline, never fabricate an event
-      // for the startup state.
       _previousGranted[kind] = current;
       return;
     }
     if (previous && !current) {
-      // granted -> revoked EDGE: emit exactly one change. Storing
-      // `false` means staying revoked emits nothing.
       _controller.add(
         CapabilityChange(kind: kind, state: CapabilityState.revoked, at: _now()),
       );
       _previousGranted[kind] = false;
       return;
     }
-    // Stayed granted, stayed revoked, or RE-GRANTED: update the baseline
-    // and emit nothing. The re-grant case stores `true`, so a LATER
-    // revocation fires again as a NEW edge.
     _previousGranted[kind] = current;
   }
 
