@@ -168,6 +168,19 @@ class _SecurityScreenState extends State<SecurityScreen> {
     }
   }
 
+  /// Phase 4E: opens the centralized permission setup (Enabled / Action
+  /// Required overview), then refreshes capability state.
+  Future<void> _onPermissionSetupTap() async {
+    final container = AppScope.read(context);
+    if (container == null) {
+      return;
+    }
+    await Navigator.of(context).pushNamed(RouteNames.permissionSetup);
+    if (mounted) {
+      await _loadStatus();
+    }
+  }
+
   /// Phase 4D: opens the overlay setup flow (disclosure → system
   /// settings → recheck), then refreshes the capability state.
   Future<void> _onOverlayTap() async {
@@ -395,7 +408,11 @@ class _SecurityScreenState extends State<SecurityScreen> {
             ),
           ),
           const SizedBox(height: DsSpacing.xl),
-          const DsSectionTitle('App lock permissions'),
+          DsSectionTitle(
+            'App lock permissions',
+            actionLabel: 'Set up',
+            onAction: _onPermissionSetupTap,
+          ),
           const SizedBox(height: DsSpacing.md),
           DsCard(
             padding: const EdgeInsets.symmetric(vertical: DsSpacing.xs),

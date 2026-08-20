@@ -683,6 +683,24 @@ OverlaySetupScreen
 - Security tab row **Draw over apps** completes the App lock permissions
   section.
 
+## 4E. Permission setup screen
+
+The centralized hub (`RouteNames.permissionSetup`, "Set up" action on
+the Security tab's section title):
+
+```
+PermissionSetupScreen
+  ├─ probes all three capabilities through the shared services
+  ├─ rows: Usage access · Accessibility · Draw over apps
+  │        each with Enabled / Action Required (SecurityStatusItem)
+  ├─ summary pill: 'X of 3 ready'
+  ├─ row tap → dedicated flow (4B/4C/4D) → refresh on return
+  └─ WidgetsBindingObserver.resumed → refresh
+```
+
+Probe failures degrade to Action Required; the dedicated flows surface
+the details (unavailable/retry states).
+
 ---
 
 ## 1. The eight modules

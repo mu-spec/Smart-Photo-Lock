@@ -16,6 +16,7 @@ import 'package:smart_app_lock/ui/screens/pin/pin_change_screen.dart';
 import 'package:smart_app_lock/ui/screens/pin/pin_setup_screen.dart';
 import 'package:smart_app_lock/ui/screens/permissions/accessibility_setup_screen.dart';
 import 'package:smart_app_lock/ui/screens/permissions/overlay_setup_screen.dart';
+import 'package:smart_app_lock/ui/screens/permissions/permission_setup_screen.dart';
 import 'package:smart_app_lock/ui/screens/permissions/usage_access_screen.dart';
 import 'package:smart_app_lock/ui/screens/pin/pin_unlock_screen.dart';
 import 'package:smart_app_lock/ui/screens/security/security_screen.dart';
@@ -44,6 +45,8 @@ final Map<String, WidgetBuilder> kSecurityTabRoutes = <String, WidgetBuilder>{
       (BuildContext context) => const AccessibilitySetupScreen(),
   RouteNames.overlaySetup:
       (BuildContext context) => const OverlaySetupScreen(),
+  RouteNames.permissionSetup:
+      (BuildContext context) => const PermissionSetupScreen(),
 };
 
 void main() {
@@ -494,6 +497,27 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text(OverlaySetupScreen.disclosureTitle), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  // -------------------------------------------------------------------
+  // Centralized permission setup entry (Phase 4E)
+  // -------------------------------------------------------------------
+  testWidgets('the Set up action opens the centralized permission screen',
+      (WidgetTester tester) async {
+    final AppContainer container = AppContainer.inMemory();
+    await pumpWithScope(tester, container: container);
+
+    final Finder setUp = find.text('Set up');
+    await tester.ensureVisible(setUp);
+    await tester.pumpAndSettle();
+    await tester.tap(setUp);
+    await tester.pumpAndSettle();
+
+    expect(find.text(PermissionSetupScreen.headerTitle), findsOneWidget);
+    expect(find.text('Usage access'), findsOneWidget);
+    expect(find.text('Accessibility service'), findsOneWidget);
+    expect(find.text('Draw over apps'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

@@ -49,6 +49,7 @@ locking is not implemented yet.
 | 4B | Usage Access setup (detect → explain → settings → recheck) | ✅ |
 | 4C | Accessibility setup (detection-only fallback + prominent disclosure) | ✅ |
 | 4D | Overlay setup (draw-over-apps capability, required by the architecture) | ✅ |
+| 4E | Permission setup screen (centralized Enabled / Action Required) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -562,7 +563,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.1.0 / 9.3.1 / 2.4.0 |
 | Java | 17 |
-| versionName / versionCode | `0.31.0` / `37` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.32.0` / `38` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM), `local_auth` (biometrics) |
 
 ## Prerequisites (on your machine)
@@ -812,6 +813,21 @@ protected apps):
   closed until then.
 - Security tab row **Draw over apps** (Granted / Needed) completes the
   App lock permissions section.
+
+### Phase 4E ✅ — Permission Setup Screen
+
+A centralized setup hub (`/permissions`, "Set up" action on the Security
+tab's App lock permissions section):
+
+- One row per required capability — **Usage access**, **Accessibility
+  service**, **Draw over apps** — each showing **Enabled** or
+  **Action Required**, plus a live **"X of 3 ready"** summary pill.
+- Tapping a row opens that capability's dedicated flow (4B/4C/4D);
+  returning re-checks the capability. App resume also re-checks (the
+  user may have granted something in the system settings and come back
+  directly).
+- Missing-container/probe failures degrade to Action Required without
+  crashing.
 
 ## Next phases
 

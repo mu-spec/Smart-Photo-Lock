@@ -46,6 +46,10 @@ abstract final class RouteNames {
 
   /// Overlay setup (Phase 4D): detect → disclose → settings → recheck.
   static const String overlaySetup = '/permissions/overlay';
+
+  /// Centralized permission setup (Phase 4E): Enabled / Action Required
+  /// for every required capability.
+  static const String permissionSetup = '/permissions';
 }
 
 /// Typed route generator consumed by `MaterialApp.onGenerateRoute`.
@@ -109,6 +113,11 @@ abstract final class AppRouter {
         return MaterialPageRoute<bool>(
           settings: settings,
           builder: (BuildContext context) => const OverlaySetupScreen(),
+        );
+      case RouteNames.permissionSetup:
+        return MaterialPageRoute<bool>(
+          settings: settings,
+          builder: (BuildContext context) => const PermissionSetupScreen(),
         );
       default:
         return null;
