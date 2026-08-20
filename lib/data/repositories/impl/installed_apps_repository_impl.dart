@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import '../../../services/installed_apps_service.dart';
 import '../../../utilities/result.dart';
 import '../../models/app_entry.dart';
@@ -50,6 +52,10 @@ class InstalledAppsRepositoryImpl implements InstalledAppsRepository {
     _cache[includeSystemApps] = apps;
     return Result.success(apps);
   }
+
+  @override
+  Future<Result<Uint8List?>> getAppIcon(String packageName) =>
+      _service.getAppIcon(packageName);
 
   @override
   Future<Result<void>> refresh() async {

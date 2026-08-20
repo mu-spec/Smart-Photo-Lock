@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:flutter/services.dart';
 
 import '../../data/models/app_entry.dart';
@@ -26,6 +29,30 @@ class MethodChannelInstalledAppsService implements InstalledAppsService {
   static const String _channelName = 'smart_app_lock/apps';
 
   final MethodChannel _channel;
+
+  /// Decoded icon bytes per package so icons are fetched once per session.
+  final Map<String, Uint8List?> _iconCache = <String, Uint8List?>{};
+
+  @override
+  Future<Result<Uint8List?>> getAppIcon(String packageName) async {
+    if (_iconCache.containsKey(packageName)) {
+      return Result.success(_iconCache[packageName]);
+    }
+    try {
+      final String? base64 = await _channel
+          .invokeMethod<String>('getAppIcon', <String, dynamic>{
+        'packageName': packageName,
+      });
+      final Uint8List? bytes =
+          base64 == null ? null : base64Decode(base64);
+      _iconCache[packageName] = bytes;
+      return Result.success(bytes);
+    } on PlatformException catch (e) {
+      return Result.failure(e);
+    } on MissingPluginException catch (e) {
+      return Result.failure(e);
+    }
+  }
 
   @override
   Future<Result<List<AppEntry>>> getInstalledApps({

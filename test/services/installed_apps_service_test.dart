@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -98,6 +101,54 @@ void main() {
       expect((await service.hasUsageAccess()).isFailure, isTrue);
       expect((await service.requestUsageAccess()).isFailure, isTrue);
     });
+
+    test('getAppIcon decodes the native base64 payload', () async {
+      final Uint8List png = Uint8List.fromList(<int>[137, 80, 78, 71]);
+      messenger.setMockMethodCallHandler(channel, (MethodCall call) async {
+        expect(call.method, 'getAppIcon');
+        expect(
+          (call.arguments as Map<dynamic, dynamic>)['packageName'],
+          'com.whatsapp',
+        );
+        return base64Encode(png);
+      });
+
+      final InstalledAppsService service = MethodChannelInstalledAppsService();
+      final result = await service.getAppIcon('com.whatsapp');
+      expect(result.isSuccess, isTrue);
+      expect(result.valueOrNull, png);
+    });
+
+    test('getAppIcon maps a null native result to a null icon', () async {
+      messenger.setMockMethodCallHandler(channel, (MethodCall call) async => null);
+      final InstalledAppsService service = MethodChannelInstalledAppsService();
+      final result = await service.getAppIcon('com.whatsapp');
+      expect(result.isSuccess, isTrue);
+      expect(result.valueOrNull, isNull);
+    });
+
+    test('getAppIcon caches per package (single channel call)', () async {
+      int calls = 0;
+      messenger.setMockMethodCallHandler(channel, (MethodCall call) async {
+        calls++;
+        return base64Encode(Uint8List.fromList(<int>[1, 2, 3]));
+      });
+
+      final InstalledAppsService service = MethodChannelInstalledAppsService();
+      await service.getAppIcon('com.whatsapp');
+      await service.getAppIcon('com.whatsapp');
+      await service.getAppIcon('com.instagram');
+      expect(calls, 2); // second whatsapp call served from cache
+    });
+
+    test('getAppIcon platform errors fail closed', () async {
+      messenger.setMockMethodCallHandler(channel, (MethodCall call) async {
+        throw PlatformException(code: 'icon_error', message: 'boom');
+      });
+      final InstalledAppsService service = MethodChannelInstalledAppsService();
+      final result = await service.getAppIcon('com.whatsapp');
+      expect(result.isFailure, isTrue);
+    });
   });
 
   group('StaticInstalledAppsService', () {
@@ -131,6 +182,16 @@ void main() {
           hasLength(1));
       expect((await service.hasUsageAccess()).valueOrNull, isTrue);
       expect((await service.requestUsageAccess()).isSuccess, isTrue);
+    });
+
+    test('getAppIcon returns seeded bytes or null', () async {
+      final Uint8List png = Uint8List.fromList(<int>[1, 2, 3]);
+      final StaticInstalledAppsService service = StaticInstalledAppsService(
+        apps,
+        iconBytesFor: <String, Uint8List>{'com.whatsapp': png},
+      );
+      expect((await service.getAppIcon('com.whatsapp')).valueOrNull, png);
+      expect((await service.getAppIcon('com.instagram')).valueOrNull, isNull);
     });
   });
 }

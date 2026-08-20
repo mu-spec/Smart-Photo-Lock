@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import '../../data/models/app_entry.dart';
 import '../../utilities/result.dart';
 import '../installed_apps_service.dart';
@@ -7,11 +9,16 @@ import '../installed_apps_service.dart';
 ///
 /// Backed by a configurable static list; the same contract as the
 /// MethodChannel implementation so repository logic is exercised against
-/// identical behavior (filtering by system flag, usage-access stubs).
+/// identical behavior. Icons resolve to null (callers show their
+/// fallback), unless [iconBytesFor] provides PNG bytes for a package.
 class StaticInstalledAppsService implements InstalledAppsService {
-  StaticInstalledAppsService(this._apps);
+  StaticInstalledAppsService(
+    this._apps, {
+    Map<String, Uint8List> iconBytesFor = const <String, Uint8List>{},
+  }) : _icons = Map<String, Uint8List>.from(iconBytesFor);
 
   final List<AppEntry> _apps;
+  final Map<String, Uint8List> _icons;
 
   /// Tracks calls so tests can assert caching behavior of consumers.
   int getInstalledAppsCalls = 0;
@@ -27,6 +34,10 @@ class StaticInstalledAppsService implements InstalledAppsService {
           .toList(growable: false),
     );
   }
+
+  @override
+  Future<Result<Uint8List?>> getAppIcon(String packageName) async =>
+      Result.success(_icons[packageName]);
 
   @override
   Future<Result<List<AppEntry>>> getRecentlyUsedApps({int limit = 10}) async {

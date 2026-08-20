@@ -502,6 +502,20 @@ Rules:
 - Usage-access methods exist on the contract but fail closed until the
   usage-stats phase implements the native side.
 
+## 3B. Apps list UI
+
+The Apps tab renders the Phase 3A catalog:
+
+| Element | Source |
+| ------- | ------ |
+| Icon | `AppIcon` widget → `InstalledAppsRepository.getAppIcon` → native `getAppIcon` (drawable → 96px PNG → base64; decoded + cached per package in the service) |
+| Name | repository-normalized label |
+| Protection status | `ProtectedAppsRepository` → "Protected" (success) / "Not locked" (neutral) pills |
+
+Screen states: loading spinner → ready list / empty state / error state
+with Retry. Icons fall back to a neutral placeholder while loading or
+when the platform provides none; system apps stay filtered out.
+
 ---
 
 ## 1. The eight modules

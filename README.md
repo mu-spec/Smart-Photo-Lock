@@ -36,6 +36,7 @@ passes, and installed-apps discovery. App locking is not implemented yet.
 | 2K | Authentication settings (change PIN/pattern, biometric, keypad, visibility) | ✅ |
 | 2L | Authentication regression (9 scenarios incl. process recreation) | ✅ |
 | 3A | Installed apps discovery (PackageManager bridge + repository) | ✅ |
+| 3B | Apps list UI (icon + name + protection status) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -398,14 +399,14 @@ lib/
 │   ├── shell/                # MainShell: bottom NavigationBar + IndexedStack
 │   ├── screens/
 │   │   ├── home/             # Home tab (welcome, status, quick access)
-│   │   ├── apps/             # Apps tab (placeholder)
+│   │   ├── apps/             # Apps tab (3B: real installed-apps list)
 │   │   ├── smart/            # Smart tab (placeholder)
 │   │   ├── security/         # Security tab (status banner + control list)
 │   │   ├── settings/         # Settings tab (placeholder)
 │   │   ├── pin/              # PIN setup (2B) + unlock (2E) + change (2K)
 │   │   └── pattern/          # Pattern setup (2H) + unlock (2I) + change (2K)
 │   └── widgets/              # PlaceholderScreen, EntryShakeMixin (shared
-│                             # PIN-entry shake feedback)
+│                             # PIN-entry shake feedback), AppIcon (3B)
 ├── data/                     # persistence (Phase 1E)
 │   ├── models/               # AppEntry, ProtectedApp, SecuritySettings
 │   ├── storage/              # KeyValueStore, LocalDatabase, PreferencesStore
@@ -461,10 +462,13 @@ lib/
     └── time_utils.dart       # minutes-of-day, overnight windows, formatting
 ```
 
-**Tests** (run with `flutter test`): installed-apps discovery suites
-(MethodChannel wire format incl. defaults/nulls/platform failures,
-static service filtering, repository filtering/sorting/label
-normalization/caching/refresh/failure propagation, container wiring),
+**Tests** (run with `flutter test`): apps list UI suites (names + icons +
+protection pills, real icon bytes, empty/error states with retry,
+repository-driven status flips), installed-apps discovery suites
+(MethodChannel wire format incl. getAppIcon decode/null/cache/platform
+failures, static service filtering + icons, repository
+filtering/sorting/label normalization/caching/refresh/failure
+propagation, container wiring),
 authentication regression suite
 (9 scenarios: correct/incorrect PIN, cooldown incl. escalation, correct/
 incorrect pattern, biometric success/failure/cancellation, process
@@ -528,7 +532,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.1.0 / 9.3.1 / 2.4.0 |
 | Java | 17 |
-| versionName / versionCode | `0.20.0` / `26` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.21.0` / `27` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM), `local_auth` (biometrics) |
 
 ## Prerequisites (on your machine)
@@ -600,6 +604,20 @@ The catalog behind App Lock selection:
   Android 11+ package visibility without the broad QUERY_ALL_PACKAGES.
 - `AppContainer.installedApps` is the single shared repository; no screen
   ever creates its own service.
+
+### Phase 3B ✅ — Apps List UI
+
+The Apps tab is now the real installed-apps list:
+
+- **Icon** — per-app launcher icons via `getAppIcon` (native drawable →
+  96px PNG → base64; decoded and cached per package in the service);
+  `AppIcon` widget renders `Image.memory` with a stable placeholder
+  fallback while loading or when the system provides nothing.
+- **Name** — the user-facing label (repository-normalized).
+- **Protection status** — "Protected" (success pill) vs "Not locked"
+  (neutral pill) from the protected-apps repository.
+- Loading / error / empty states with a Retry action; system apps stay
+  filtered out; header shows the app count.
 
 ## Next phases
 

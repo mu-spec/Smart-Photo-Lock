@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:smart_app_lock/app/app_container.dart';
@@ -120,6 +122,10 @@ class _FailingAppsService implements InstalledAppsService {
   Future<Result<List<AppEntry>>> getInstalledApps({
     bool includeSystemApps = false,
   }) async =>
+      Result.failure(StateError('simulated platform failure'));
+
+  @override
+  Future<Result<Uint8List?>> getAppIcon(String packageName) async =>
       Result.failure(StateError('simulated platform failure'));
 
   @override

@@ -2,8 +2,12 @@ package com.smartapplock.app
 
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.util.Base64
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.io.ByteArrayOutputStream
 
 /**
  * MethodChannel bridge to the Android [PackageManager] (Phase 3A).
@@ -48,6 +52,23 @@ object InstalledAppsChannel {
                             )
                         }
                     }
+                    "getAppIcon" -> {
+                        val packageName = call.argument<String>("packageName")
+                        if (packageName == null) {
+                            result.success(null)
+                        } else {
+                            try {
+                                result.success(
+                                    loadAppIconPng(
+                                        activity.packageManager,
+                                        packageName,
+                                    )
+                                )
+                            } catch (e: Exception) {
+                                result.success(null)
+                            }
+                        }
+                    }
                     else -> result.notImplemented()
                 }
             }
@@ -83,5 +104,25 @@ object InstalledAppsChannel {
             }
             .sortedBy { (it["label"] as String).lowercase() }
             .toList()
+    }
+
+    /**
+     * Renders the app's launcher icon into a 96x96 ARGB bitmap and returns
+     * it as a base64-encoded PNG (NO_WRAP), or null when the system cannot
+     * provide an icon.
+     */
+    fun loadAppIconPng(packageManager: PackageManager, packageName: String): String? {
+        return try {
+            val drawable = packageManager.getApplicationIcon(packageName)
+            val bitmap = Bitmap.createBitmap(96, 96, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bitmap)
+            drawable.setBounds(0, 0, 96, 96)
+            drawable.draw(canvas)
+            val stream = ByteArrayOutputStream()
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
+            Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)
+        } catch (e: Exception) {
+            null
+        }
     }
 }

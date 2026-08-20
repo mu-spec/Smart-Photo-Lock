@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../data/models/app_entry.dart';
@@ -96,16 +98,21 @@ class AppContainer {
 
   /// Volatile container for tests and previews (no platform plugins).
   /// [biometrics] overrides the real platform service (test fakes);
-  /// [apps] seeds the static installed-apps service.
+  /// [apps] seeds the static installed-apps service; [appIcons] provides
+  /// PNG bytes for specific packages.
   static AppContainer inMemory({
     BiometricService? biometrics,
     List<AppEntry> apps = const <AppEntry>[],
+    Map<String, Uint8List> appIcons = const <String, Uint8List>{},
   }) =>
       AppContainer._(
         keyValueStore: InMemoryKeyValueStore(),
         database: InMemoryLocalDatabase(),
         secretStore: InMemorySecretStore(),
-        installedAppsService: StaticInstalledAppsService(apps),
+        installedAppsService: StaticInstalledAppsService(
+          apps,
+          iconBytesFor: appIcons,
+        ),
         biometricsOverride: biometrics,
       );
 
