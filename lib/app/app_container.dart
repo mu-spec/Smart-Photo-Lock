@@ -33,9 +33,12 @@ import '../services/biometric_service.dart';
 import '../services/impl/local_auth_biometric_service.dart';
 import '../services/impl/method_channel_accessibility_lock_service.dart';
 import '../services/impl/method_channel_installed_apps_service.dart';
+import '../services/impl/method_channel_overlay_lock_service.dart';
 import '../services/impl/static_accessibility_lock_service.dart';
 import '../services/impl/static_installed_apps_service.dart';
+import '../services/impl/static_overlay_lock_service.dart';
 import '../services/installed_apps_service.dart';
+import '../services/overlay_lock_service.dart';
 
 /// Application dependency container — the single wiring point for all
 /// persistence and security storage.
@@ -53,12 +56,14 @@ class AppContainer {
     required SecretStore secretStore,
     required InstalledAppsService installedAppsService,
     required AccessibilityLockService accessibilityService,
+    required OverlayLockService overlayService,
     BiometricService? biometricsOverride,
   })  : _keyValueStore = keyValueStore,
         _database = database,
         secretStore = secretStore,
         installedAppsService = installedAppsService,
-        accessibility = accessibilityService {
+        accessibility = accessibilityService,
+        overlay = overlayService {
     settingsCipher = AesGcmSettingsCipher(secretStore);
     preferences = PreferencesStoreImpl(_keyValueStore);
     protectedApps = ProtectedAppsRepositoryImpl(_database);
@@ -100,6 +105,7 @@ class AppContainer {
       secretStore: FlutterSecureSecretStore(),
       installedAppsService: MethodChannelInstalledAppsService(),
       accessibilityService: MethodChannelAccessibilityLockService(),
+      overlayService: MethodChannelOverlayLockService(),
     );
   }
 
@@ -114,6 +120,7 @@ class AppContainer {
     Map<String, Uint8List> appIcons = const <String, Uint8List>{},
     bool usageAccessGranted = true,
     bool accessibilityEnabled = false,
+    bool overlayGranted = false,
   }) =>
       AppContainer._(
         keyValueStore: InMemoryKeyValueStore(),
@@ -126,6 +133,9 @@ class AppContainer {
         ),
         accessibilityService: StaticAccessibilityLockService(
           enabled: accessibilityEnabled,
+        ),
+        overlayService: StaticOverlayLockService(
+          overlayGranted: overlayGranted,
         ),
         biometricsOverride: biometrics,
       );
@@ -173,4 +183,9 @@ class AppContainer {
   /// fallback state + settings routing. One instance for UI and, later,
   /// the lock engine.
   final AccessibilityLockService accessibility;
+
+  /// The shared overlay capability bridge (Phase 4D) — draw-over-apps
+  /// state + settings routing; the lock window itself lands with the
+  /// lock-screen phase.
+  final OverlayLockService overlay;
 }

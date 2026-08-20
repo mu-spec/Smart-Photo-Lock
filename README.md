@@ -48,6 +48,7 @@ locking is not implemented yet.
 | 4A | Capability requirements (exact Android capabilities for locking) | ✅ |
 | 4B | Usage Access setup (detect → explain → settings → recheck) | ✅ |
 | 4C | Accessibility setup (detection-only fallback + prominent disclosure) | ✅ |
+| 4D | Overlay setup (draw-over-apps capability, required by the architecture) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -561,7 +562,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.1.0 / 9.3.1 / 2.4.0 |
 | Java | 17 |
-| versionName / versionCode | `0.30.0` / `36` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.31.0` / `37` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM), `local_auth` (biometrics) |
 
 ## Prerequisites (on your machine)
@@ -792,6 +793,25 @@ and the UI says so prominently:
   state; the Security tab row shows Enabled/Needed and opens the flow.
 - The system's own accessibility warning remains part of the flow (the
   screen explains it is normal).
+
+### Phase 4D ✅ — Overlay (Draw over apps) Setup
+
+The third capability — **genuinely required**: the draw-over-apps grant
+is the entire enforcement surface (the lock screen appears on top of
+protected apps):
+
+- `SYSTEM_ALERT_WINDOW` declared (the grant itself is made exclusively
+  through the system overlay-permission screen).
+- Native bridge: `isOverlayGranted` probes `Settings.canDrawOverlays`;
+  `requestOverlayPermission` opens `ACTION_MANAGE_OVERLAY_PERMISSION`
+  scoped to the app's package (API 26+).
+- `OverlaySetupScreen`: status probe → prominent disclosure (single use
+  — "Used only for the lock screen.") → Open Settings → resume
+  re-check → Granted. The lock window itself ships with the
+  lock-screen phase; `showLockChallenge`/`hideLockChallenge` fail
+  closed until then.
+- Security tab row **Draw over apps** (Granted / Needed) completes the
+  App lock permissions section.
 
 ## Next phases
 

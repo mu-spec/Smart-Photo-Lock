@@ -4,6 +4,7 @@ import '../ui/screens/pattern/pattern_change_screen.dart';
 import '../ui/screens/pattern/pattern_setup_screen.dart';
 import '../ui/screens/pattern/pattern_unlock_screen.dart';
 import '../ui/screens/permissions/accessibility_setup_screen.dart';
+import '../ui/screens/permissions/overlay_setup_screen.dart';
 import '../ui/screens/permissions/usage_access_screen.dart';
 import '../ui/screens/pin/pin_change_screen.dart';
 import '../ui/screens/pin/pin_setup_screen.dart';
@@ -42,6 +43,9 @@ abstract final class RouteNames {
 
   /// Accessibility setup (Phase 4C): detect → disclose → settings → recheck.
   static const String accessibilitySetup = '/permissions/accessibility';
+
+  /// Overlay setup (Phase 4D): detect → disclose → settings → recheck.
+  static const String overlaySetup = '/permissions/overlay';
 }
 
 /// Typed route generator consumed by `MaterialApp.onGenerateRoute`.
@@ -100,6 +104,11 @@ abstract final class AppRouter {
           settings: settings,
           builder: (BuildContext context) =>
               const AccessibilitySetupScreen(),
+        );
+      case RouteNames.overlaySetup:
+        return MaterialPageRoute<bool>(
+          settings: settings,
+          builder: (BuildContext context) => const OverlaySetupScreen(),
         );
       default:
         return null;

@@ -58,6 +58,10 @@ class _SecurityScreenState extends State<SecurityScreen> {
   /// Phase 4C: accessibility fallback state (false until loaded).
   bool _accessibilityEnabled = false;
 
+  /// Phase 4D: overlay (draw-over-apps) capability state (false until
+  /// loaded).
+  bool _overlayGranted = false;
+
   @override
   void initState() {
     super.initState();
@@ -88,6 +92,13 @@ class _SecurityScreenState extends State<SecurityScreen> {
       final result = await accessibility.isServiceEnabled();
       accessibilityEnabled = result.isSuccess && result.valueOrNull == true;
     }
+    // Phase 4D: overlay capability state from the shared bridge.
+    bool overlayGranted = false;
+    final overlay = AppScope.read(context)?.overlay;
+    if (overlay != null) {
+      final result = await overlay.canDrawOverlays();
+      overlayGranted = result.isSuccess && result.valueOrNull == true;
+    }
     if (!mounted) {
       return;
     }
@@ -99,6 +110,7 @@ class _SecurityScreenState extends State<SecurityScreen> {
       _biometricEnrolled = state.hasEnrolled(AuthType.biometric);
       _usageAccessGranted = usageAccessGranted;
       _accessibilityEnabled = accessibilityEnabled;
+      _overlayGranted = overlayGranted;
     });
   }
 
@@ -151,6 +163,19 @@ class _SecurityScreenState extends State<SecurityScreen> {
       return;
     }
     await Navigator.of(context).pushNamed(RouteNames.accessibilitySetup);
+    if (mounted) {
+      await _loadStatus();
+    }
+  }
+
+  /// Phase 4D: opens the overlay setup flow (disclosure → system
+  /// settings → recheck), then refreshes the capability state.
+  Future<void> _onOverlayTap() async {
+    final container = AppScope.read(context);
+    if (container == null) {
+      return;
+    }
+    await Navigator.of(context).pushNamed(RouteNames.overlaySetup);
     if (mounted) {
       await _loadStatus();
     }
@@ -396,6 +421,17 @@ class _SecurityScreenState extends State<SecurityScreen> {
                       : SecurityLevel.notSet,
                   statusLabel: _accessibilityEnabled ? 'Enabled' : 'Needed',
                   onTap: _onAccessibilityTap,
+                ),
+                const Divider(),
+                SecurityStatusItem(
+                  icon: Icons.layers,
+                  title: 'Draw over apps',
+                  subtitle: 'Shows the lock screen over protected apps',
+                  level: _overlayGranted
+                      ? SecurityLevel.secured
+                      : SecurityLevel.notSet,
+                  statusLabel: _overlayGranted ? 'Granted' : 'Needed',
+                  onTap: _onOverlayTap,
                 ),
               ],
             ),

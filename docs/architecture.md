@@ -660,6 +660,29 @@ AccessibilitySetupScreen
   service row (Enabled / Needed) opening the flow.
 - `AppContainer.accessibility` is the shared bridge instance.
 
+## 4D. Overlay setup
+
+The draw-over-apps capability — the enforcement surface itself:
+
+```
+OverlaySetupScreen
+  ├─ canDrawOverlays() → Settings.canDrawOverlays probe (native)
+  ├─ not granted → DISCLOSURE CARD ("Used only for the lock screen.")
+  │               → Open Settings
+  │     └─ requestOverlayPermission() → ACTION_MANAGE_OVERLAY_PERMISSION
+  │                                     (package-scoped on API 26+)
+  ├─ WidgetsBindingObserver.resumed → re-check (successful return)
+  └─ granted / unavailable-with-Retry views
+```
+
+- `SYSTEM_ALERT_WINDOW` declared; the grant is made only through the
+  system settings screen.
+- `AppContainer.overlay` is the shared bridge instance; the lock window
+  itself (`showLockChallenge`/`hideLockChallenge`) fails closed until
+  the lock-screen phase.
+- Security tab row **Draw over apps** completes the App lock permissions
+  section.
+
 ---
 
 ## 1. The eight modules

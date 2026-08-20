@@ -15,6 +15,7 @@ import 'package:smart_app_lock/ui/screens/pattern/pattern_unlock_screen.dart';
 import 'package:smart_app_lock/ui/screens/pin/pin_change_screen.dart';
 import 'package:smart_app_lock/ui/screens/pin/pin_setup_screen.dart';
 import 'package:smart_app_lock/ui/screens/permissions/accessibility_setup_screen.dart';
+import 'package:smart_app_lock/ui/screens/permissions/overlay_setup_screen.dart';
 import 'package:smart_app_lock/ui/screens/permissions/usage_access_screen.dart';
 import 'package:smart_app_lock/ui/screens/pin/pin_unlock_screen.dart';
 import 'package:smart_app_lock/ui/screens/security/security_screen.dart';
@@ -41,6 +42,8 @@ final Map<String, WidgetBuilder> kSecurityTabRoutes = <String, WidgetBuilder>{
       (BuildContext context) => const UsageAccessScreen(),
   RouteNames.accessibilitySetup:
       (BuildContext context) => const AccessibilitySetupScreen(),
+  RouteNames.overlaySetup:
+      (BuildContext context) => const OverlaySetupScreen(),
 };
 
 void main() {
@@ -322,8 +325,21 @@ void main() {
     await pumpWithScope(tester, container: container);
 
     expect(find.text('Usage access'), findsOneWidget);
-    expect(find.text('Needed'), findsOneWidget);
-    expect(find.text('Granted'), findsNothing);
+    // Scoped to the row: other permission rows also show 'Needed'.
+    expect(
+      find.descendant(
+        of: find.widgetWithText(SecurityStatusItem, 'Usage access'),
+        matching: find.text('Needed'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.widgetWithText(SecurityStatusItem, 'Usage access'),
+        matching: find.text('Granted'),
+      ),
+      findsNothing,
+    );
   });
 
   testWidgets('usage access row reports Granted when enabled',
@@ -333,8 +349,20 @@ void main() {
     await pumpWithScope(tester, container: container);
 
     expect(find.text('Usage access'), findsOneWidget);
-    expect(find.text('Granted'), findsOneWidget);
-    expect(find.text('Needed'), findsNothing);
+    expect(
+      find.descendant(
+        of: find.widgetWithText(SecurityStatusItem, 'Usage access'),
+        matching: find.text('Granted'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.widgetWithText(SecurityStatusItem, 'Usage access'),
+        matching: find.text('Needed'),
+      ),
+      findsNothing,
+    );
   });
 
   testWidgets('tapping the usage access row opens the setup flow',
@@ -363,8 +391,20 @@ void main() {
     await pumpWithScope(tester, container: container);
 
     expect(find.text('Accessibility service'), findsOneWidget);
-    expect(find.text('Needed'), findsOneWidget);
-    expect(find.text('Enabled'), findsNothing);
+    expect(
+      find.descendant(
+        of: find.widgetWithText(SecurityStatusItem, 'Accessibility service'),
+        matching: find.text('Needed'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.widgetWithText(SecurityStatusItem, 'Accessibility service'),
+        matching: find.text('Enabled'),
+      ),
+      findsNothing,
+    );
   });
 
   testWidgets('accessibility row reports Enabled when the service is on',
@@ -374,8 +414,20 @@ void main() {
     await pumpWithScope(tester, container: container);
 
     expect(find.text('Accessibility service'), findsOneWidget);
-    expect(find.text('Enabled'), findsOneWidget);
-    expect(find.text('Needed'), findsNothing);
+    expect(
+      find.descendant(
+        of: find.widgetWithText(SecurityStatusItem, 'Accessibility service'),
+        matching: find.text('Enabled'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.widgetWithText(SecurityStatusItem, 'Accessibility service'),
+        matching: find.text('Needed'),
+      ),
+      findsNothing,
+    );
   });
 
   testWidgets('tapping the accessibility row opens the disclosure flow',
@@ -391,6 +443,57 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text(AccessibilitySetupScreen.disclosureTitle), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  // -------------------------------------------------------------------
+  // Draw over apps row (Phase 4D)
+  // -------------------------------------------------------------------
+  testWidgets('overlay row reports Needed when the grant is missing',
+      (WidgetTester tester) async {
+    final AppContainer container =
+        AppContainer.inMemory(overlayGranted: false);
+    await pumpWithScope(tester, container: container);
+
+    expect(find.text('Draw over apps'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.widgetWithText(SecurityStatusItem, 'Draw over apps'),
+        matching: find.text('Needed'),
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('overlay row reports Granted when enabled',
+      (WidgetTester tester) async {
+    final AppContainer container =
+        AppContainer.inMemory(overlayGranted: true);
+    await pumpWithScope(tester, container: container);
+
+    expect(find.text('Draw over apps'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.widgetWithText(SecurityStatusItem, 'Draw over apps'),
+        matching: find.text('Granted'),
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('tapping the overlay row opens the disclosure flow',
+      (WidgetTester tester) async {
+    final AppContainer container =
+        AppContainer.inMemory(overlayGranted: false);
+    await pumpWithScope(tester, container: container);
+
+    final Finder row = find.text('Draw over apps');
+    await tester.ensureVisible(row);
+    await tester.pumpAndSettle();
+    await tester.tap(row);
+    await tester.pumpAndSettle();
+
+    expect(find.text(OverlaySetupScreen.disclosureTitle), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

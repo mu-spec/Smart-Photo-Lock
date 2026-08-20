@@ -16,6 +16,11 @@
          on Android 9 and lower; harmless on newer versions. -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
 
+    <!-- Phase 4D: lets the lock screen appear over protected apps
+         (draw over other apps). The grant is made exclusively through the
+         system overlay-permission settings screen. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
     <!-- Phase 3A: package visibility (Android 11+). Declaring the launcher
          intent lets us discover launchable apps for App Lock selection
          without the broad QUERY_ALL_PACKAGES permission. -->
