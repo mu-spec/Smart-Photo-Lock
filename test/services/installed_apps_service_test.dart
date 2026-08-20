@@ -138,6 +138,19 @@ void main() {
       expect((await service.requestUsageAccess()).isFailure, isTrue);
     });
 
+    test(
+        'usage-access MissingPluginException fails closed (the Phase 4 '
+        'device defect signature: an unwired native method answered with '
+        'notImplemented must surface as a real error, never as granted',
+        () async {
+      messenger.setMockMethodCallHandler(channel, (MethodCall call) async {
+        throw MissingPluginException();
+      });
+      final InstalledAppsService service = MethodChannelInstalledAppsService();
+      expect((await service.hasUsageAccess()).isFailure, isTrue);
+      expect((await service.requestUsageAccess()).isFailure, isTrue);
+    });
+
     test('usage enumeration still fails closed until the watcher phase',
         () async {
       final InstalledAppsService service = MethodChannelInstalledAppsService();

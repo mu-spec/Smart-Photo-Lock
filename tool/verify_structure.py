@@ -13,6 +13,9 @@ can be verified without compiling:
   7. No stale references to removed Phase 1B widgets (ModuleCard/ModuleInfo).
   8. Test inventory: every lib/ feature module has at least one test file.
   9. Design-system barrel export covers all widget/security files.
+ 10. Native channel wiring: every Dart-invoked channel method has a
+     matching Kotlin handler case (regression guard for the Phase 4
+     usage-access device defect).
 
 Exit code 0 = all checks green.
 Usage:  python3 tool/verify_structure.py
@@ -270,6 +273,47 @@ def run():
             for m in re.finditer(r"'(?=\d{4,6}')", s):  # heuristic only
                 pass
     check("PIN handling confined to security module (manual review)", True)
+
+    # 11. Native channel wiring: every method the Dart side invokes on a
+    # MethodChannel must be handled in the matching Kotlin handler. This is
+    # the class of bug behind the Phase 4 device defect (a Dart call
+    # answered with notImplemented() -> MissingPluginException on device).
+    wiring_contract = [
+        (
+            "lib/services/impl/method_channel_installed_apps_service.dart",
+            "InstalledAppsChannel.kt",
+        ),
+        (
+            "lib/services/impl/method_channel_accessibility_lock_service.dart",
+            "AccessibilityStatusChannel.kt",
+        ),
+        (
+            "lib/services/impl/method_channel_overlay_lock_service.dart",
+            "OverlayStatusChannel.kt",
+        ),
+    ]
+    missing_wiring = []
+    kotlin_dir = os.path.join(
+        ROOT, "android/app/src/main/kotlin/com/smartapplock/app"
+    )
+    for dart_rel, kt_name in wiring_contract:
+        kt_path = os.path.join(kotlin_dir, kt_name)
+        if not os.path.exists(kt_path):
+            missing_wiring.append(f"{kt_name}: file missing")
+            continue
+        dart_src = open(os.path.join(ROOT, dart_rel)).read()
+        kt_src = open(kt_path).read()
+        invoked = set(
+            re.findall(r"invokeMethod<[^>]*>\(\s*'([A-Za-z0-9_]+)'", dart_src)
+        )
+        handled = set(re.findall(r'"([A-Za-z0-9_]+)"\s*->', kt_src))
+        for method in sorted(invoked - handled):
+            missing_wiring.append(
+                f"{kt_name}: Dart invokes '{method}' but the handler "
+                "has no case for it"
+            )
+    check("native channel handlers wire every Dart-invoked method",
+          not missing_wiring, "; ".join(missing_wiring))
 
     print()
     print(f"RESULT: {PASSES} passed, {len(FAILURES)} failed")

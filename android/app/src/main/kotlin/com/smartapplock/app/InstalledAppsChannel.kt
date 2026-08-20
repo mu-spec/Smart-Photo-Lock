@@ -75,6 +75,24 @@ object InstalledAppsChannel {
                         }
                     }
                 }
+                "hasUsageAccess" -> {
+                    // Usage-access capability state (Phase 4B): answers
+                    // true/false for the normal granted/not-granted states.
+                    // The check itself is total — a platform quirk resolves
+                    // to false (not granted) instead of failing the bridge.
+                    try {
+                        result.success(hasUsageAccess(activity))
+                    } catch (e: Exception) {
+                        result.success(false)
+                    }
+                }
+                "requestUsageAccess" -> {
+                    // Routes the user to the system Usage Access settings
+                    // (the ONLY place the grant can be made). The helper
+                    // already resolves to false when the intent cannot be
+                    // started, so the Dart side never sees a crash here.
+                    result.success(openUsageAccessSettings(activity))
+                }
                 else -> result.notImplemented()
             }
         }
@@ -152,27 +170,35 @@ object InstalledAppsChannel {
      *
      * The authoritative check is the AppOps state for OPSTR_GET_USAGE_STATS
      * — the OS grants it exclusively through the Usage Access settings
-     * screen, and no manifest declaration can force it.
+     * screen, and no manifest declaration can force it. The method is
+     * TOTAL: a denied grant returns false (not an error), and any
+     * platform quirk (OEM AppOps behavior, unexpected service state)
+     * also resolves to false — the bridge never throws for a normal
+     * not-granted state, and never uses an unsafe null assertion.
      */
     fun hasUsageAccess(context: Context): Boolean {
-        val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
-        val uid = context.applicationInfo.uid
-        val packageName = context.packageName
-        val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            appOps.unsafeCheckOpNoThrow(
-                AppOpsManager.OPSTR_GET_USAGE_STATS,
-                uid,
-                packageName,
-            )
-        } else {
-            @Suppress("DEPRECATION")
-            appOps.checkOpNoThrow(
-                AppOpsManager.OPSTR_GET_USAGE_STATS,
-                uid,
-                packageName,
-            )
+        return try {
+            val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
+            val uid = context.applicationInfo.uid
+            val packageName = context.packageName
+            val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                appOps.unsafeCheckOpNoThrow(
+                    AppOpsManager.OPSTR_GET_USAGE_STATS,
+                    uid,
+                    packageName,
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                appOps.checkOpNoThrow(
+                    AppOpsManager.OPSTR_GET_USAGE_STATS,
+                    uid,
+                    packageName,
+                )
+            }
+            mode == AppOpsManager.MODE_ALLOWED
+        } catch (e: Exception) {
+            false // fail-safe: treat as not granted; never crash the bridge
         }
-        return mode == AppOpsManager.MODE_ALLOWED
     }
 
     /**
