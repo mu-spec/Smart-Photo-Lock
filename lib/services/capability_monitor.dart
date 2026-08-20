@@ -36,8 +36,6 @@ class CapabilityChange {
 ///    the system settings are detected immediately;
 ///  * a per-kind `granted → revoked` edge fires exactly one change per
 ///    transition (no duplicate spam while it stays revoked);
-///  * a re-grant records the new granted baseline, so a LATER
-///    revocation fires again as a NEW edge (per-capability state);
 ///  * probe failures are ignored (fail-quiet — the next successful
 ///    probe decides; the monitor never fabricates events).
 class CapabilityMonitor {
@@ -64,10 +62,10 @@ class CapabilityMonitor {
   final StreamController<CapabilityChange> _controller =
       StreamController<CapabilityChange>.broadcast();
 
-  /// The last successfully-probed granted state for EACH capability,
-  /// independently tracked. This baseline is updated on every
-  /// successful poll — including when the capability is granted again —
-  /// which is what re-arms a later `granted → revoked` edge.
+  /// Per-capability previous granted state — the baseline used to detect
+  /// `granted → revoked` edges. Each capability tracks its OWN state and
+  /// is updated on EVERY successful probe (grants included), so a
+  /// re-grant stores `true` and arms the next revocation as a new edge.
   final Map<CapabilityKind, bool> _previousGranted = <CapabilityKind, bool>{};
 
   Timer? _timer;
@@ -125,24 +123,28 @@ class CapabilityMonitor {
     if (result.isFailure) {
       return; // fail-quiet: no fabricated transitions
     }
-    final bool granted = result.valueOrNull == true;
+    final bool current = result.valueOrNull == true;
     final bool? previous = _previousGranted[kind];
 
-    // Only the granted -> revoked EDGE is an event. While the
-    // capability stays revoked, `previous` is false, so repeated polls
-    // emit nothing (no duplicate spam). The first observation of a
-    // capability only records the baseline (previous == null).
-    if (previous == true && !granted) {
+    if (previous == null) {
+      // First observation: store the baseline, never fabricate an event
+      // for the startup state.
+      _previousGranted[kind] = current;
+      return;
+    }
+    if (previous && !current) {
+      // granted -> revoked EDGE: emit exactly one change. Storing
+      // `false` means staying revoked emits nothing.
       _controller.add(
         CapabilityChange(kind: kind, state: CapabilityState.revoked, at: _now()),
       );
+      _previousGranted[kind] = false;
+      return;
     }
-
-    // ESSENTIAL re-arm: the per-capability baseline is updated on EVERY
-    // successful poll — including when the capability is granted again.
-    // A re-grant stores `true`, so the next false transition fires as a
-    // NEW revocation event. Each capability tracks its own state.
-    _previousGranted[kind] = granted;
+    // Stayed granted, stayed revoked, or RE-GRANTED: update the baseline
+    // and emit nothing. The re-grant case stores `true`, so a LATER
+    // revocation fires again as a NEW edge.
+    _previousGranted[kind] = current;
   }
 
   /// Permanently tears the monitor down: stops the timer and closes the
