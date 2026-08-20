@@ -36,6 +36,8 @@ class CapabilityChange {
 ///    the system settings are detected immediately;
 ///  * a per-kind `granted → revoked` edge fires exactly one change per
 ///    transition (no duplicate spam while it stays revoked);
+///  * a re-grant records the new granted baseline, so a LATER
+///    revocation fires again as a NEW edge (per-capability state);
 ///  * probe failures are ignored (fail-quiet — the next successful
 ///    probe decides; the monitor never fabricates events).
 class CapabilityMonitor {
@@ -62,15 +64,11 @@ class CapabilityMonitor {
   final StreamController<CapabilityChange> _controller =
       StreamController<CapabilityChange>.broadcast();
 
-  /// Last successfully-probed granted state per capability (the baseline
-  /// used to detect `granted → revoked` edges).
-  final Map<CapabilityKind, bool> _lastGranted = <CapabilityKind, bool>{};
-
-  /// Capabilities whose revocation has already been reported and has not
-  /// been re-armed by a re-grant. While a capability stays revoked no
-  /// duplicate events are emitted; a re-grant clears the flag so the
-  /// NEXT revocation fires again as a new edge.
-  final Set<CapabilityKind> _reportedRevoked = <CapabilityKind>{};
+  /// The last successfully-probed granted state for EACH capability,
+  /// independently tracked. This baseline is updated on every
+  /// successful poll — including when the capability is granted again —
+  /// which is what re-arms a later `granted → revoked` edge.
+  final Map<CapabilityKind, bool> _previousGranted = <CapabilityKind, bool>{};
 
   Timer? _timer;
   bool _started = false;
@@ -128,25 +126,23 @@ class CapabilityMonitor {
       return; // fail-quiet: no fabricated transitions
     }
     final bool granted = result.valueOrNull == true;
-    final bool? previous = _lastGranted[kind];
+    final bool? previous = _previousGranted[kind];
 
-    // Transition: previously granted, now revoked. Emit exactly once per
-    // edge — the reported set suppresses duplicates while it stays
-    // revoked (also covers overlapping probes racing the same edge).
-    if (previous == true && !granted && !_reportedRevoked.contains(kind)) {
+    // Only the granted -> revoked EDGE is an event. While the
+    // capability stays revoked, `previous` is false, so repeated polls
+    // emit nothing (no duplicate spam). The first observation of a
+    // capability only records the baseline (previous == null).
+    if (previous == true && !granted) {
       _controller.add(
         CapabilityChange(kind: kind, state: CapabilityState.revoked, at: _now()),
       );
-      _reportedRevoked.add(kind);
     }
 
-    // Re-arm point: a re-grant clears the suppression flag and refreshes
-    // the baseline, so a LATER revocation is a NEW edge. A revoked
-    // capability that stays revoked keeps its flag (no duplicate spam).
-    if (granted) {
-      _reportedRevoked.remove(kind);
-    }
-    _lastGranted[kind] = granted;
+    // ESSENTIAL re-arm: the per-capability baseline is updated on EVERY
+    // successful poll — including when the capability is granted again.
+    // A re-grant stores `true`, so the next false transition fires as a
+    // NEW revocation event. Each capability tracks its own state.
+    _previousGranted[kind] = granted;
   }
 
   /// Permanently tears the monitor down: stops the timer and closes the
