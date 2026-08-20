@@ -586,6 +586,19 @@ Select (header) → checkbox rows + bottom bar
   · Cancel exits without changes
 ```
 
+## 3H. Apps management QA
+
+Large-list responsiveness:
+
+- `_visible` is a **memoized field** — recomputed only when the catalog,
+  query, filter or protection set changes; scroll builds are O(1)
+  (previously the getter re-filtered the whole catalog every frame).
+- Uniform two-line rows use a fixed `itemExtent` so fast scrolls skip
+  per-row layout; `ListView.builder` keeps construction lazy.
+- 1,000-app synthetic tests prove lazy rendering, fast-scroll
+  correctness, search/filter precision at scale, and select-all scale.
+- On-device QA checklist: `docs/regression.md` (§Phase 3H).
+
 ---
 
 ## 1. The eight modules

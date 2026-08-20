@@ -134,3 +134,22 @@ install on the device, then walk the table and log any deviation here.
 | # | Defect | Severity | Status |
 | - | ------ | -------- | ------ |
 | — | None found at handoff | — | — |
+
+---
+
+# Phase 3H — Apps Management Device QA
+
+After installing the APK on a real device:
+
+| # | Test | Steps | Expected |
+| - | ---- | ----- | -------- |
+| 1 | Large list load | Open the Apps tab on a device with many packages | List appears promptly; scrolling is smooth with no jank |
+| 2 | Fast scroll | Fling through the whole catalog repeatedly | No exceptions in logcat; rows render correctly at the bottom |
+| 3 | Search latency | Type progressively ("wha" → "whats") | Results update per keystroke without visible lag |
+| 4 | Filter scale | Switch All → Protected → Unprotected with 100+ protected apps | Instant switch; counts correct |
+| 5 | Bulk at scale | Select all across the full catalog, bulk Protect, restart the app | No ANR; all selections persist after restart |
+| 6 | Icons under load | Scroll quickly; icons for off-screen rows load lazily | No stutter from icon decoding; placeholders flash briefly at worst |
+
+| # | Defect | Severity | Status |
+| - | ------ | -------- | ------ |
+| — | None found at handoff | — | — |

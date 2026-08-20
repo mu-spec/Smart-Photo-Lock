@@ -5,10 +5,13 @@ Development follows the PRD phase plan; this repository is the production
 Android project.
 
 **Current status: Phase 1 complete (1A–1G), Phase 2 complete (2A–2L),
-Phase 3 underway (3A done)** — production scaffold, architecture,
+Phase 3 complete (3A–3H)** — production scaffold, architecture,
 navigation, design system, persistence, secure storage, full
 authentication (PIN, pattern, biometric) with settings, regression
-passes, and installed-apps discovery. App locking is not implemented yet.
+passes, installed-apps discovery, the Apps list UI (icons, names,
+protection status, search, filters, toggles, bulk selection,
+persistence), and large-list performance QA. App locking is not
+implemented yet.
 
 ---
 
@@ -42,6 +45,7 @@ passes, and installed-apps discovery. App locking is not implemented yet.
 | 3E | Protection toggle (mark apps Protected/Unprotected, no locking) | ✅ |
 | 3F | Protected apps persistence (restart / process / device survival) | ✅ |
 | 3G | Bulk selection (multi-select Protect/Unprotect) | ✅ |
+| 3H | Apps management QA (large-list responsiveness) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -468,7 +472,9 @@ lib/
     └── time_utils.dart       # minutes-of-day, overnight windows, formatting
 ```
 
-**Tests** (run with `flutter test`): bulk selection suites (selection mode
+**Tests** (run with `flutter test`): large-list performance suites
+(lazy rendering with 1,000 apps, fast-scroll correctness, search/filter
+precision at scale, select-all at scale), bulk selection suites (selection mode
 entry, row-tap toggles + count, filter-aware select-all, bulk protect
 incl. skip-already-protected + persistence, bulk unprotect, disabled
 actions when empty, cancel without changes), protected-apps persistence
@@ -553,7 +559,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.1.0 / 9.3.1 / 2.4.0 |
 | Java | 17 |
-| versionName / versionCode | `0.26.0` / `32` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.27.0` / `33` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM), `local_auth` (biometrics) |
 
 ## Prerequisites (on your machine)
@@ -714,8 +720,24 @@ Sensible multi-select operations on the Apps tab:
 - Partial repository failures keep the failed rows selected with a
   "Could not update N apps." snackbar; **Cancel** exits without changes.
 
+### Phase 3H ✅ — Apps Management QA
+
+Large installed-app lists stay responsive:
+
+- **Memoized filtering** — the visible list is recomputed only on user
+  actions / data changes, never per frame: scroll builds are O(1)
+  (previously the name+group filter ran on every build).
+- **Fixed item extent** (uniform two-line rows) so the list skips
+  per-row layout during fast scrolls; `ListView.builder` keeps row
+  construction lazy.
+- **Large-list tests**: 1,000 synthetic apps prove lazy rendering
+  (viewport-only rows), fast-scroll correctness down to the last row,
+  instant precise search (`1 / 1000`), filter+search at scale, and
+  select-all across the whole catalog.
+- On-device QA checklist recorded in `docs/regression.md` (§Phase 3H).
+
 ## Next phases
 
-Phase 3 continues: the protected-apps list UI (Apps tab) → smart
-automations (Smart tab) → lock screen & enforcement → hardening. Each
+Phase 4 begins the enforcement work: the lock engine (overlay /
+accessibility), smart automations (Smart tab), and hardening. Each
 phase's module ownership is mapped in `docs/architecture.md`.

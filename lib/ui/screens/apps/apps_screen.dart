@@ -77,6 +77,11 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
   Set<String> _selected = <String>{};
   bool _bulkBusy = false;
 
+  /// Memoized visible list (Phase 3H). Recomputed ONLY when the catalog,
+  /// query, filter or protection set changes — never during scroll builds,
+  /// so large installed-app lists stay responsive.
+  List<AppEntry> _visible = <AppEntry>[];
+
   @override
   void initState() {
     super.initState();
@@ -116,20 +121,30 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
       _protected = result.valueOrNull!
           .map((app) => app.packageName)
           .toSet();
+      _recomputeVisible();
     });
   }
 
   void _onSearchChanged(String value) {
-    setState(() => _query = value.trim());
+    setState(() {
+      _query = value.trim();
+      _recomputeVisible();
+    });
   }
 
   void _clearSearch() {
     _searchController.clear();
-    setState(() => _query = '');
+    setState(() {
+      _query = '';
+      _recomputeVisible();
+    });
   }
 
   void _setFilter(AppsFilter filter) {
-    setState(() => _filter = filter);
+    setState(() {
+      _filter = filter;
+      _recomputeVisible();
+    });
   }
 
   void _showAll() {
@@ -137,6 +152,7 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
     setState(() {
       _query = '';
       _filter = AppsFilter.all;
+      _recomputeVisible();
     });
   }
 
@@ -168,9 +184,7 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
   /// search query).
   void _selectAllVisible() {
     setState(() {
-      _selected = _visibleApps
-          .map((AppEntry app) => app.packageName)
-          .toSet();
+      _selected = _visible.map((AppEntry app) => app.packageName).toSet();
     });
   }
 
@@ -233,6 +247,7 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
         ..._protected,
         ..._selected,
       };
+      _recomputeVisible();
       _bulkBusy = false;
       _selectionMode = false;
       _selected = <String>{};
@@ -280,6 +295,7 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
 
     setState(() {
       _protected = _protected.difference(_selected);
+      _recomputeVisible();
       _bulkBusy = false;
       _selectionMode = false;
       _selected = <String>{};
@@ -304,6 +320,7 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
       wasProtected
           ? _protected.remove(app.packageName)
           : _protected.add(app.packageName);
+      _recomputeVisible();
     });
 
     final result = wasProtected
@@ -323,6 +340,7 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
         wasProtected
             ? _protected.add(app.packageName)
             : _protected.remove(app.packageName);
+        _recomputeVisible();
       });
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text(AppsScreen.updateFailedMessage)),
@@ -340,7 +358,36 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
     );
   }
 
-  /// The catalog after the NAME filter only.
+  /// Recomputes the visible list: the name query first, then the group
+  /// filter. O(n) but only on user actions / data changes, never per frame.
+  void _recomputeVisible() {
+    List<AppEntry> base;
+    if (_query.isEmpty) {
+      base = _apps;
+    } else {
+      final String needle = _query.toLowerCase();
+      base = _apps
+          .where(
+            (AppEntry app) => app.label.toLowerCase().contains(needle),
+          )
+          .toList(growable: false);
+    }
+    switch (_filter) {
+      case AppsFilter.all:
+        _visible = base;
+      case AppsFilter.protected:
+        _visible = base
+            .where((AppEntry a) => _protected.contains(a.packageName))
+            .toList(growable: false);
+      case AppsFilter.unprotected:
+        _visible = base
+            .where((AppEntry a) => !_protected.contains(a.packageName))
+            .toList(growable: false);
+    }
+  }
+
+  /// Name-only filtered list — used solely by the filter-empty state to
+  /// decide whether the QUERY (not the group) produced the empty result.
   List<AppEntry> get _nameFiltered {
     if (_query.isEmpty) {
       return _apps;
@@ -351,23 +398,6 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
           (AppEntry app) => app.label.toLowerCase().contains(needle),
         )
         .toList(growable: false);
-  }
-
-  /// The visible list after both the name query and the group filter.
-  List<AppEntry> get _visibleApps {
-    final List<AppEntry> base = _nameFiltered;
-    switch (_filter) {
-      case AppsFilter.all:
-        return base;
-      case AppsFilter.protected:
-        return base
-            .where((AppEntry a) => _protected.contains(a.packageName))
-            .toList(growable: false);
-      case AppsFilter.unprotected:
-        return base
-            .where((AppEntry a) => !_protected.contains(a.packageName))
-            .toList(growable: false);
-    }
   }
 
   bool get _isFiltered => _query.isNotEmpty || _filter != AppsFilter.all;
@@ -408,13 +438,14 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
     setState(() {
       _apps = appsResult.valueOrNull!;
       _protected = protected;
+      _recomputeVisible();
       _state = _LoadState.ready;
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    final int visibleCount = _visibleApps.length;
+    final int visibleCount = _visible.length;
     final String countLabel = _isFiltered
         ? '$visibleCount / ${_apps.length}'
         : '${_apps.length} apps';
@@ -609,7 +640,7 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
             onAction: _load,
           );
         }
-        final List<AppEntry> visible = _visibleApps;
+        final List<AppEntry> visible = _visible;
         if (visible.isEmpty) {
           return _buildFilterEmptyState();
         }
@@ -617,6 +648,9 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
         final repository = container?.installedApps;
         return ListView.builder(
           padding: const EdgeInsets.only(bottom: DsSpacing.xl),
+          // Uniform two-line ListTile rows: a fixed extent lets the
+          // list skip per-row layout during fast scrolls (Phase 3H).
+          itemExtent: 72,
           itemCount: visible.length,
           itemBuilder: (BuildContext context, int index) {
             final AppEntry app = visible[index];
