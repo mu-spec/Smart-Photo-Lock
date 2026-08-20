@@ -472,6 +472,38 @@ fresh manager over the same repository simulates a new app process, so
 
 ---
 
+## 3A. Installed apps discovery
+
+The catalog behind App Lock selection, wired end to end:
+
+```
+InstalledAppsRepositoryImpl          (selection-ready catalog)
+  ├─ cache per includeSystemApps flag, refresh() clears
+  ├─ excludes com.smartapplock.app + configured exclusions
+  ├─ normalizes empty labels -> package name, sorts by label
+  └─ InstalledAppsService
+       ├─ MethodChannelInstalledAppsService   (production)
+       │    └─ MethodChannel 'smart_app_lock/apps'
+       │         └─ InstalledAppsChannel (Kotlin, PackageManager)
+       │              · launchable only (MAIN/LAUNCHER intent)
+       │              · own package never returned
+       │              · system apps only when requested
+       └─ StaticInstalledAppsService          (tests / in-memory container)
+```
+
+Rules:
+
+- Only **launchable** apps are returned — the ones a user could actually
+  open and therefore lock.
+- Android 11+ package visibility comes from a `<queries>` launcher-intent
+  declaration, not the broad `QUERY_ALL_PACKAGES` permission.
+- The repository is the single shared instance (`AppContainer.installedApps`);
+  screens never construct their own service.
+- Usage-access methods exist on the contract but fail closed until the
+  usage-stats phase implements the native side.
+
+---
+
 ## 1. The eight modules
 
 ```

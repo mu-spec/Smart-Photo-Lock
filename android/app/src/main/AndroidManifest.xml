@@ -15,6 +15,17 @@
     <!-- Phase 2J: required to use biometric authentication (BiometricPrompt)
          on Android 9 and lower; harmless on newer versions. -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+
+    <!-- Phase 3A: package visibility (Android 11+). Declaring the launcher
+         intent lets us discover launchable apps for App Lock selection
+         without the broad QUERY_ALL_PACKAGES permission. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
     <application
         android:label="Smart App Lock"
         android:name="${applicationName}"

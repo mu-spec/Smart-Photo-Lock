@@ -1,8 +1,11 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../data/models/app_entry.dart';
+import '../data/repositories/impl/installed_apps_repository_impl.dart';
 import '../data/repositories/impl/lock_settings_repository_impl.dart';
 import '../data/repositories/impl/protected_apps_repository_impl.dart';
 import '../data/repositories/impl/security_settings_repository_impl.dart';
+import '../data/repositories/installed_apps_repository.dart';
 import '../data/repositories/lock_settings_repository.dart';
 import '../data/repositories/protected_apps_repository.dart';
 import '../data/repositories/security_settings_repository.dart';
@@ -25,6 +28,9 @@ import '../security/storage/impl/in_memory_secret_store.dart';
 import '../security/storage/secret_store.dart';
 import '../services/biometric_service.dart';
 import '../services/impl/local_auth_biometric_service.dart';
+import '../services/impl/method_channel_installed_apps_service.dart';
+import '../services/impl/static_installed_apps_service.dart';
+import '../services/installed_apps_service.dart';
 
 /// Application dependency container — the single wiring point for all
 /// persistence and security storage.
@@ -40,6 +46,7 @@ class AppContainer {
     required KeyValueStore keyValueStore,
     required LocalDatabase database,
     required SecretStore secretStore,
+    required InstalledAppsService installedAppsService,
     BiometricService? biometricsOverride,
   })  : _keyValueStore = keyValueStore,
         _database = database,
@@ -52,6 +59,10 @@ class AppContainer {
       cipher: settingsCipher,
     );
     lockSettings = LockSettingsRepositoryImpl(_database);
+    // Installed-apps discovery (Phase 3A): repository over the platform
+    // service. The service instance is shared — no screen ever creates
+    // its own.
+    installedApps = InstalledAppsRepositoryImpl(installedAppsService);
     // Biometric foundation (Phase 2J): platform BiometricPrompt bridge.
     // Tests may override it with a fake for deterministic availability
     // states; production always uses the real local_auth service.
@@ -79,16 +90,22 @@ class AppContainer {
       keyValueStore: SharedPreferencesKeyValueStore(prefs),
       database: database,
       secretStore: FlutterSecureSecretStore(),
+      installedAppsService: MethodChannelInstalledAppsService(),
     );
   }
 
   /// Volatile container for tests and previews (no platform plugins).
-  /// [biometrics] overrides the real platform service (test fakes).
-  static AppContainer inMemory({BiometricService? biometrics}) =>
+  /// [biometrics] overrides the real platform service (test fakes);
+  /// [apps] seeds the static installed-apps service.
+  static AppContainer inMemory({
+    BiometricService? biometrics,
+    List<AppEntry> apps = const <AppEntry>[],
+  }) =>
       AppContainer._(
         keyValueStore: InMemoryKeyValueStore(),
         database: InMemoryLocalDatabase(),
         secretStore: InMemorySecretStore(),
+        installedAppsService: StaticInstalledAppsService(apps),
         biometricsOverride: biometrics,
       );
 
@@ -120,4 +137,9 @@ class AppContainer {
 
   /// Platform biometric bridge (Phase 2J): capability checks + prompt.
   late final BiometricService biometrics;
+
+  /// Installed-apps catalog (Phase 3A): discovery repository over the
+  /// platform package-manager bridge, filtered to apps appropriate for
+  /// App Lock selection.
+  late final InstalledAppsRepository installedApps;
 }
