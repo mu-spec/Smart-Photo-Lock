@@ -1,6 +1,7 @@
 package com.smartapplock.app
 
 import android.content.pm.ApplicationInfo
+import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -23,6 +24,10 @@ import java.io.ByteArrayOutputStream
  *    `isSystemApp`, and `versionName`.
  *
  * The list is sorted by label (case-insensitive) before returning.
+ *
+ * Implementation note: the query pipeline is written as explicit loops
+ * with fully-typed locals on purpose — no chained lambda forms — so the
+ * file compiles cleanly across Kotlin compiler versions.
  */
 object InstalledAppsChannel {
 
@@ -30,48 +35,44 @@ object InstalledAppsChannel {
     const val CHANNEL = "smart_app_lock/apps"
 
     fun register(engine: FlutterEngine, activity: MainActivity) {
-        MethodChannel(engine.dartExecutor.binaryMessenger, CHANNEL)
-            .setMethodCallHandler { call, result ->
-                when (call.method) {
-                    "getInstalledApps" -> {
+        val channel = MethodChannel(engine.dartExecutor.binaryMessenger, CHANNEL)
+        channel.setMethodCallHandler { call, result ->
+            when (call.method) {
+                "getInstalledApps" -> {
+                    try {
+                        val includeSystemApps =
+                            call.argument<Boolean>("includeSystemApps") ?: false
+                        val apps = queryInstalledApps(
+                            activity.packageManager,
+                            activity.packageName,
+                            includeSystemApps,
+                        )
+                        result.success(apps)
+                    } catch (e: Exception) {
+                        result.error(
+                            "installed_apps_error",
+                            "Failed to list installed apps: ${e.message}",
+                            null,
+                        )
+                    }
+                }
+                "getAppIcon" -> {
+                    val packageName = call.argument<String>("packageName")
+                    if (packageName == null) {
+                        result.success(null)
+                    } else {
                         try {
-                            val includeSystemApps =
-                                call.argument<Boolean>("includeSystemApps") ?: false
                             result.success(
-                                queryInstalledApps(
-                                    activity.packageManager,
-                                    activity.packageName,
-                                    includeSystemApps,
-                                )
+                                loadAppIconPng(activity.packageManager, packageName),
                             )
                         } catch (e: Exception) {
-                            result.error(
-                                "installed_apps_error",
-                                "Failed to list installed apps: ${e.message}",
-                                null,
-                            )
-                        }
-                    }
-                    "getAppIcon" -> {
-                        val packageName = call.argument<String>("packageName")
-                        if (packageName == null) {
                             result.success(null)
-                        } else {
-                            try {
-                                result.success(
-                                    loadAppIconPng(
-                                        activity.packageManager,
-                                        packageName,
-                                    )
-                                )
-                            } catch (e: Exception) {
-                                result.success(null)
-                            }
                         }
                     }
-                    else -> result.notImplemented()
                 }
+                else -> result.notImplemented()
             }
+        }
     }
 
     fun queryInstalledApps(
@@ -79,31 +80,40 @@ object InstalledAppsChannel {
         ownPackageName: String,
         includeSystemApps: Boolean,
     ): List<Map<String, Any?>> {
-        return packageManager.getInstalledPackages(0)
-            .asSequence()
-            .filter { it.packageName != ownPackageName }
-            .filter { package ->
-                // Launchable only: an app you can actually open (and lock).
-                packageManager.getLaunchIntentForPackage(package.packageName) != null
+        val results = mutableListOf<Map<String, Any?>>()
+        val packages: List<PackageInfo> = packageManager.getInstalledPackages(0)
+
+        for (packageInfo in packages) {
+            if (packageInfo.packageName == ownPackageName) {
+                continue
             }
-            .filter { package ->
-                val isSystem =
-                    (package.applicationInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
-                includeSystemApps || !isSystem
+            // Launchable only: an app you can actually open (and lock).
+            if (packageManager.getLaunchIntentForPackage(packageInfo.packageName) == null) {
+                continue
             }
-            .map { package ->
-                val appInfo = package.applicationInfo
-                val isSystem =
-                    (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
+            val applicationInfo: ApplicationInfo = packageInfo.applicationInfo
+            val isSystemApp: Boolean =
+                (applicationInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
+            if (isSystemApp && !includeSystemApps) {
+                continue
+            }
+            val label: String = applicationInfo.loadLabel(packageManager).toString()
+            val versionName: String? = packageInfo.versionName
+            results.add(
                 mapOf(
-                    "packageName" to package.packageName,
-                    "label" to appInfo.loadLabel(packageManager).toString(),
-                    "isSystemApp" to isSystem,
-                    "versionName" to package.versionName,
-                )
-            }
-            .sortedBy { (it["label"] as String).lowercase() }
-            .toList()
+                    "packageName" to packageInfo.packageName,
+                    "label" to label,
+                    "isSystemApp" to isSystemApp,
+                    "versionName" to versionName,
+                ),
+            )
+        }
+
+        results.sortBy { entry ->
+            val label = entry["label"] as String
+            label.lowercase()
+        }
+        return results
     }
 
     /**
