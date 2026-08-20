@@ -5,12 +5,14 @@ Development follows the PRD phase plan; this repository is the production
 Android project.
 
 **Current status: Phase 1 complete (1A–1G), Phase 2 complete (2A–2L),
-Phase 3 complete (3A–3H), Phase 4 underway (4A done)** — production
+Phase 3 complete (3A–3H), Phase 4 complete (4A–4G)** — production
 scaffold, architecture, navigation, design system, persistence, secure
 storage, full authentication with settings, installed-apps management
 (discovery, list, search, filters, toggles, bulk, persistence, perf QA),
-and the capability requirements definition for the lock engine. App
-locking is not implemented yet.
+and the complete capability/permission layer (requirements, usage
+access, accessibility, overlay, setup wizard, revocation detection,
+grant/deny/revoke regression) for the lock engine. App locking is not
+implemented yet.
 
 ---
 
@@ -51,6 +53,7 @@ locking is not implemented yet.
 | 4D | Overlay setup (draw-over-apps capability, required by the architecture) | ✅ |
 | 4E | Permission setup screen (centralized Enabled / Action Required) | ✅ |
 | 4F | Capability revocation detection (granted → revoked monitoring) | ✅ |
+| 4G | Permission regression (grant / deny / revoke paths) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -564,7 +567,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.1.0 / 9.3.1 / 2.4.0 |
 | Java | 17 |
-| versionName / versionCode | `0.33.0` / `39` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.34.0` / `40` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM), `local_auth` (biometrics) |
 
 ## Prerequisites (on your machine)
@@ -846,9 +849,29 @@ A revoked capability is detected and surfaced:
   attention dot on the App lock permissions header; statuses refresh
   live.
 
+### Phase 4G ✅ — Permission Regression
+
+The full permission lifecycle — **grant, deny and revoke** — is covered
+end-to-end by `test/regression/permission_regression_test.dart`
+(14 scenarios through the production app wiring: router + AppScope +
+capability monitor + real screens):
+
+- **Deny** — all three off → `Needed` rows, no alert banner; setup
+  screen shows `0 of 3 ready` + three `Action Required` rows; each flow
+  explains the purpose (prominent disclosure for accessibility/overlay),
+  fires the settings request, and does **not** flip state when the user
+  returns without granting.
+- **Grant** — enabling all three in system settings then returning shows
+  `3 of 3 ready`, `Enabled` everywhere and `Granted`/`Enabled` rows on
+  the Security tab; granting inside any single flow flips that row to
+  `Enabled` on return (1 of 3 → ready).
+- **Revoke** — revoking usage access / accessibility / overlay is
+  detected (probe or resume), surfaces the alert banner + attention dot,
+  flips the row back to `Needed`, and the setup screen reflects `2 of 3
+  ready`; re-granting recovers to fully ready without duplicate alerts.
+
 ## Next phases
 
-Phase 4 continues: the permission/capability setup wizard and the lock
-engine (overlay challenge, usage-access + accessibility detection,
-watcher service). Each capability is pre-defined in
-`docs/capabilities.md`.
+Phase 5: the lock engine — overlay lock challenge, foreground app
+detection (usage access + accessibility fallback) and the watcher
+service. Each capability is pre-defined in `docs/capabilities.md`.

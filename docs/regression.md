@@ -153,3 +153,59 @@ After installing the APK on a real device:
 | # | Defect | Severity | Status |
 | - | ------ | -------- | ------ |
 | — | None found at handoff | — | — |
+
+---
+
+# Phase 4G — Permission Regression (grant / deny / revoke)
+
+Automated suite: `test/regression/permission_regression_test.dart` —
+the permission lifecycle exercised end-to-end through the production
+app wiring (router + AppScope + capability monitor + real screens).
+The system settings screen is simulated via the mutable static
+services; `inactive → resumed` lifecycle transitions simulate returning
+to the app. Run with `flutter test`.
+
+## Automated scenarios
+
+| # | Path | Scenario | Expected |
+| - | ---- | -------- | -------- |
+| 1 | Deny | All three capabilities off at launch | Security rows show `Needed` ×3; no revocation banner |
+| 2 | Deny | All three off on the setup screen | `0 of 3 ready`; three `Action Required` rows; no `Enabled` labels |
+| 3 | Deny | Usage access flow: explain → settings → return without granting | Explanation shown; settings request fired once; still `not granted` after return; row stays `Action Required` |
+| 4 | Deny | Accessibility flow: disclosure → settings → return without enabling | Prominent disclosure + "not used elsewhere" shown; settings request fired; row stays `Action Required` |
+| 5 | Deny | Overlay flow: disclosure → settings → return without granting | Single-use disclosure shown; settings request fired; row stays `Action Required` |
+| 6 | Grant | Enable all three in system settings, return | Setup screen `3 of 3 ready`, all `Enabled`; Security rows `Granted`/`Enabled`/`Enabled`; no banner |
+| 7 | Grant | Grant usage access inside its flow | Screen flips to the granted state; `Done` returns → row `Enabled`, `1 of 3 ready` |
+| 8 | Grant | Grant accessibility inside its flow | Same for the accessibility row |
+| 9 | Grant | Grant overlay inside its flow | Same for the overlay row |
+| 10 | Revoke | Revoke usage access | Banner + attention dot; usage row back to `Needed`; other rows untouched |
+| 11 | Revoke | Revoke accessibility | Detected and flagged; row back to `Needed` |
+| 12 | Revoke | Revoke overlay | Detected and flagged; row back to `Needed` |
+| 13 | Revoke | One revocation among three | Setup screen `2 of 3 ready`; only the revoked row `Action Required` |
+| 14 | Revoke | Revoke then re-grant | No duplicate alert; setup screen recovers to `3 of 3 ready`, all `Enabled` |
+| 15 | Revoke | Revocation made while backgrounded | Guard's resume probe detects it; banner appears on return |
+
+## Phase 4G QA — Physical Device Permission Walk-through
+
+After installing the APK on a real device:
+
+| # | Test | Steps | Expected |
+| - | ---- | ----- | -------- |
+| 1 | Deny everything | Fresh install → Security → App lock permissions | All three rows `Needed`; no alert banner |
+| 2 | Deny summary | Open "Set up" | `0 of 3 ready`; three `Action Required` rows |
+| 3 | Deny usage flow | Tap Usage access → Open Settings → deny/back | Explanation screen; system settings open; returning keeps `Action Required` |
+| 4 | Deny accessibility flow | Tap Accessibility → disclosure → Open Settings → leave off | Disclosure screen; settings open; returning keeps `Action Required` |
+| 5 | Deny overlay flow | Tap Draw over apps → disclosure → Open Settings → leave off | Same as above |
+| 6 | Grant usage access | Enable "Smart App Lock" in Usage access settings → return | Flow shows "Usage access enabled"; row flips to `Enabled`; `1 of 3 ready` |
+| 7 | Grant accessibility | Enable the service in Accessibility settings → return | "Accessibility enabled"; row `Enabled`; `2 of 3 ready` |
+| 8 | Grant overlay | Enable "Allow display over other apps" → return | "Draw over apps enabled"; row `Enabled`; `3 of 3 ready` |
+| 9 | Full green | Security tab after all grants | Rows show `Granted`/`Enabled`/`Enabled`; no banner |
+| 10 | Revoke usage access | System settings → revoke usage access → return to app | Alert banner "A permission was revoked"; row back to `Needed`; dot on the section |
+| 11 | Revoke accessibility | Revoke the service → return | Banner; accessibility row `Needed` |
+| 12 | Revoke overlay | Revoke draw-over-apps → return | Banner; overlay row `Needed` |
+| 13 | Review action | Tap "Review permissions" | Opens the setup screen showing the revoked row as `Action Required` |
+| 14 | Re-grant recovery | Re-enable the revoked capability → return | Setup screen recovers to `3 of 3 ready`; no duplicate banner |
+
+| # | Defect | Severity | Status |
+| - | ------ | -------- | ------ |
+| — | None found at handoff | — | — |
