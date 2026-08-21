@@ -409,3 +409,26 @@ Automated suites: `test/protection/lock_session_test.dart`,
 Device QA: unlock WhatsApp, keep using it (switch away/back within
 2 minutes) — no re-prompt. Leave it idle for 2+ minutes and return —
 the challenge asks again.
+
+---
+
+# Phase 5I — Authentication Failure
+
+Automated suites: `test/ui/lock_challenge_test.dart` (session proofs),
+`test/ui/pin_unlock_screen_test.dart` (enroll-does-not-unlock).
+
+| # | Scenario | Expected |
+| - | -------- | -------- |
+| 1 | Correct PIN | Session granted (positive control) |
+| 2 | Wrong PIN | No session; app blocked; challenge stays |
+| 3 | Wrong pattern | No session |
+| 4 | Cancelled challenge (PIN) | No session; re-challenge next activation |
+| 5 | Cancelled challenge (pattern) | No session |
+| 6 | Biometric failure | No session |
+| 7 | Enroll from recovery view | Unlock route never resolves; entry view appears; back pops false |
+| 8 | Lockout (controller) | `deny`; sessions impossible while locked out |
+
+Device QA: open a protected app, fail the credential, verify the app
+stays blocked and re-opening it always asks again. From a no-credential
+state (fresh install), set up the PIN from the challenge and confirm the
+app does NOT open until the PIN is actually entered afterwards.

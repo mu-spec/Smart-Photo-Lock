@@ -62,6 +62,7 @@ implemented yet.
 | 5F | Pattern integration (primary-credential challenge routing; pattern gates + launch) | ✅ |
 | 5G | Biometric integration (biometric accelerator on both unlock screens in the lock flow) | ✅ |
 | 5H | Successful unlock session (inactivity-based window; re-entry refreshes, expiry re-locks) | ✅ |
+| 5I | Authentication failure (failed auth never grants a session; enrollment ≠ authentication) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -575,7 +576,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.2.1 / 9.4.1 / built-in Kotlin with KGP 2.3.20 (settings classpath `apply false` + buildscript; `android.builtInKotlin=true`; AGP legacy-DSL compat `android.newDsl=false` until the Flutter tool finishes its new-DSL migration) |
 | Java | 17 |
-| versionName / versionCode | `0.35.8` / `73` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.35.9` / `74` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM), `local_auth` (biometrics) |
 
 ## Prerequisites (on your machine)
@@ -1053,6 +1054,34 @@ while the unlock session remains valid:
   session — not event deduplication — is what suppresses the challenge.
 - **Test seam** — `AppContainer.inMemory({accessClock})` lets tests
   drive the access controller with a deterministic clock.
+
+### Phase 5I ✅ — Authentication Failure
+
+Failed authentication never grants an unlock session — guaranteed at
+every layer and proven by regression tests:
+
+- **Single grant path** — `LockChallengeHost` grants the session only
+  on `unlocked == true`, and the unlock screens pop `true` ONLY from
+  their `AuthSuccess` branches (wrong credential, lockout, cancellation
+  and service failures all resolve false/null).
+- **Enrollment is NOT authentication** (security fix) — the guided
+  recovery on the unlock screens previously used `pushReplacementNamed`,
+  so the setup screen's `pop(true)` (an ENROLLMENT confirmation) would
+  have resolved the host's await as "authenticated" — granting a session
+  without any authentication. The setup flow is now pushed normally:
+  the unlock route stays on the stack, its future completes only when
+  the unlock screen itself pops, and the user must still verify the
+  freshly enrolled credential.
+- **Host hardening** — the grant branch re-checks `mounted` after the
+  challenge await, so a torn-down tree can never grant.
+- **Manager fail-closed** (verified unchanged) — hash-verify gated
+  success, lockouts block even correct input, legacy pattern hashes are
+  rejected, availability errors never count as attempts.
+- **Regression proofs** — wrong PIN/pattern, cancelled challenges and
+  biometric failures all assert `sessionFor(package) == null`; the
+  authenticated path asserts the session exists; the enroll-from-
+  recovery test proves enrollment resolves nothing (empty result list,
+  entry view appears, back pops false).
 
 ## Next phases
 

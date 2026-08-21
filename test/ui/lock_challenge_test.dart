@@ -5,6 +5,7 @@ import 'package:smart_app_lock/app/app.dart';
 import 'package:smart_app_lock/app/app_container.dart';
 import 'package:smart_app_lock/data/models/protected_app.dart';
 import 'package:smart_app_lock/design_system/design_system.dart';
+import 'package:smart_app_lock/protection/impl/default_access_controller.dart';
 import 'package:smart_app_lock/security/credentials/biometric_options.dart';
 import 'package:smart_app_lock/services/biometric_service.dart';
 import 'package:smart_app_lock/services/impl/static_accessibility_lock_service.dart';
@@ -59,6 +60,13 @@ void main() {
         ),
       );
 
+  /// Phase 5I: the unlock session currently open for [package] (null =
+  /// no session was granted — failed authentication must never create
+  /// one).
+  Object? sessionFor(AppContainer container, String package) =>
+      (container.accessController as DefaultAccessController)
+          .sessionFor(package);
+
   testWidgets(
       'a valid unlock session prevents repeated authentication — and '
       'REFRESHES on re-entry (Phase 5H)', (WidgetTester tester) async {
@@ -89,6 +97,8 @@ void main() {
         container.installedAppsService as StaticInstalledAppsService;
     expect(apps.launchAppCalls, 1);
     expect(apps.launchedPackages, <String>['com.whatsapp']);
+    // Phase 5I positive control: ONLY the authenticated path grants.
+    expect(sessionFor(container, 'com.whatsapp'), isNotNull);
 
     // 90 seconds later, a REAL transition back to the protected app
     // (launcher first, then WhatsApp) must NOT re-challenge and must
@@ -243,6 +253,8 @@ void main() {
     final StaticInstalledAppsService apps =
         container.installedAppsService as StaticInstalledAppsService;
     expect(apps.launchAppCalls, 0);
+    // Phase 5I: failed authentication never grants a session.
+    expect(sessionFor(container, 'com.whatsapp'), isNull);
   });
 
   testWidgets('cancelling the pattern challenge leaves the app blocked '
@@ -261,6 +273,8 @@ void main() {
     final StaticInstalledAppsService apps =
         container.installedAppsService as StaticInstalledAppsService;
     expect(apps.launchAppCalls, 0);
+    // Phase 5I: a cancelled challenge never grants a session.
+    expect(sessionFor(container, 'com.whatsapp'), isNull);
 
     // No unlock window either: the next activation challenges again.
     await openApp(tester, container, 'com.whatsapp');
@@ -290,6 +304,8 @@ void main() {
     final StaticInstalledAppsService apps =
         container.installedAppsService as StaticInstalledAppsService;
     expect(apps.launchAppCalls, 0);
+    // Phase 5I: failed authentication never grants a session.
+    expect(sessionFor(container, 'com.whatsapp'), isNull);
   });
 
   testWidgets('cancelling the challenge leaves the app blocked '
@@ -309,6 +325,8 @@ void main() {
     final StaticInstalledAppsService apps =
         container.installedAppsService as StaticInstalledAppsService;
     expect(apps.launchAppCalls, 0);
+    // Phase 5I: a cancelled challenge never grants a session.
+    expect(sessionFor(container, 'com.whatsapp'), isNull);
     // No unlock window either: the next activation challenges again.
     await openApp(tester, container, 'com.whatsapp');
     expect(find.byType(PinUnlockScreen), findsOneWidget);
@@ -406,6 +424,8 @@ void main() {
     final StaticInstalledAppsService apps =
         container.installedAppsService as StaticInstalledAppsService;
     expect(apps.launchAppCalls, 0);
+    // Phase 5I: failed authentication never grants a session.
+    expect(sessionFor(container, 'com.whatsapp'), isNull);
   });
 
   testWidgets('biometric not enrolled -> no biometric key on the '

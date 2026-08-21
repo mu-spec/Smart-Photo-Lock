@@ -118,7 +118,16 @@ class _LockChallengeHostState extends State<LockChallengeHost> {
       }
       final bool? unlocked =
           await widget.navigatorKey.currentState?.pushNamed<bool>(route);
+      // Phase 5I: the unlock session is granted ONLY on an explicit
+      // authentication success. The unlock screens pop `true` exclusively
+      // from their `AuthSuccess` branches (wrong credential, lockout,
+      // cancellation and service failures all resolve false/null) — and
+      // the host re-checks `mounted` after the await so a torn-down tree
+      // can never grant.
       if (unlocked == true) {
+        if (!mounted) {
+          return;
+        }
         // Phase 5E/5F: the credential passed — open the session,
         // dismiss the challenge, then LAUNCH the protected app so the
         // user proceeds straight into it.

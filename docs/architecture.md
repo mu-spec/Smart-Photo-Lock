@@ -995,3 +995,24 @@ evaluate(package):
   evaluation).
 - `AppContainer.inMemory(accessClock: ...)` is the test seam for
   deterministic session windows in end-to-end flows.
+
+## 5I. Authentication failure
+
+Failed authentication can never grant an unlock session:
+
+```
+LockChallengeHost:
+  unlocked == true  (pop true ONLY from AuthSuccess branches)
+    + mounted re-check
+    -> grantAccess + hideLockChallenge + launchApp
+  anything else (wrong, lockout, cancel, service failure, null)
+    -> no session, no launch
+```
+
+- The unlock screens' guided recovery pushes the SETUP flow normally
+  (not as a replacement): enrollment confirms nothing to the awaiting
+  caller — the unlock route resolves only when the unlock screen pops,
+  and after setup the user must still authenticate.
+- The manager already fails closed: hash-verify gated success, lockout
+  blocks even correct input, legacy pattern hashes rejected,
+  availability errors never count as attempts.

@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:smart_app_lock/app/app_scope.dart';
 import 'package:smart_app_lock/app/app_container.dart';
+import 'package:smart_app_lock/app/router.dart';
 import 'package:smart_app_lock/app/theme/app_theme.dart';
 import 'package:smart_app_lock/design_system/design_system.dart';
 import 'package:smart_app_lock/security/credentials/auth_result.dart';
@@ -14,6 +15,7 @@ import 'package:smart_app_lock/security/credentials/impl/default_credential_mana
 import 'package:smart_app_lock/security/credentials/pattern_hasher.dart';
 import 'package:smart_app_lock/security/pin_hasher.dart';
 import 'package:smart_app_lock/services/biometric_service.dart';
+import 'package:smart_app_lock/ui/screens/pin/pin_setup_screen.dart';
 import 'package:smart_app_lock/ui/screens/pin/pin_unlock_screen.dart';
 import 'package:smart_app_lock/utilities/result.dart';
 
@@ -51,6 +53,18 @@ void main() {
         container: container,
         child: MaterialApp(
           theme: AppTheme.dark,
+          // Phase 5I: the unlock screen's guided setup pushes a named
+          // route — host it so the enroll-does-not-unlock flow can be
+          // proven end to end.
+          onGenerateRoute: (RouteSettings settings) {
+            if (settings.name == RouteNames.pinSetup) {
+              return MaterialPageRoute<dynamic>(
+                settings: settings,
+                builder: (_) => PinSetupScreen(credentialManager: manager),
+              );
+            }
+            return null;
+          },
           home: Builder(
             builder: (BuildContext context) => Scaffold(
               body: Center(
@@ -307,6 +321,43 @@ void main() {
     await tester.tap(find.text(PinUnlockScreen.backLabel));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('open_unlock')), findsOneWidget);
+    expect(_ManagerResults.results.last, false);
+  });
+
+  testWidgets(
+      'Phase 5I: ENROLLING a PIN from the recovery view never counts as '
+      'an unlock', (WidgetTester tester) async {
+    await pumpHosted(tester);
+    await openUnlock(tester);
+
+    expect(find.text(PinUnlockScreen.noCredentialTitle), findsOneWidget);
+
+    // The user walks the guided setup: choose length, enter, confirm.
+    await tester.tap(find.text(PinUnlockScreen.setUpPinLabel));
+    await tester.pumpAndSettle();
+    expect(find.byType(PinSetupScreen), findsOneWidget);
+
+    await tester.tap(find.text('4-digit PIN'));
+    await tester.pumpAndSettle();
+    await tapDigits(tester, '1234');
+    expect(find.text(PinSetupScreen.confirmPinTitle), findsOneWidget);
+    await tapDigits(tester, '1234');
+    expect(find.text(PinSetupScreen.successTitle), findsOneWidget);
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
+
+    // Enrollment is NOT authentication: the unlock route is still on
+    // the stack and has NOT resolved — the host-style caller received
+    // no result (nothing to grant on).
+    expect(_ManagerResults.results, isEmpty);
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+    // The screen reloaded into the ENTRY view: the user must still
+    // verify the freshly enrolled PIN.
+    expect(find.text('Enter your 4-digit PIN'), findsOneWidget);
+
+    // Leaving now resolves false — never true.
+    await tester.pageBack();
+    await tester.pumpAndSettle();
     expect(_ManagerResults.results.last, false);
   });
 

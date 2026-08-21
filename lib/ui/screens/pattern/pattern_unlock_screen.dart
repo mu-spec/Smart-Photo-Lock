@@ -536,8 +536,21 @@ class _PatternUnlockScreenState extends State<PatternUnlockScreen>
         DsButton(
           label: PatternUnlockScreen.setUpPatternLabel,
           expand: true,
-          onPressed: () => Navigator.of(context)
-              .pushReplacementNamed(RouteNames.patternSetup),
+          // Phase 5I: the setup flow is pushed NORMALLY (not as a
+          // replacement). With pushReplacement, the setup screen's own
+          // pop(true) — an ENROLLMENT confirmation — would resolve this
+          // route's future with `true`, which the lock host reads as
+          // "authenticated" and would grant an unlock session without
+          // any authentication ever happening. Enrollment is NOT
+          // authentication: the unlock route stays on the stack, its
+          // future completes only when THIS screen pops, and after
+          // setup the user must still verify the credential.
+          onPressed: () async {
+            await Navigator.of(context).pushNamed(RouteNames.patternSetup);
+            if (mounted) {
+              _loadStatus();
+            }
+          },
         ),
         const SizedBox(height: DsSpacing.md),
         DsButton(
