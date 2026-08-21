@@ -171,7 +171,7 @@ class CapabilityMonitor {
     // recording failure must never disturb detection).
     if (current && _markEverGranted != null) {
       try {
-        await _markEverGranted!(kind);
+        await _markEverGranted(kind);
       } catch (_) {
         // fail-quiet by design
       }

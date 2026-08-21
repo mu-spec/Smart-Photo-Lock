@@ -6,7 +6,6 @@ import 'package:smart_app_lock/app/app_scope.dart';
 import 'package:smart_app_lock/app/theme/app_theme.dart';
 import 'package:smart_app_lock/services/impl/static_accessibility_lock_service.dart';
 import 'package:smart_app_lock/services/impl/static_installed_apps_service.dart';
-import 'package:smart_app_lock/services/impl/static_overlay_lock_service.dart';
 import 'package:smart_app_lock/ui/screens/security/security_screen.dart';
 
 /// Phase 4 UX: the Security tab distinguishes a first-install protection
