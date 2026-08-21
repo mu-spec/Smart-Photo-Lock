@@ -531,3 +531,23 @@ Notes:
 - A trigger-layer grace test was added (the full-app widget test covers
   the same path end to end; this one pins the controller assertions at
   the trigger layer).
+
+---
+
+# Phase 5M — Home-Button Hardening
+
+Automated suites: `test/ui/lock_challenge_test.dart` (5M group).
+
+| # | Scenario | Expected |
+| - | -------- | -------- |
+| 1 | Home press while the challenge is up | Challenge dismissed; no session; no launch |
+| 2 | Re-open the protected app after Home | Challenge re-presents (requirement not dropped) |
+| 3 | Return to the app | Challenge stays presented; correct PIN grants + launches exactly once |
+| 4 | Requirement during a challenge (second app) | Re-queued; re-presents after the first closes |
+| 5 | Cancel the re-presented challenge | No session/launch for the second app |
+
+Device QA: unlock WhatsApp and let the challenge show, press Home —
+the challenge disappears. Open WhatsApp again — Smart App Lock comes
+back to the front with the challenge (never opens WhatsApp unlocked).
+While a challenge is up, open another protected app, unlock the first —
+the second app's challenge appears immediately.

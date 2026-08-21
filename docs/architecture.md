@@ -1086,3 +1086,28 @@ DefaultAccessController:
   5m); selection applies live to the shared controller and persists.
 - Startup: the lock challenge host applies the persisted grace when the
   app mounts.
+
+## 5M. Home-button hardening
+
+Every lock-flow state survives the Home button:
+
+```
+LockChallengeHost lifecycle:
+  inactive/paused (Home / recents)
+    └─ challenge up -> _interruptedChallenge = true + pop challenge
+                       (pop -> null -> no grant, 5I)
+  challenge closes (any cause)
+    ├─ interrupted && foreground -> re-evaluate foreground -> challenge
+    └─ pending requirement     -> re-present (foreground only)
+  resumed
+    ├─ screen-off (5K) or interrupted (5M) -> re-evaluate -> challenge
+    └─ plain resume                        -> nothing (sessions intact)
+
+_presentChallenge while busy:
+    -> _pendingPackage = package  (re-queued, never dropped)
+```
+
+- The busy flag can no longer wedge: the awaited challenge future
+  completes on Home-press dismissal, and the close path always runs.
+- The pending slot holds exactly one (latest) requirement; a newer
+  requirement supersedes the older one.

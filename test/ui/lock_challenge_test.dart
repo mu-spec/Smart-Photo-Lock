@@ -533,6 +533,118 @@ void main() {
     expect(find.byType(PinUnlockScreen), findsOneWidget);
     expect(find.byKey(const Key('pin_key_biometric')), findsNothing);
   });
+  // -- Home-button hardening (Phase 5M) --------------------------------------
+
+  /// Simulates the Home button: Smart App Lock leaves the foreground.
+  Future<void> pressHome(WidgetTester tester) async {
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    await tester.pumpAndSettle();
+  }
+
+  /// Simulates returning to Smart App Lock.
+  Future<void> returnToApp(WidgetTester tester) async {
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets(
+      'pressing Home while the challenge is up dismisses it without '
+      'granting (Phase 5M)', (WidgetTester tester) async {
+    final AppContainer container = await pumpApp(tester);
+    await container.auth.enrollPin('1234');
+    await protect(container, 'com.whatsapp');
+
+    await openApp(tester, container, 'com.whatsapp');
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+
+    await pressHome(tester);
+
+    // The challenge is dismissed, and Home-press dismissal never
+    // grants a session or launches the app (5I: pop resolves null).
+    expect(find.byType(PinUnlockScreen), findsNothing);
+    expect(sessionFor(container, 'com.whatsapp'), isNull);
+    final StaticInstalledAppsService apps =
+        container.installedAppsService as StaticInstalledAppsService;
+    expect(apps.launchAppCalls, 0);
+  });
+
+  testWidgets(
+      're-opening the protected app after Home re-challenges instead of '
+      'dropping the requirement (Phase 5M)', (WidgetTester tester) async {
+    final AppContainer container = await pumpApp(tester);
+    await container.auth.enrollPin('1234');
+    await protect(container, 'com.whatsapp');
+
+    await openApp(tester, container, 'com.whatsapp');
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+
+    // Home press dismisses the challenge.
+    await pressHome(tester);
+    expect(find.byType(PinUnlockScreen), findsNothing);
+
+    // While away, the user goes Home then opens WhatsApp again: the
+    // accessibility path reports the transition and the challenge must
+    // come back — NOT be dropped by a stuck busy flag.
+    await openApp(tester, container, 'com.example.launcher');
+    await openApp(tester, container, 'com.whatsapp');
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+
+    // Returning to the app keeps the challenge presented.
+    await returnToApp(tester);
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+
+    // The correct PIN grants and launches exactly once.
+    for (final String digit in <String>['1', '2', '3', '4']) {
+      await tester.tap(find.byKey(Key('pin_key_$digit')));
+      await tester.pumpAndSettle();
+    }
+    expect(find.byType(PinUnlockScreen), findsNothing);
+    expect(sessionFor(container, 'com.whatsapp'), isNotNull);
+    final StaticInstalledAppsService apps =
+        container.installedAppsService as StaticInstalledAppsService;
+    expect(apps.launchAppCalls, 1);
+    expect(apps.launchedPackages, <String>['com.whatsapp']);
+  });
+
+  testWidgets(
+      'a requirement arriving during a challenge re-presents after it '
+      'closes (Phase 5M)', (WidgetTester tester) async {
+    final AppContainer container = await pumpApp(tester);
+    await container.auth.enrollPin('1234');
+    await protect(container, 'com.whatsapp');
+    await protect(container, 'com.example.maps');
+
+    await openApp(tester, container, 'com.whatsapp');
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+
+    // While the WhatsApp challenge is up, Maps becomes foreground: the
+    // requirement is re-queued, not dropped.
+    await openApp(tester, container, 'com.example.maps');
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+
+    // Complete the WhatsApp challenge with the correct PIN.
+    for (final String digit in <String>['1', '2', '3', '4']) {
+      await tester.tap(find.byKey(Key('pin_key_$digit')));
+      await tester.pumpAndSettle();
+    }
+    await tester.pumpAndSettle(); // post-frame re-presentation
+
+    // The queued Maps challenge appears.
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+    final StaticOverlayLockService overlay =
+        container.overlay as StaticOverlayLockService;
+    expect(overlay.lastLockPackage, 'com.example.maps');
+
+    // Cancel it: no Maps session, no Maps launch.
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.byType(PinUnlockScreen), findsNothing);
+    expect(sessionFor(container, 'com.example.maps'), isNull);
+    final StaticInstalledAppsService apps =
+        container.installedAppsService as StaticInstalledAppsService;
+    expect(apps.launchAppCalls, 1); // WhatsApp only
+  });
+
   /// Draws [nodes] on the unlock screen's pattern grid: bounds-derived
   /// node centers, a small horizontal arena-winning move first, then
   /// micro-stepped device-like strokes (mirrors the pattern-suite

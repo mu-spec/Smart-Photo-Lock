@@ -66,6 +66,7 @@ implemented yet.
 | 5J | Immediate re-lock (leaving a protected app ends its unlock session at once) | ✅ |
 | 5K | Screen-off re-lock (screen turns off → every unlock session revoked; enforced on resume) | ✅ |
 | 5L | Grace period (configurable re-lock delay: immediate / 30s / 1m / 5m) | ✅ |
+| 5M | Home-button hardening (challenge dismissed on leave; requirements re-queued, never dropped) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -579,7 +580,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.2.1 / 9.4.1 / built-in Kotlin with KGP 2.3.20 (settings classpath `apply false` + buildscript; `android.builtInKotlin=true`; AGP legacy-DSL compat `android.newDsl=false` until the Flutter tool finishes its new-DSL migration) |
 | Java | 17 |
-| versionName / versionCode | `0.35.13` / `78` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.35.14` / `79` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM), `local_auth` (biometrics) |
 
 ## Prerequisites (on your machine)
@@ -1149,6 +1150,24 @@ after you leave it:
   persisted value).
 - **`AccessController.setGracePeriod`** — the controller-level policy;
   zeroed grace invalidates pending grace clocks.
+
+### Phase 5M ✅ — Home-Button Hardening
+
+The Home button is now safe in every lock-flow state:
+
+- **Dismiss-on-leave** — pressing Home (or recents) while a challenge
+  is showing pops the challenge route. Previously the busy flag stayed
+  set forever, silently DROPPING every later lock requirement — so
+  re-opening a protected app while Smart App Lock was backgrounded
+  could pass unchallenged. Dismissal never grants (the pop resolves
+  null; 5I holds).
+- **Re-queue, never drop** — a requirement arriving while a challenge
+  is up is remembered and re-presented the moment the current
+  challenge closes (foreground only — a Home press is never fought).
+- **Re-challenge on return** — after an interrupted challenge, resuming
+  re-evaluates the foreground and re-presents the challenge when the
+  protected app is still current; the in-flight-pop window is handled
+  by the challenge-close path.
 
 ## Next phases
 

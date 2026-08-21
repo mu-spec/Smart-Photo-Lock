@@ -63,6 +63,21 @@ class _LockChallengeHostState extends State<LockChallengeHost>
   /// True while an unlock challenge is on screen (blocks re-entrancy).
   bool _challenging = false;
 
+  /// Phase 5M: a lock requirement that arrived while a challenge was
+  /// already showing — re-presented once the current challenge closes
+  /// (never silently dropped).
+  String? _pendingPackage;
+
+  /// Phase 5M: true when the user left the app (Home button / recents)
+  /// while a challenge was up — the on-screen challenge is dismissed
+  /// and the resume path re-evaluates the foreground.
+  bool _interruptedChallenge = false;
+
+  /// Phase 5M: whether the app is currently in the foreground (drives
+  /// the pending re-presentation; tracked explicitly so tests and
+  /// platform lifecycle quirks behave deterministically).
+  bool _appForeground = true;
+
   @override
   void initState() {
     super.initState();
@@ -97,46 +112,57 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     super.dispose();
   }
 
-  /// Phase 5K: when the app resumes after a screen turn-off, enforce
-  /// the re-lock — re-evaluate the current foreground and challenge a
-  /// protected app whose session the screen-off revoked.
+  /// Phase 5K/5M lifecycle:
+  ///  * leaving the foreground (Home button / recents) while a
+  ///    challenge is showing DISMISSES it — otherwise `_challenging`
+  ///    stays true forever and every later requirement is dropped,
+  ///    letting a protected app open unchallenged;
+  ///  * resuming re-evaluates the foreground after a screen-off (5K)
+  ///    or an interrupted challenge (5M).
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      _appForeground = true;
       _onResumed();
+    } else if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused) {
+      _appForeground = false;
+      _onLeftForeground();
     }
+  }
+
+  /// Phase 5M: Home-press handling — dismiss the on-screen challenge.
+  void _onLeftForeground() {
+    if (!_challenging) {
+      return;
+    }
+    _interruptedChallenge = true;
+    // Pop the challenge route: its awaited future completes with null
+    // (Phase 5I: null never grants a session), which clears
+    // `_challenging` through the finally block below.
+    widget.navigatorKey.currentState?.pop();
   }
 
   Future<void> _onResumed() async {
     final LockTrigger? trigger = _trigger;
-    final AppContainer? container = AppScope.read(context);
-    if (trigger == null || container == null || !mounted) {
+    if (trigger == null || !mounted) {
       return;
     }
-    // Only screen-off re-lock enforcement — a plain resume (e.g. the
-    // user simply returning to Smart App Lock) must not re-challenge a
-    // still-valid session.
-    if (!trigger.takeScreenOffPending()) {
+    // Re-lock enforcement only after a screen-off (5K) or an
+    // interrupted challenge (5M) — a plain resume must not re-challenge
+    // a still-valid session.
+    final bool screenOff = trigger.takeScreenOffPending();
+    if (!screenOff && !_interruptedChallenge) {
       return;
     }
-    // Refresh detection, then evaluate the last known foreground.
-    await container.foregroundMonitor.probe();
-    if (!mounted) {
+    if (_challenging) {
+      // The challenge dismissed by the Home press is still popping;
+      // its finally block re-evaluates (the interrupted flag stays set
+      // until then).
       return;
     }
-    final String? current = container.foregroundMonitor.currentPackage;
-    if (current == null) {
-      return;
-    }
-    final AccessDecision decision =
-        await container.accessController.evaluate(current);
-    if (!mounted) {
-      return;
-    }
-    if (decision == AccessDecision.challenge ||
-        decision == AccessDecision.deny) {
-      await _presentChallenge(current);
-    }
+    _interruptedChallenge = false;
+    await _reevaluateAndChallenge();
   }
 
   Future<void> _onLockRequired(LockRequired requirement) =>
@@ -144,8 +170,17 @@ class _LockChallengeHostState extends State<LockChallengeHost>
 
   Future<void> _presentChallenge(String packageName) async {
     if (_challenging || !mounted) {
+      // Phase 5M: never silently drop a requirement — remember the
+      // latest one and re-present it when the current challenge closes.
+      if (mounted) {
+        _pendingPackage = packageName;
+      }
       return;
     }
+    // A fresh presentation supersedes any stale pending requirement
+    // (this call IS the newest requirement, or the re-presentation of
+    // the pending one — either way the pending slot must not linger).
+    _pendingPackage = null;
     final AppContainer? container = AppScope.read(context);
     if (container == null) {
       return;
@@ -167,6 +202,9 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     }
 
     _challenging = true;
+    // A fresh challenge supersedes the interrupted state (Home-press
+    // dismissal) — nothing is pending to re-evaluate anymore.
+    _interruptedChallenge = false;
     try {
       // Phase 5F: route by the user's PRIMARY credential (the one they
       // enrolled last), not a hardcoded PIN preference. Both PIN and
@@ -204,8 +242,70 @@ class _LockChallengeHostState extends State<LockChallengeHost>
         await container.installedAppsService.launchApp(packageName);
       }
     } finally {
-      _challenging = false;
+      _afterChallengeClosed();
     }
+  }
+
+  /// Phase 5M: runs whenever a challenge closes (completed, cancelled,
+  /// or dismissed by a Home press). An interrupted challenge whose pop
+  /// just completed re-evaluates the foreground; otherwise a pending
+  /// requirement re-presents — both only while the app is foreground.
+  void _afterChallengeClosed() {
+    _challenging = false;
+    if (_interruptedChallenge && _appForeground && mounted) {
+      _interruptedChallenge = false;
+      _reevaluateAndChallenge();
+      return;
+    }
+    _maybePresentPending();
+  }
+
+  /// Phase 5M: re-probes detection and challenges the current
+  /// foreground when the access decision demands it (shared by the
+  /// resume path and the interrupted-challenge path).
+  Future<void> _reevaluateAndChallenge() async {
+    final LockTrigger? trigger = _trigger;
+    final AppContainer? container = AppScope.read(context);
+    if (trigger == null || container == null || !mounted) {
+      return;
+    }
+    await container.foregroundMonitor.probe();
+    if (!mounted) {
+      return;
+    }
+    final String? current = container.foregroundMonitor.currentPackage;
+    if (current == null) {
+      return;
+    }
+    final AccessDecision decision =
+        await container.accessController.evaluate(current);
+    if (!mounted) {
+      return;
+    }
+    if (decision == AccessDecision.challenge ||
+        decision == AccessDecision.deny) {
+      await _presentChallenge(current);
+    }
+  }
+
+  /// Phase 5M: after a challenge closes, re-present a requirement that
+  /// arrived while it was showing — but only when the app is actually
+  /// in the foreground (a Home-press during the challenge leaves the
+  /// re-presentation to the resume path instead of fighting the user's
+  /// Home press).
+  void _maybePresentPending() {
+    final String? pending = _pendingPackage;
+    if (pending == null || !mounted || !_appForeground) {
+      return;
+    }
+    _pendingPackage = null;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      // Skip when a NEWER requirement already took over (it either
+      // presents directly or fills the pending slot for its own cycle).
+      if (mounted && !_challenging && _pendingPackage == null) {
+        _presentChallenge(pending);
+      }
+    });
   }
 
   @override
