@@ -265,3 +265,25 @@ Device QA (Phase 5B is explicitly a device exercise):
 | 2 | Null-probe state | Revoke Usage Access → watch the counters | Null-probe counter climbs; nothing fabricated |
 | 3 | Fallback path | Enable Accessibility → repeat the app-hopping | Events logged as `a11y` |
 | 4 | Both paths | Both capabilities on | Transitions from either path, deduplicated |
+
+---
+
+# Phase 5C — Protected-App Matching
+
+Automated suites: `test/protection/protected_app_matcher_test.dart`,
+`test/ui/detection_diagnostics_test.dart` (match-pill scenarios).
+
+| # | Scenario | Expected |
+| - | -------- | -------- |
+| 1 | Protected package matched | `protected`, `isProtected == true` |
+| 2 | Unknown package matched | `notProtected` |
+| 3 | Protection removed mid-session | Decision flips protected → notProtected live |
+| 4 | Empty / blank package | `notProtected` (never protected) |
+| 5 | Repository failure | `unknown` — the matcher never guesses |
+| 6 | `matchChange` | Consumes a `ForegroundAppChange` directly |
+| 7 | Diagnostics pill (protected) | Current package shows `Protected` |
+| 8 | Diagnostics pill (unprotected) | Current package shows `Not protected` |
+
+Device QA: on the diagnostics screen, protect an app on the Apps tab,
+then switch to it and back — the pill must read `Protected`; switch to
+an unprotected app — `Not protected`.

@@ -864,3 +864,24 @@ DetectionDiagnosticsScreen (ui/diagnostics)
   tucked behind developer settings once the lock engine lands.
 - Test loop on the device: open many other apps, return — each
   foreground switch is logged with its detection source.
+
+## 5C. Protected-app matching
+
+Decides whether a detected foreground package exists in the protected
+list:
+
+```
+ProtectedAppMatcher (protection)
+  └─ repository.isProtected(package)
+        ├─ true  -> ProtectedMatchDecision.protected
+        ├─ false -> ProtectedMatchDecision.notProtected
+        └─ failure -> ProtectedMatchDecision.unknown (never a guess)
+```
+
+- `matchChange(ForegroundAppChange)` is the exact wiring the lock
+  engine consumes in 5D+.
+- `AppContainer.protectedAppMatcher` is the single shared instance,
+  wired to the repository the Apps tab writes (no second source of
+  truth).
+- The diagnostics screen (5B) exposes the live decision as a pill so
+  5C can be verified on-device before enforcement exists.

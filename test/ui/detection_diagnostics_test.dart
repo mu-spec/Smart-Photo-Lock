@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:smart_app_lock/app/app_container.dart';
 import 'package:smart_app_lock/app/app_scope.dart';
 import 'package:smart_app_lock/app/theme/app_theme.dart';
+import 'package:smart_app_lock/data/models/protected_app.dart';
 import 'package:smart_app_lock/services/impl/static_accessibility_lock_service.dart';
 import 'package:smart_app_lock/services/impl/static_installed_apps_service.dart';
 import 'package:smart_app_lock/ui/screens/diagnostics/detection_diagnostics_screen.dart';
@@ -145,5 +146,38 @@ void main() {
 
     expect(find.text(DetectionDiagnosticsScreen.noContainerMessage),
         findsOneWidget);
+  });
+
+  testWidgets('a protected current package shows the Protected pill '
+      '(Phase 5C)', (WidgetTester tester) async {
+    final AppContainer container = await pumpScreen(tester);
+    await container.protectedApps.add(
+      ProtectedApp(
+        packageName: 'com.whatsapp',
+        label: 'WhatsApp',
+        addedAt: DateTime(2026, 8, 21),
+      ),
+    );
+    final StaticInstalledAppsService apps =
+        container.installedAppsService as StaticInstalledAppsService;
+    apps.foregroundPackage = 'com.whatsapp';
+    await container.foregroundMonitor.probe();
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('diag_match')), findsOneWidget);
+    expect(find.text('Protected'), findsOneWidget);
+  });
+
+  testWidgets('an unprotected current package shows Not protected '
+      '(Phase 5C)', (WidgetTester tester) async {
+    final AppContainer container = await pumpScreen(tester);
+    final StaticInstalledAppsService apps =
+        container.installedAppsService as StaticInstalledAppsService;
+    apps.foregroundPackage = 'com.example.chat';
+    await container.foregroundMonitor.probe();
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('diag_match')), findsOneWidget);
+    expect(find.text('Not protected'), findsOneWidget);
   });
 }

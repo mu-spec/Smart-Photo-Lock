@@ -56,6 +56,7 @@ implemented yet.
 | 4G | Permission regression (grant / deny / revoke paths) | ✅ |
 | 5A | Foreground app detection (usage-stats primary + accessibility fallback) | ✅ |
 | 5B | Detection diagnostics (on-device verification of foreground transitions) | ✅ |
+| 5C | Protected-app matching (foreground package ↔ protected list) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -569,7 +570,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.2.1 / 9.4.1 / built-in Kotlin with KGP 2.3.20 (settings classpath `apply false` + buildscript; `android.builtInKotlin=true`; AGP legacy-DSL compat `android.newDsl=false` until the Flutter tool finishes its new-DSL migration) |
 | Java | 17 |
-| versionName / versionCode | `0.35.1` / `66` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.35.2` / `67` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM), `local_auth` (biometrics) |
 
 ## Prerequisites (on your machine)
@@ -919,6 +920,27 @@ device ("test many applications"):
   current foreground package and a log entry. (Detection runs while
   Smart App Lock is open; background detection arrives with the
   watcher phase.)
+
+### Phase 5C ✅ — Protected-App Matching
+
+Determines whether a detected foreground package exists in the
+protected-app repository — the bridge between detection (5A) and
+enforcement (5D+):
+
+- **`ProtectedAppMatcher`** (`lib/protection/protected_app_matcher.dart`)
+  — matches a package against the SAME repository the Apps tab writes,
+  answering `ProtectedMatch` with one of three decisions: **protected**,
+  **notProtected**, or **unknown** (repository failure — the matcher
+  never guesses).
+- **Fail-closed** — empty/blank packages can never be protected; a
+  repository failure yields `unknown` for the lock engine to decide.
+- **`matchChange`** — consumes a `ForegroundAppChange` directly: the
+  wiring the lock engine will use.
+- **Shared instance** — `AppContainer.protectedAppMatcher`, wired to
+  `protectedApps` once.
+- **Diagnostics integration** — the 5B screen now shows a
+  Protected / Not protected / Unknown pill (`diag_match`) for the
+  current foreground package, so matching is verifiable on-device.
 
 ## Next phases
 

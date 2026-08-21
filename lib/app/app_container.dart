@@ -20,6 +20,7 @@ import '../data/storage/key_value_store.dart';
 import '../data/storage/local_database.dart';
 import '../data/storage/preferences_store.dart';
 import '../protection/foreground_app_monitor.dart';
+import '../protection/protected_app_matcher.dart';
 import '../security/encryption/settings_cipher.dart';
 import '../security/encryption/settings_cipher_impl.dart';
 import '../security/credentials/credential_manager.dart';
@@ -87,6 +88,11 @@ class AppContainer {
       installedApps: installedAppsService,
       accessibility: accessibilityService,
     );
+    // Phase 5C: matching a detected foreground package against the
+    // protected list. Wired to the SAME repository the Apps tab writes
+    // — one shared instance for diagnostics now and the lock engine in
+    // 5D+.
+    protectedAppMatcher = ProtectedAppMatcher(repository: protectedApps);
     // Biometric foundation (Phase 2J): platform BiometricPrompt bridge.
     // Tests may override it with a fake for deterministic availability
     // states; production always uses the real local_auth service.
@@ -232,6 +238,9 @@ class AppContainer {
   /// accessibility fallback), shared app-wide. Started/stopped by the
   /// lock engine phase — 5A delivers detection only.
   late final ForegroundAppMonitor foregroundMonitor;
+
+  /// Phase 5C: protected-app matching over the shared repository.
+  late final ProtectedAppMatcher protectedAppMatcher;
 
   /// The shared accessibility capability bridge (Phase 4C) — detection
   /// fallback state + settings routing. One instance for UI and, later,

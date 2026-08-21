@@ -6,6 +6,7 @@ import '../../../app/app_container.dart';
 import '../../../app/app_scope.dart';
 import '../../../design_system/design_system.dart';
 import '../../../protection/foreground_app_monitor.dart';
+import '../../../protection/protected_app_matcher.dart';
 
 /// Phase 5B — developer diagnostics for foreground detection.
 ///
@@ -58,6 +59,10 @@ class _DetectionDiagnosticsScreenState
   /// open and on demand).
   bool? _accessibilityEnabled;
 
+  /// Phase 5C: matching decision for the CURRENT foreground package
+  /// (null while nothing is known yet).
+  ProtectedMatchDecision? _matchDecision;
+
   int _tick = 0;
 
   @override
@@ -67,9 +72,18 @@ class _DetectionDiagnosticsScreenState
     _monitor = container?.foregroundMonitor;
     if (_monitor != null) {
       _subscription = _monitor!.changes.listen(_onChange);
-      _monitor!.start(); // diagnostics auto-run while the screen is open
+      _initDetection();
     }
     _refreshAccessibility();
+  }
+
+  /// Starts detection, then matches whatever the baseline probe found.
+  Future<void> _initDetection() async {
+    await _monitor?.start();
+    if (!mounted) {
+      return;
+    }
+    await _refreshMatch();
   }
 
   @override
@@ -90,6 +104,27 @@ class _DetectionDiagnosticsScreenState
         _log.removeLast();
       }
     });
+    _refreshMatch();
+  }
+
+  /// Phase 5C: matches the current foreground package against the
+  /// protected-app repository and exposes the decision.
+  Future<void> _refreshMatch() async {
+    final ForegroundAppMonitor? monitor = _monitor;
+    final String? package = monitor?.currentPackage;
+    final AppContainer? container = AppScope.read(context);
+    if (monitor == null || package == null || container == null) {
+      if (mounted) {
+        setState(() => _matchDecision = null);
+      }
+      return;
+    }
+    final ProtectedMatch match =
+        await container.protectedAppMatcher.match(package);
+    if (!mounted || match.packageName != _monitor?.currentPackage) {
+      return; // stale result — a newer change event refreshes it
+    }
+    setState(() => _matchDecision = match.decision);
   }
 
   Future<void> _refreshAccessibility() async {
@@ -166,6 +201,30 @@ class _DetectionDiagnosticsScreenState
                             showDot: monitor.isRunning,
                           ),
                           const SizedBox(width: DsSpacing.sm + 2),
+                          // Phase 5C: is the CURRENT app in the protected
+                          // list? (Hidden until the first match resolves.)
+                          if (_matchDecision != null) ...<Widget>[
+                            DsStatusPill(
+                              key: const Key('diag_match'),
+                              label: switch (_matchDecision!) {
+                                ProtectedMatchDecision.protected =>
+                                  'Protected',
+                                ProtectedMatchDecision.notProtected =>
+                                  'Not protected',
+                                ProtectedMatchDecision.unknown => 'Unknown',
+                              },
+                              tone: switch (_matchDecision!) {
+                                ProtectedMatchDecision.protected =>
+                                  DsTone.success,
+                                ProtectedMatchDecision.notProtected =>
+                                  DsTone.neutral,
+                                ProtectedMatchDecision.unknown =>
+                                  DsTone.warning,
+                              },
+                              showDot: false,
+                            ),
+                            const SizedBox(width: DsSpacing.sm + 2),
+                          ],
                           DsButton(
                             key: const Key('diag_toggle'),
                             label: monitor.isRunning ? 'Stop' : 'Start',
