@@ -13,7 +13,7 @@ class HomeScreen extends StatelessWidget {
   final ValueChanged<int>? onNavigate;
 
   /// Exact label shown in the header chip (also asserted in widget tests).
-  static const String phaseLabel = 'Phase 5 Underway';
+  static const String phaseLabel = 'Phase 5 Complete';
 
   @override
   Widget build(BuildContext context) {

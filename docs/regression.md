@@ -715,3 +715,59 @@ Lock from recents (or enable "Don't keep activities" and background
 it), then reopen Smart App Lock — the challenge must be back (or the
 instant WhatsApp is opened again), never an unlocked shell. With a
 challenge up, background + return — the recents thumbnail stays blank.
+
+---
+
+# Phase 5U — Core Lock Regression (LOCK ENGINE COMPLETE)
+
+The complete lock-engine QA gauntlet:
+`test/regression/lock_engine_regression_test.dart` — 12 end-to-end
+scenarios through the PRODUCTION wiring (monitor → matcher →
+controller → trigger → host → router → unlock screens).
+
+| # | Gauntlet scenario | Verdict |
+| - | ----------------- | ------- |
+| 1 | Protect → challenge → correct PIN → launch → leave re-locks → unlock again | ✅ full cycle |
+| 2 | Wrong PIN | ✅ blocked (no session, no launch) |
+| 3 | Back ×4 | ✅ challenge persists every time |
+| 4 | Home + re-open | ✅ re-challenges; never opens unlocked |
+| 5 | Recents task switch | ✅ challenge returns; no unlocked pass |
+| 6 | Cancelled gestures ×2 | ✅ challenge untouched; no extra bring-to-front |
+| 7 | Rapid P→U→P storm | ✅ one challenge; no stacking; no launch |
+| 8 | Sleep/wake | ✅ wake re-challenges; no unlocked reveal |
+| 9 | Grace window (30s) | ✅ quick returns pass; post-grace re-locks |
+| 10 | Pattern gate | ✅ wrong blocked; correct grants + launches |
+| 11 | Process death mid-challenge | ✅ recovers locked over persisted stores |
+| 12 | No credential | ✅ fail-safe; nothing bricks; nothing grants |
+
+**CRITICAL CHECKPOINT: PASSED** — ordinary protected-app access
+cannot reproducibly bypass authentication. Every surface re-presents
+or re-challenges; no bypass grants a session or launches a protected
+app.
+
+## Phase 5 device QA — the complete walk-through
+
+| # | Test | Steps | Expected |
+| - | ---- | ----- | -------- |
+| 1 | Core cycle | Protect WhatsApp, set a PIN, open WhatsApp | Challenge appears; correct PIN opens WhatsApp automatically |
+| 2 | Wrong credential | Fail the PIN 3 times | Countdown lockout; WhatsApp unreachable until it ends |
+| 3 | Back | Press Back repeatedly on the challenge | Challenge stays every time |
+| 4 | Home | Press Home on the challenge, re-open WhatsApp | Challenge returns; never opens unlocked |
+| 5 | Recents | Challenge up → Recents | Smart App Lock thumbnail blank; tapping WhatsApp's task re-challenges |
+| 6 | Gestures | Swipe-up and cancel; edge-back | Challenge stays / bounces back; never exposes the app UI |
+| 7 | Rapid switching | Spam WhatsApp ↔ launcher | One challenge, never stacked |
+| 8 | Screen off/on | Unlock, power off, power on | Challenge on wake (or the moment the app is reachable) |
+| 9 | Grace | Set 30s delay; hop apps within it, then past it | No prompts inside grace; one prompt after |
+| 10 | Reboot | Unlock, reboot, open WhatsApp, then Smart App Lock | Locked from the moment Smart App Lock runs again |
+| 11 | Process kill | Challenge up → force-stop → reopen | Challenge back immediately |
+
+| # | Defect | Severity | Status |
+| - | ------ | -------- | ------ |
+| — | None found at handoff | — | — |
+
+Known boundaries (documented, not defects): until the overlay lock
+window lands, the challenge appears inside Smart App Lock itself
+(bring-to-front), and on devices restricting background activity
+launches the challenge presents the instant Smart App Lock becomes
+visible. The watcher foreground service (background detection while
+Smart App Lock is not running) is a later phase.

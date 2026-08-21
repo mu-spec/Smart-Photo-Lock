@@ -5,14 +5,19 @@ Development follows the PRD phase plan; this repository is the production
 Android project.
 
 **Current status: Phase 1 complete (1A–1G), Phase 2 complete (2A–2L),
-Phase 3 complete (3A–3H), Phase 4 complete (4A–4G)** — production
-scaffold, architecture, navigation, design system, persistence, secure
-storage, full authentication with settings, installed-apps management
-(discovery, list, search, filters, toggles, bulk, persistence, perf QA),
-and the complete capability/permission layer (requirements, usage
-access, accessibility, overlay, setup wizard, revocation detection,
-grant/deny/revoke regression) for the lock engine. App locking is not
-implemented yet.
+Phase 3 complete (3A–3H), Phase 4 complete (4A–4G), Phase 5 complete
+(5A–5U)** — production scaffold, architecture, navigation, design
+system, persistence, secure storage, full authentication with settings,
+installed-apps management, the complete capability/permission layer,
+and the **core lock engine**: foreground detection (usage-stats +
+accessibility), protected-app matching, the lock trigger, PIN/pattern/
+biometric gates, unlock sessions with configurable grace periods,
+immediate/screen-off re-lock, reboot & process-recreation recovery,
+and the full navigation-hardening arc (Home, Back, recents, gestures,
+rapid switching) — verified by the 12-scenario lock-engine regression
+gauntlet. The overlay lock window (rendering the challenge on top of
+the protected app) and the watcher foreground service remain for later
+phases.
 
 ---
 
@@ -74,6 +79,7 @@ implemented yet.
 | 5R | Screen off/on (sleep revokes all sessions; wake enforces the re-lock immediately) | ✅ |
 | 5S | Reboot recovery (lazy restore: baseline enforcement + persisted state, where Android allows) | ✅ |
 | 5T | Process recreation (shared-store recovery, secure re-arm on resume, fail-closed fresh states) | ✅ |
+| 5U | Core lock regression (12-scenario end-to-end gauntlet: no bypass, no stacking, graceful recovery) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -587,7 +593,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.2.1 / 9.4.1 / built-in Kotlin with KGP 2.3.20 (settings classpath `apply false` + buildscript; `android.builtInKotlin=true`; AGP legacy-DSL compat `android.newDsl=false` until the Flutter tool finishes its new-DSL migration) |
 | Java | 17 |
-| versionName / versionCode | `0.35.21` / `86` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.36.0` / `87` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM), `local_auth` (biometrics) |
 
 ## Prerequisites (on your machine)
@@ -1316,6 +1322,27 @@ Android destroying/recreating Smart App Lock recovers safely:
 - **Test seams** — `AppContainer.inMemory` accepts shared
   `database`/`secretStore` instances so tests simulate a process death
   over the persisted state.
+
+### Phase 5U ✅ — Core Lock Regression
+
+The complete lock-engine QA gauntlet (`test/regression/
+lock_engine_regression_test.dart`), walking every surface through the
+production wiring:
+
+- **12 end-to-end scenarios** — full happy path; wrong PIN blocked;
+  Back ×4 blocked; Home + re-open blocked; recents task switch
+  blocked; cancelled gestures untouched; rapid switching never opens
+  or stacks; sleep/wake never reveals the unlocked app; grace window
+  allows quick returns then re-locks; pattern gate blocks wrong
+  drawings and opens on the correct one; process death mid-challenge
+  recovers locked; no-credential fail-safe never bricks the device.
+- **CRITICAL CHECKPOINT PASSED** — ordinary protected-app access
+  cannot reproducibly bypass authentication: every navigation surface
+  (Back, Home, recents, gestures, rapid switching, screen off/on,
+  process recreation) re-presents or re-challenges, never grants.
+- Phase 5 (5A–5U) is COMPLETE. Remaining for later phases: the
+  overlay lock window (TYPE_APPLICATION_OVERLAY challenge on top of
+  the protected app) and the watcher foreground service.
 
 ## Next phases
 

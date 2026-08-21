@@ -1280,3 +1280,26 @@ queued requirements  -> re-derived from the CURRENT foreground
   that simulate the persisted stores surviving the process.
 - Window flags reset on activity recreation; the resume re-arm keeps
   the recents snapshot blank while a challenge is up.
+
+## 5U. Core lock regression (LOCK ENGINE COMPLETE)
+
+`test/regression/lock_engine_regression_test.dart` — the 12-scenario
+end-to-end gauntlet through the production wiring:
+
+```
+happy path:    protect -> detect -> trigger -> challenge -> PIN ->
+               grant -> launch -> leave re-locks -> challenge -> PIN
+bypass gauntlet (ordinary access NEVER passes):
+  wrong PIN | Back x4 | Home + re-open | recents task | cancelled
+  gestures | rapid storm | sleep/wake | process death
+  -> all re-present or re-challenge; none grant; none launch
+positive policies: grace window quick-returns; pattern gate;
+no-credential fail-safe
+```
+
+- The checkpoint holds: every navigation surface is covered by a
+  scenario that asserts no-session + no-launch before the credential
+  passes.
+- Remaining later-phase work (documented, not defects): the overlay
+  lock window (TYPE_APPLICATION_OVERLAY) and the watcher foreground
+  service.
