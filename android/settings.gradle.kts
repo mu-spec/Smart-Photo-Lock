@@ -1,6 +1,6 @@
 // Root Gradle settings for the Android build.
-// Plugin versions mirror the official `flutter create` template of the
-// current stable Flutter SDK (Aug 2026): AGP 9.1.0 + Kotlin 2.4.0.
+// AGP 9.1.0; Kotlin is provided by Flutter's built-in Kotlin support
+// (android.builtInKotlin=true) — no KGP version is declared here.
 
 pluginManagement {
     val flutterSdkPath =
@@ -24,7 +24,6 @@ pluginManagement {
 plugins {
     id("dev.flutter.flutter-plugin-loader") version "1.0.0"
     id("com.android.application") version "9.1.0" apply false
-    id("org.jetbrains.kotlin.android") version "2.4.0" apply false
 }
 
 include(":app")

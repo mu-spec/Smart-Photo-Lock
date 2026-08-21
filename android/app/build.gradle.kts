@@ -2,9 +2,11 @@ import java.util.Properties
 
 plugins {
     id("com.android.application")
-    id("kotlin-android")
-    // The Flutter Gradle Plugin must be applied after the Android and Kotlin
-    // Gradle plugins.
+    // Built-in Kotlin (Flutter-managed): the Kotlin Gradle Plugin is no
+    // longer applied manually — Flutter embeds Kotlin and AGP 9 provides
+    // the compiler-options DSL below (see android.builtInKotlin=true in
+    // gradle.properties). Applying KGP here would break future Flutter
+    // versions.
     id("dev.flutter.flutter-gradle-plugin")
 }
 
@@ -38,6 +40,8 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    // Built-in Kotlin compiler options (AGP 9 DSL). jvmTarget stays 17 to
+    // match the Java compatibility configured above.
     kotlin {
         compilerOptions {
             jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)

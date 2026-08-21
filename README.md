@@ -65,7 +65,7 @@ implemented yet.
 | Compile SDK / NDK | **37** / **28.2.13676358** (36 template + 37 for flutter_secure_storage) | `android/app/build.gradle.kts` |
 | Debug / release structure | `src/{main,debug,profile}/` + `buildTypes` (debug gets `.debug` suffix) | `android/app/` |
 | Release signing | `key.properties` (git-ignored) + debug-signing fallback so builds always compile | `android/` |
-| Toolchain | AGP 9.1.0 · Kotlin 2.4.0 · Gradle 9.3.1 · Java 17 | `android/settings.gradle.kts` |
+| Toolchain | AGP 9.1.0 · Kotlin built-in (Flutter-managed) · Gradle 9.3.1 · Java 17 | `android/settings.gradle.kts` |
 
 ### Phase 1B ✅ — Core Project Architecture
 
@@ -565,9 +565,9 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | ------- | ----- |
 | Application ID | `com.smartapplock.app` (debug builds: `com.smartapplock.app.debug`) |
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
-| AGP / Gradle / Kotlin | 9.1.0 / 9.3.1 / 2.4.0 |
+| AGP / Gradle / Kotlin | 9.1.0 / 9.3.1 / built-in (Flutter-managed, `android.builtInKotlin=true`) |
 | Java | 17 |
-| versionName / versionCode | `0.34.14` / `54` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.34.15` / `55` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM), `local_auth` (biometrics) |
 
 ## Prerequisites (on your machine)

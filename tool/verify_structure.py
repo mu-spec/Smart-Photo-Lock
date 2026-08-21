@@ -19,6 +19,9 @@ can be verified without compiling:
  11. Usage-access list membership: the main manifest declares
      PACKAGE_USAGE_STATS directly under <manifest> and no variant
      manifest removes it (Phase 4 device-QA guard).
+ 12. Built-in Kotlin migration: android.builtInKotlin=true in
+     gradle.properties and the app/settings Gradle files no longer apply
+     or pin the Kotlin Gradle Plugin.
 
 Exit code 0 = all checks green.
 Usage:  python3 tool/verify_structure.py
@@ -336,6 +339,28 @@ def run():
             )
     check("native channel handlers wire every Dart-invoked method",
           not missing_wiring, "; ".join(missing_wiring))
+
+    # 12. Built-in Kotlin migration (Flutter 3.47): the app must not apply
+    # or pin the Kotlin Gradle Plugin — future Flutter versions will fail
+    # builds that do — and the built-in Kotlin flag must be enabled.
+    gradle_props = open(
+        os.path.join(ROOT, "android/gradle.properties")
+    ).read()
+    app_gradle = open(
+        os.path.join(ROOT, "android/app/build.gradle.kts")
+    ).read()
+    settings_gradle = open(
+        os.path.join(ROOT, "android/settings.gradle.kts")
+    ).read()
+    built_in_problems = []
+    if "android.builtInKotlin=true" not in gradle_props:
+        built_in_problems.append("gradle.properties: android.builtInKotlin=true missing")
+    if 'id("kotlin-android")' in app_gradle:
+        built_in_problems.append("app/build.gradle.kts: kotlin-android plugin still applied")
+    if "org.jetbrains.kotlin.android" in settings_gradle:
+        built_in_problems.append("settings.gradle.kts: Kotlin Gradle Plugin still pinned")
+    check("built-in Kotlin migration applied (no KGP application/pin)",
+          not built_in_problems, "; ".join(built_in_problems))
 
     print()
     print(f"RESULT: {PASSES} passed, {len(FAILURES)} failed")
