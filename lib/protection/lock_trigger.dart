@@ -15,7 +15,7 @@ class LockRequired {
       'LockRequired($packageName at ${at.toIso8601String()})';
 }
 
-/// Phase 5D/5E: the basic lock trigger.
+/// Phase 5D/5E/5J: the lock trigger.
 ///
 /// Subscribes to [ForegroundAppMonitor] changes, evaluates each through
 /// the [AccessController], and emits [LockRequired] whenever the
@@ -23,6 +23,11 @@ class LockRequired {
 /// i.e. a protected application became active and must be blocked
 /// behind the PIN challenge (deny = authentication is in an active
 /// lockout; the challenge surface shows the cooldown).
+///
+/// Phase 5J adds IMMEDIATE RE-LOCK: every transition AWAY from a
+/// package revokes that package's unlock session first, so leaving a
+/// protected app re-locks it instantly — returning always requires
+/// authentication again.
 ///
 /// The trigger is a pure decision pipeline: it never presents UI and
 /// never touches the platform. The app layer listens to [lockRequired]
@@ -50,6 +55,11 @@ class LockTrigger {
   StreamSubscription<ForegroundAppChange>? _subscription;
   bool _started = false;
 
+  /// The last foreground package the trigger evaluated (Phase 5J): a
+  /// transition AWAY from it revokes that package's unlock session
+  /// immediately — leaving a protected app re-locks it.
+  String? _previousPackage;
+
   /// Lock requirements (one per protected-app activation).
   Stream<LockRequired> get lockRequired => _lockRequired.stream;
 
@@ -60,6 +70,10 @@ class LockTrigger {
       return;
     }
     _started = true;
+    // Phase 5J: seed the previous-package tracking from the monitor's
+    // last known foreground, so a restart while inside a protected app
+    // still revokes its session the moment the user leaves.
+    _previousPackage ??= _monitor.currentPackage;
     await _monitor.start();
     _subscription = _monitor.changes.listen(_onChange);
   }
@@ -88,6 +102,16 @@ class LockTrigger {
   }
 
   Future<void> _onChange(ForegroundAppChange change) async {
+    // Phase 5J: IMMEDIATE RE-LOCK — leaving the previous package ends
+    // its unlock session right now, so returning to the protected app
+    // always requires authentication again. (The inactivity window
+    // remains as a fallback for transitions detection might miss.)
+    final String? previous = _previousPackage;
+    _previousPackage = change.packageName;
+    if (previous != null && previous != change.packageName) {
+      await _controller.revokeAccess(previous);
+    }
+
     final AccessDecision decision =
         await _controller.evaluate(change.packageName);
     // Phase 5E: `challenge` requires the PIN; `deny` (authentication in

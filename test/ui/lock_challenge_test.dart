@@ -68,15 +68,9 @@ void main() {
           .sessionFor(package);
 
   testWidgets(
-      'a valid unlock session prevents repeated authentication — and '
-      'REFRESHES on re-entry (Phase 5H)', (WidgetTester tester) async {
-    // A controllable clock drives the access controller so the session
-    // window is deterministic.
-    DateTime clock = DateTime(2026, 8, 21, 9, 0);
-    final AppContainer container = await pumpApp(
-      tester,
-      accessClock: () => clock,
-    );
+      'leaving a protected app re-locks it immediately (Phase 5J)',
+      (WidgetTester tester) async {
+    final AppContainer container = await pumpApp(tester);
     await container.auth.enrollPin('1234');
     await protect(container, 'com.whatsapp');
 
@@ -100,33 +94,27 @@ void main() {
     // Phase 5I positive control: ONLY the authenticated path grants.
     expect(sessionFor(container, 'com.whatsapp'), isNotNull);
 
-    // 90 seconds later, a REAL transition back to the protected app
-    // (launcher first, then WhatsApp) must NOT re-challenge and must
-    // slide the window forward.
-    clock = DateTime(2026, 8, 21, 9, 1, 30);
+    // The user leaves WhatsApp for the launcher: the unlock session is
+    // revoked IMMEDIATELY (no re-challenge for the launcher itself).
     await openApp(tester, container, 'com.example.launcher');
     expect(find.byType(PinUnlockScreen), findsNothing);
-    await openApp(tester, container, 'com.whatsapp');
-    expect(find.byType(PinUnlockScreen), findsNothing);
+    expect(sessionFor(container, 'com.whatsapp'), isNull);
 
-    // Past the ORIGINAL 2-minute expiry (9:02:00), the refreshed window
-    // still covers the user: no re-prompt at 9:02:30.
-    clock = DateTime(2026, 8, 21, 9, 2, 30);
-    await openApp(tester, container, 'com.example.launcher');
-    await openApp(tester, container, 'com.whatsapp');
-    expect(find.byType(PinUnlockScreen), findsNothing);
-
-    // After 2+ minutes of INACTIVITY beyond the refreshed window, the
-    // next activation challenges again.
-    clock = DateTime(2026, 8, 21, 9, 6);
-    await openApp(tester, container, 'com.example.launcher');
+    // Returning to WhatsApp challenges again right away.
     await openApp(tester, container, 'com.whatsapp');
     expect(find.byType(PinUnlockScreen), findsOneWidget);
   });
 
-  testWidgets('the open unlock window suppresses an immediate re-challenge',
+  testWidgets(
+      're-lock is immediate — no grace window after leaving (Phase 5J)',
       (WidgetTester tester) async {
-    final AppContainer container = await pumpApp(tester);
+    // A controllable clock proves the re-lock happens well INSIDE the
+    // old 2-minute session window: leaving ends the session at once.
+    DateTime clock = DateTime(2026, 8, 21, 9, 0);
+    final AppContainer container = await pumpApp(
+      tester,
+      accessClock: () => clock,
+    );
     await container.auth.enrollPin('1234');
     await protect(container, 'com.whatsapp');
 
@@ -137,11 +125,15 @@ void main() {
       await tester.pumpAndSettle();
     }
     expect(find.byType(PinUnlockScreen), findsNothing);
+    expect(sessionFor(container, 'com.whatsapp'), isNotNull);
 
-    // A real switch away and back: the session allows re-entry.
+    // Only 30 seconds pass — deep inside the old inactivity window —
+    // yet leaving and returning must challenge immediately.
+    clock = DateTime(2026, 8, 21, 9, 0, 30);
     await openApp(tester, container, 'com.example.launcher');
+    expect(sessionFor(container, 'com.whatsapp'), isNull);
     await openApp(tester, container, 'com.whatsapp');
-    expect(find.byType(PinUnlockScreen), findsNothing);
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
   });
 
   testWidgets('an unprotected app produces no challenge',

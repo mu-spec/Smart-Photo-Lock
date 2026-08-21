@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:smart_app_lock/app/app_container.dart';
 import 'package:smart_app_lock/data/models/protected_app.dart';
 import 'package:smart_app_lock/protection/access_controller.dart';
+import 'package:smart_app_lock/protection/impl/default_access_controller.dart';
 import 'package:smart_app_lock/protection/lock_trigger.dart';
 import 'package:smart_app_lock/services/impl/static_accessibility_lock_service.dart';
 import 'package:smart_app_lock/services/impl/static_installed_apps_service.dart';
@@ -132,5 +133,68 @@ void main() {
     await container.foregroundMonitor.probe();
     await Future<void>.delayed(Duration.zero);
     expect(requirements, hasLength(1)); // stopped: nothing new
+  });
+
+  // -- immediate re-lock (Phase 5J) -----------------------------------------
+
+  test('leaving a protected app revokes its session immediately',
+      () async {
+    await protect('com.whatsapp');
+    final DefaultAccessController controller =
+        container.accessController as DefaultAccessController;
+    await controller.grantAccess('com.whatsapp');
+    expect(controller.sessionFor('com.whatsapp'), isNotNull);
+
+    await trigger.start();
+    final StaticInstalledAppsService installed =
+        container.installedAppsService as StaticInstalledAppsService;
+
+    // The user leaves WhatsApp for the launcher: the transition away
+    // must revoke the session instantly — even though no new challenge
+    // is required for the launcher itself.
+    installed.foregroundPackage = 'com.example.launcher';
+    await container.foregroundMonitor.probe();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(controller.sessionFor('com.whatsapp'), isNull);
+    expect(requirements, isEmpty); // the launcher is unprotected
+
+    // Returning to WhatsApp now challenges again: immediate re-lock.
+    installed.foregroundPackage = 'com.whatsapp';
+    await container.foregroundMonitor.probe();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(requirements, hasLength(1));
+    expect(requirements.single.packageName, 'com.whatsapp');
+
+    await trigger.stop();
+  });
+
+  test('a restart while inside the protected app still re-locks on leave',
+      () async {
+    await protect('com.whatsapp');
+    final DefaultAccessController controller =
+        container.accessController as DefaultAccessController;
+    await controller.grantAccess('com.whatsapp');
+
+    // The monitor's last known foreground is WhatsApp (simulating a
+    // trigger restart while the user is inside the protected app).
+    final StaticInstalledAppsService installed =
+        container.installedAppsService as StaticInstalledAppsService;
+    installed.foregroundPackage = 'com.whatsapp';
+    await container.foregroundMonitor.probe();
+
+    await trigger.start(); // seeds previous-package tracking
+    expect(controller.sessionFor('com.whatsapp'), isNotNull);
+
+    // Leaving must still revoke, even though the trigger never saw the
+    // entry transition.
+    installed.foregroundPackage = 'com.example.launcher';
+    await container.foregroundMonitor.probe();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(controller.sessionFor('com.whatsapp'), isNull);
+
+    await trigger.stop();
   });
 }

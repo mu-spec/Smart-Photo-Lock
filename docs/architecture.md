@@ -1016,3 +1016,23 @@ LockChallengeHost:
 - The manager already fails closed: hash-verify gated success, lockout
   blocks even correct input, legacy pattern hashes rejected,
   availability errors never count as attempts.
+
+## 5J. Immediate re-lock
+
+Leaving a protected application ends its unlock session immediately:
+
+```
+LockTrigger._onChange(change):
+  previous = _previousPackage (seeded from monitor.currentPackage on start)
+  if previous != change.packageName:
+      controller.revokeAccess(previous)      // leaving -> re-lock NOW
+  evaluate(change.packageName) -> challenge/deny -> LockRequired
+```
+
+- `AccessController` gained `revokeAccess(packageName)`; the default
+  controller removes the session entry instantly (idempotent for
+  unknown packages).
+- The 5H inactivity window remains as a fallback timeout only — the
+  trigger-level revoke supersedes it for the normal switch-away flow.
+- Restart-safe: seeding from the monitor's last known foreground means
+  a restarted trigger still revokes on the next leave transition.

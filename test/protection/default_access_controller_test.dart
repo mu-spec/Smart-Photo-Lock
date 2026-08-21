@@ -292,6 +292,31 @@ void main() {
     // The dead session was pruned from the map.
     expect(expired.sessionFor('com.whatsapp'), isNull);
   });
+
+  test('revokeAccess ends the unlock window immediately (Phase 5J)',
+      () async {
+    await protect('com.whatsapp');
+    await controller.grantAccess('com.whatsapp');
+    expect(controller.sessionFor('com.whatsapp'), isNotNull);
+    expect(
+      await controller.evaluate('com.whatsapp'),
+      AccessDecision.allow,
+    );
+
+    // Leaving the app revokes the session instantly: the next
+    // evaluation challenges again, and the map no longer holds it.
+    expect((await controller.revokeAccess('com.whatsapp')).isSuccess,
+        isTrue);
+    expect(controller.sessionFor('com.whatsapp'), isNull);
+    expect(
+      await controller.evaluate('com.whatsapp'),
+      AccessDecision.challenge,
+    );
+
+    // Revoking an unknown package is a harmless no-op.
+    expect((await controller.revokeAccess('com.example.other')).isSuccess,
+        isTrue);
+  });
 }
 
 /// [ProtectedAppsRepository] whose reads always fail — proves the

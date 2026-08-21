@@ -63,6 +63,7 @@ implemented yet.
 | 5G | Biometric integration (biometric accelerator on both unlock screens in the lock flow) | ✅ |
 | 5H | Successful unlock session (inactivity-based window; re-entry refreshes, expiry re-locks) | ✅ |
 | 5I | Authentication failure (failed auth never grants a session; enrollment ≠ authentication) | ✅ |
+| 5J | Immediate re-lock (leaving a protected app ends its unlock session at once) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -576,7 +577,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.2.1 / 9.4.1 / built-in Kotlin with KGP 2.3.20 (settings classpath `apply false` + buildscript; `android.builtInKotlin=true`; AGP legacy-DSL compat `android.newDsl=false` until the Flutter tool finishes its new-DSL migration) |
 | Java | 17 |
-| versionName / versionCode | `0.35.9` / `74` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.35.10` / `75` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM), `local_auth` (biometrics) |
 
 ## Prerequisites (on your machine)
@@ -1082,6 +1083,25 @@ every layer and proven by regression tests:
   authenticated path asserts the session exists; the enroll-from-
   recovery test proves enrollment resolves nothing (empty result list,
   entry view appears, back pops false).
+
+### Phase 5J ✅ — Immediate Re-lock
+
+Leaving a protected application ends its unlock session immediately:
+
+- **Revoke-on-leave** — `LockTrigger` tracks the previous foreground
+  package; every transition AWAY from it calls the new
+  `AccessController.revokeAccess` before evaluating the new package, so
+  returning to the protected app always requires authentication again.
+- **No grace window** — the re-lock happens instantly, well inside the
+  old 2-minute session window; the inactivity window remains only as a
+  fallback for transitions detection might miss.
+- **Restart-safe** — the trigger seeds its previous-package tracking
+  from the monitor's last known foreground on start, so a trigger
+  restart while the user is inside a protected app still revokes the
+  session the moment they leave.
+- **Policy layering** — 5H's sliding session window is superseded by
+  5J at the trigger level; the controller-level window mechanics stay
+  as the fallback timeout.
 
 ## Next phases
 

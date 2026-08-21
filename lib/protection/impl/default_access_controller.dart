@@ -83,6 +83,12 @@ class DefaultAccessController implements AccessController {
   /// (diagnostics and tests).
   LockSession? sessionFor(String packageName) => _sessions[packageName];
 
+  @override
+  Future<Result<void>> revokeAccess(String packageName) async {
+    _sessions.remove(packageName);
+    return Result.success(null);
+  }
+
   /// Test/diagnostic view of the active unlock windows.
   Map<String, LockSession> get activeSessions =>
       Map<String, LockSession>.unmodifiable(_sessions);

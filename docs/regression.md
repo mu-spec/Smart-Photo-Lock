@@ -432,3 +432,25 @@ Device QA: open a protected app, fail the credential, verify the app
 stays blocked and re-opening it always asks again. From a no-credential
 state (fresh install), set up the PIN from the challenge and confirm the
 app does NOT open until the PIN is actually entered afterwards.
+
+---
+
+# Phase 5J — Immediate Re-lock
+
+Automated suites: `test/protection/lock_trigger_test.dart` (5J group),
+`test/protection/default_access_controller_test.dart` (revokeAccess),
+`test/ui/lock_challenge_test.dart` (re-lock flows).
+
+| # | Scenario | Expected |
+| - | -------- | -------- |
+| 1 | `revokeAccess` after grant | Session removed; evaluate challenges again; unknown package is a no-op |
+| 2 | Transition away from a protected app | Session revoked instantly; launcher passes unchallenged |
+| 3 | Return to the protected app | Challenge required again (immediate re-lock) |
+| 4 | Trigger restart while inside the app | Previous-package seeding still revokes on leave |
+| 5 | Widget: unlock -> leave -> return | Challenge appears; session was null after leaving |
+| 6 | Widget: 30s after unlock (inside old window) | Leave + return challenges — no grace period |
+
+NOTE: 5J supersedes the 5H re-entry expectations (5H rows 5/6): the
+widget tests that asserted "no challenge on re-entry within the window"
+were replaced by the immediate re-lock flows above. The controller-level
+inactivity window remains as a fallback timeout.

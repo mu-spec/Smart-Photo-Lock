@@ -26,4 +26,8 @@ abstract interface class AccessController {
   /// Called after a successful PIN challenge: opens a temporary unlock
   /// window for [packageName].
   Future<Result<LockSession>> grantAccess(String packageName);
+
+  /// Phase 5J: immediately ends the unlock window for [packageName] —
+  /// the protected app re-locks the moment the user leaves it.
+  Future<Result<void>> revokeAccess(String packageName);
 }
