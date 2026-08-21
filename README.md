@@ -61,6 +61,7 @@ implemented yet.
 | 5E | PIN integration (PIN gates protected-app access; lockout denies; app relaunched on success) | ✅ |
 | 5F | Pattern integration (primary-credential challenge routing; pattern gates + launch) | ✅ |
 | 5G | Biometric integration (biometric accelerator on both unlock screens in the lock flow) | ✅ |
+| 5H | Successful unlock session (inactivity-based window; re-entry refreshes, expiry re-locks) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -574,7 +575,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.2.1 / 9.4.1 / built-in Kotlin with KGP 2.3.20 (settings classpath `apply false` + buildscript; `android.builtInKotlin=true`; AGP legacy-DSL compat `android.newDsl=false` until the Flutter tool finishes its new-DSL migration) |
 | Java | 17 |
-| versionName / versionCode | `0.35.6` / `71` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.35.7` / `72` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM), `local_auth` (biometrics) |
 
 ## Prerequisites (on your machine)
@@ -1034,6 +1035,24 @@ accelerator on the challenge surface:
   authenticate) unless `BiometricOptions` were explicitly configured;
   the existing fail-closed manager policy (not-configured / not-available)
   is unchanged.
+
+### Phase 5H ✅ — Successful Unlock Session
+
+After successful authentication, repeated authentication is prevented
+while the unlock session remains valid:
+
+- **Inactivity-based window** — the 2-minute session is now a SLIDING
+  window: every allowed re-entry to the protected app restarts the
+  clock (`LockSession.refresh`), so a user actively using the app is
+  never re-prompted mid-session.
+- **Expiry re-locks** — after 2 minutes of inactivity the session
+  expires and the next activation challenges again; expired sessions
+  are pruned from the controller's map (only live sessions are kept).
+- **Real re-entry evaluation** — the lock flow's end-to-end tests now
+  exercise genuine transitions (switch away → switch back), proving the
+  session — not event deduplication — is what suppresses the challenge.
+- **Test seam** — `AppContainer.inMemory({accessClock})` lets tests
+  drive the access controller with a deterministic clock.
 
 ## Next phases
 

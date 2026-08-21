@@ -23,12 +23,16 @@ void main() {
     WidgetTester tester, {
     AppContainer? container,
     BiometricService? biometrics,
+    DateTime Function()? accessClock,
   }) async {
     tester.view.physicalSize = const Size(800, 1600);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
-    final AppContainer c =
-        container ?? AppContainer.inMemory(biometrics: biometrics);
+    final AppContainer c = container ??
+        AppContainer.inMemory(
+          biometrics: biometrics,
+          accessClock: accessClock,
+        );
     await tester.pumpWidget(SmartAppLockApp(container: c));
     await tester.pumpAndSettle();
     return c;
@@ -56,25 +60,25 @@ void main() {
       );
 
   testWidgets(
-      'a protected app becoming active presents the PIN challenge; a '
-      'correct PIN unlocks the session and launches the app (Phase 5E)',
-      (WidgetTester tester) async {
-    final AppContainer container = await pumpApp(tester);
+      'a valid unlock session prevents repeated authentication — and '
+      'REFRESHES on re-entry (Phase 5H)', (WidgetTester tester) async {
+    // A controllable clock drives the access controller so the session
+    // window is deterministic.
+    DateTime clock = DateTime(2026, 8, 21, 9, 0);
+    final AppContainer container = await pumpApp(
+      tester,
+      accessClock: () => clock,
+    );
     await container.auth.enrollPin('1234');
     await protect(container, 'com.whatsapp');
 
+    // First activation challenges.
     await openApp(tester, container, 'com.whatsapp');
-
-    // The challenge is up.
     expect(find.byType(PinUnlockScreen), findsOneWidget);
-    expect(find.text(PinUnlockScreen.wrongPinPrefix), findsNothing);
     final StaticOverlayLockService overlay =
         container.overlay as StaticOverlayLockService;
     expect(overlay.showLockChallengeCalls, 1);
     expect(overlay.lastLockPackage, 'com.whatsapp');
-
-    // Correct PIN -> the screen pops, the session is granted, and the
-    // protected app is LAUNCHED (Phase 5E: the PIN gates the access).
     for (final String digit in <String>['1', '2', '3', '4']) {
       await tester.tap(find.byKey(Key('pin_key_$digit')));
       await tester.pumpAndSettle();
@@ -86,7 +90,46 @@ void main() {
     expect(apps.launchAppCalls, 1);
     expect(apps.launchedPackages, <String>['com.whatsapp']);
 
-    // The open unlock window suppresses an immediate re-challenge.
+    // 90 seconds later, a REAL transition back to the protected app
+    // (launcher first, then WhatsApp) must NOT re-challenge and must
+    // slide the window forward.
+    clock = DateTime(2026, 8, 21, 9, 1, 30);
+    await openApp(tester, container, 'com.example.launcher');
+    expect(find.byType(PinUnlockScreen), findsNothing);
+    await openApp(tester, container, 'com.whatsapp');
+    expect(find.byType(PinUnlockScreen), findsNothing);
+
+    // Past the ORIGINAL 2-minute expiry (9:02:00), the refreshed window
+    // still covers the user: no re-prompt at 9:02:30.
+    clock = DateTime(2026, 8, 21, 9, 2, 30);
+    await openApp(tester, container, 'com.example.launcher');
+    await openApp(tester, container, 'com.whatsapp');
+    expect(find.byType(PinUnlockScreen), findsNothing);
+
+    // After 2+ minutes of INACTIVITY beyond the refreshed window, the
+    // next activation challenges again.
+    clock = DateTime(2026, 8, 21, 9, 6);
+    await openApp(tester, container, 'com.example.launcher');
+    await openApp(tester, container, 'com.whatsapp');
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+  });
+
+  testWidgets('the open unlock window suppresses an immediate re-challenge',
+      (WidgetTester tester) async {
+    final AppContainer container = await pumpApp(tester);
+    await container.auth.enrollPin('1234');
+    await protect(container, 'com.whatsapp');
+
+    await openApp(tester, container, 'com.whatsapp');
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+    for (final String digit in <String>['1', '2', '3', '4']) {
+      await tester.tap(find.byKey(Key('pin_key_$digit')));
+      await tester.pumpAndSettle();
+    }
+    expect(find.byType(PinUnlockScreen), findsNothing);
+
+    // A real switch away and back: the session allows re-entry.
+    await openApp(tester, container, 'com.example.launcher');
     await openApp(tester, container, 'com.whatsapp');
     expect(find.byType(PinUnlockScreen), findsNothing);
   });

@@ -57,7 +57,14 @@ class DefaultAccessController implements AccessController {
     }
     final LockSession? session = _sessions[packageName];
     if (session != null && session.isActiveAt(_now())) {
+      // Phase 5H: an allowed re-entry REFRESHES the inactivity window —
+      // active use of the protected app never re-prompts mid-session.
+      _sessions[packageName] = session.refresh(_now());
       return AccessDecision.allow;
+    }
+    if (session != null) {
+      // Expired — prune it so the map only ever holds live sessions.
+      _sessions.remove(packageName);
     }
     return AccessDecision.challenge;
   }
@@ -71,6 +78,10 @@ class DefaultAccessController implements AccessController {
     _sessions[packageName] = session;
     return Result.success(session);
   }
+
+  /// Phase 5H: the session currently open for [packageName], or null
+  /// (diagnostics and tests).
+  LockSession? sessionFor(String packageName) => _sessions[packageName];
 
   /// Test/diagnostic view of the active unlock windows.
   Map<String, LockSession> get activeSessions =>

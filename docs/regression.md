@@ -388,3 +388,24 @@ Device QA: enroll biometric unlock in Security, protect WhatsApp, open
 it — the challenge shows the fingerprint option; authenticate and
 WhatsApp opens automatically; cancel the prompt and the app stays
 locked.
+
+---
+
+# Phase 5H — Successful Unlock Session
+
+Automated suites: `test/protection/lock_session_test.dart`,
+`test/protection/default_access_controller_test.dart`,
+`test/ui/lock_challenge_test.dart`.
+
+| # | Scenario | Expected |
+| - | -------- | -------- |
+| 1 | `LockSession.refresh` | Expiry slides; original instance unchanged |
+| 2 | Allowed re-entry refreshes the window | Session expiry moves to now+2min |
+| 3 | Use past the ORIGINAL expiry (refreshed) | Still allowed — no re-prompt |
+| 4 | 2+ min inactivity | Challenge again; session pruned from map |
+| 5 | Real transition re-entry (widget, clocked) | No challenge within window |
+| 6 | Clocked inactivity beyond window (widget) | Challenge returns |
+
+Device QA: unlock WhatsApp, keep using it (switch away/back within
+2 minutes) — no re-prompt. Leave it idle for 2+ minutes and return —
+the challenge asks again.

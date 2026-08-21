@@ -976,3 +976,22 @@ Unlock challenge (PIN or pattern primary)
   surfaces now honor the user's biometric opt-in.
 - The manager's configuration gates are untouched: biometric requires
   enrolled primary credential + explicit `BiometricOptions`.
+
+## 5H. Successful unlock session
+
+Repeated authentication is prevented while the unlock session is valid:
+
+```
+grantAccess(package)      -> LockSession(window = 2 min inactivity)
+evaluate(package):
+  ├─ session active        -> allow + session.refresh(now)  (sliding window)
+  ├─ session expired       -> prune session, challenge
+  └─ no session            -> challenge
+```
+
+- The window measures time since LAST protected-app use: active use
+  never re-prompts; 2 minutes of inactivity re-locks.
+- The session map holds only live sessions (expired entries pruned on
+  evaluation).
+- `AppContainer.inMemory(accessClock: ...)` is the test seam for
+  deterministic session windows in end-to-end flows.

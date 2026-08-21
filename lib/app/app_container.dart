@@ -119,6 +119,7 @@ class AppContainer {
     accessController = DefaultAccessController(
       matcher: protectedAppMatcher,
       auth: auth,
+      now: accessClock,
     );
     lockTrigger = LockTrigger(
       monitor: foregroundMonitor,
@@ -176,6 +177,7 @@ class AppContainer {
     bool usageAccessGranted = true,
     bool accessibilityEnabled = false,
     bool overlayGranted = false,
+    DateTime Function()? accessClock,
   }) {
     final InstalledAppsService installedAppsService =
         StaticInstalledAppsService(

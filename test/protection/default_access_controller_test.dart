@@ -232,6 +232,66 @@ void main() {
       AccessDecision.deny,
     );
   });
+
+  test('an allowed re-entry REFRESHES the inactivity window '
+      '(Phase 5H)', () async {
+    await protect('com.whatsapp');
+    final DefaultAccessController clocked = DefaultAccessController(
+      matcher: container.protectedAppMatcher,
+      auth: container.auth,
+      now: () => DateTime(2026, 8, 21, 9, 0),
+    );
+    await clocked.grantAccess('com.whatsapp');
+
+    // Re-entry 90 seconds later: allowed AND the window slides forward
+    // (the session now ends 2 minutes after the re-entry, not after
+    // the original grant).
+    final DefaultAccessController later = DefaultAccessController(
+      matcher: container.protectedAppMatcher,
+      auth: container.auth,
+      now: () => DateTime(2026, 8, 21, 9, 1, 30),
+    );
+    expect(await later.evaluate('com.whatsapp'), AccessDecision.allow);
+    expect(
+      later.sessionFor('com.whatsapp')!.expiresAt,
+      DateTime(2026, 8, 21, 9, 3, 30),
+    );
+
+    // The refreshed window keeps the user un-prompted past the
+    // ORIGINAL expiry (9:02:00) — active use never re-prompts.
+    final DefaultAccessController pastOriginalExpiry =
+        DefaultAccessController(
+      matcher: container.protectedAppMatcher,
+      auth: container.auth,
+      now: () => DateTime(2026, 8, 21, 9, 2, 30),
+    );
+    expect(
+      await pastOriginalExpiry.evaluate('com.whatsapp'),
+      AccessDecision.allow,
+    );
+  });
+
+  test('expired sessions are pruned and challenge again (Phase 5H)',
+      () async {
+    await protect('com.whatsapp');
+    final DefaultAccessController clocked = DefaultAccessController(
+      matcher: container.protectedAppMatcher,
+      auth: container.auth,
+      now: () => DateTime(2026, 8, 21, 9, 0),
+    );
+    await clocked.grantAccess('com.whatsapp');
+    expect(clocked.sessionFor('com.whatsapp'), isNotNull);
+
+    // Four minutes of INACTIVITY later: the window expired.
+    final DefaultAccessController expired = DefaultAccessController(
+      matcher: container.protectedAppMatcher,
+      auth: container.auth,
+      now: () => DateTime(2026, 8, 21, 9, 4),
+    );
+    expect(await expired.evaluate('com.whatsapp'), AccessDecision.challenge);
+    // The dead session was pruned from the map.
+    expect(expired.sessionFor('com.whatsapp'), isNull);
+  });
 }
 
 /// [ProtectedAppsRepository] whose reads always fail — proves the
