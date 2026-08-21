@@ -84,6 +84,20 @@ void main() {
 
     expect(find.text(UsageAccessScreen.grantedTitle), findsOneWidget);
     expect(find.text(UsageAccessScreen.notGrantedTitle), findsNothing);
+    expect(find.text(UsageAccessScreen.manageSettingsLabel), findsOneWidget);
+  });
+
+  testWidgets('granted state Manage Settings opens the system settings',
+      (WidgetTester tester) async {
+    final StaticInstalledAppsService service =
+        await pumpScreen(tester, usageAccessGranted: true);
+
+    await tester.tap(find.byKey(const Key('usage_access_manage_settings')));
+    await tester.pumpAndSettle();
+
+    expect(service.requestUsageAccessCalls, 1);
+    // Still granted afterwards — the action manages, it never disables.
+    expect(find.text(UsageAccessScreen.grantedTitle), findsOneWidget);
   });
 
   testWidgets('Done pops true', (WidgetTester tester) async {

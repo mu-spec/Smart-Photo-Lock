@@ -77,6 +77,20 @@ void main() {
 
     expect(find.text(OverlaySetupScreen.grantedTitle), findsOneWidget);
     expect(find.text(OverlaySetupScreen.notGrantedTitle), findsNothing);
+    expect(find.text(OverlaySetupScreen.manageSettingsLabel), findsOneWidget);
+  });
+
+  testWidgets('granted state Manage Settings opens the system settings',
+      (WidgetTester tester) async {
+    final StaticOverlayLockService service =
+        await pumpScreen(tester, granted: true);
+
+    await tester.tap(find.byKey(const Key('overlay_manage_settings')));
+    await tester.pumpAndSettle();
+
+    expect(service.requestCalls, 1);
+    // Still granted afterwards — the action manages, it never revokes.
+    expect(find.text(OverlaySetupScreen.grantedTitle), findsOneWidget);
   });
 
   testWidgets('Done pops true', (WidgetTester tester) async {

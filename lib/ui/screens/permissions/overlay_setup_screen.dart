@@ -38,6 +38,9 @@ class OverlaySetupScreen extends StatefulWidget {
       'change anything else on your device.';
   static const String notUsedElsewhere = 'Used only for the lock screen.';
   static const String openSettingsLabel = 'Open Settings';
+  /// Granted-state secondary action: reopen the same system settings
+  /// destination so the user can always manage (or revoke) the grant.
+  static const String manageSettingsLabel = 'Manage Settings';
   static const String settingsNote =
       'Android will open the draw-over-apps screen — allow Smart App '
       'Lock, then come back.';
@@ -183,6 +186,17 @@ class _OverlaySetupScreenState extends State<OverlaySetupScreen>
           ),
         ),
         const SizedBox(height: DsSpacing.xxl),
+        // The user can always return to the system overlay-permission
+        // screen — essential on OEM devices where the setting is hard to
+        // find.
+        DsButton(
+          key: const Key('overlay_manage_settings'),
+          label: OverlaySetupScreen.manageSettingsLabel,
+          variant: DsButtonVariant.secondary,
+          expand: true,
+          onPressed: _openSettings,
+        ),
+        const SizedBox(height: DsSpacing.md),
         DsButton(
           label: OverlaySetupScreen.doneLabel,
           expand: true,

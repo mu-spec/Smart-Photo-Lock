@@ -40,6 +40,9 @@ class AccessibilitySetupScreen extends StatefulWidget {
       'and never collects or sends any data.';
   static const String notUsedElsewhere = 'Not used for anything else.';
   static const String openSettingsLabel = 'Open Settings';
+  /// Granted-state secondary action: reopen the same system settings
+  /// destination so the user can always manage (or revoke) the service.
+  static const String manageSettingsLabel = 'Manage Settings';
   static const String settingsNote =
       'Android will show its own warning — this is normal. Find Smart App '
       'Lock in the list, enable it, then come back.';
@@ -186,6 +189,16 @@ class _AccessibilitySetupScreenState
           ),
         ),
         const SizedBox(height: DsSpacing.xxl),
+        // The user can always return to the system Accessibility screen —
+        // essential on OEM devices where the setting is hard to find.
+        DsButton(
+          key: const Key('accessibility_manage_settings'),
+          label: AccessibilitySetupScreen.manageSettingsLabel,
+          variant: DsButtonVariant.secondary,
+          expand: true,
+          onPressed: _openSettings,
+        ),
+        const SizedBox(height: DsSpacing.md),
         DsButton(
           label: AccessibilitySetupScreen.doneLabel,
           expand: true,

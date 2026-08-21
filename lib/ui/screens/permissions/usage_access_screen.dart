@@ -27,6 +27,9 @@ class UsageAccessScreen extends StatefulWidget {
       'Smart App Lock detects which app you open so it can lock protected '
       'apps instantly. Enable usage access to make locking work.';
   static const String openSettingsLabel = 'Open Settings';
+  /// Granted-state secondary action: reopen the same system settings
+  /// destination so the user can always manage (or revoke) the grant.
+  static const String manageSettingsLabel = 'Manage Settings';
   static const String settingsNote =
       'The Android settings screen will open — find Smart App Lock and '
       'allow usage access there, then come back.';
@@ -177,6 +180,16 @@ class _UsageAccessScreenState extends State<UsageAccessScreen>
           ),
         ),
         const SizedBox(height: DsSpacing.xxl),
+        // The user can always return to the system Usage Access screen —
+        // essential on OEM devices where the setting is hard to find.
+        DsButton(
+          key: const Key('usage_access_manage_settings'),
+          label: UsageAccessScreen.manageSettingsLabel,
+          variant: DsButtonVariant.secondary,
+          expand: true,
+          onPressed: _openSettings,
+        ),
+        const SizedBox(height: DsSpacing.md),
         DsButton(
           label: UsageAccessScreen.doneLabel,
           expand: true,

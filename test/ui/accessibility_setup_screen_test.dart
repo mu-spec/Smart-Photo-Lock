@@ -78,6 +78,21 @@ void main() {
 
     expect(find.text(AccessibilitySetupScreen.enabledTitle), findsOneWidget);
     expect(find.text(AccessibilitySetupScreen.notEnabledTitle), findsNothing);
+    expect(
+        find.text(AccessibilitySetupScreen.manageSettingsLabel), findsOneWidget);
+  });
+
+  testWidgets('enabled state Manage Settings opens the system settings',
+      (WidgetTester tester) async {
+    final StaticAccessibilityLockService service =
+        await pumpScreen(tester, enabled: true);
+
+    await tester.tap(find.byKey(const Key('accessibility_manage_settings')));
+    await tester.pumpAndSettle();
+
+    expect(service.requestServiceEnableCalls, 1);
+    // Still enabled afterwards — the action manages, it never disables.
+    expect(find.text(AccessibilitySetupScreen.enabledTitle), findsOneWidget);
   });
 
   testWidgets('Done pops true', (WidgetTester tester) async {
