@@ -551,3 +551,24 @@ the challenge disappears. Open WhatsApp again — Smart App Lock comes
 back to the front with the challenge (never opens WhatsApp unlocked).
 While a challenge is up, open another protected app, unlock the first —
 the second app's challenge appears immediately.
+
+---
+
+# Phase 5N — Back-Navigation Hardening
+
+Automated suites: `test/ui/lock_challenge_test.dart` (updated 5E/5F/5M
+cancel tests + the re-present flows).
+
+| # | Scenario | Expected |
+| - | -------- | -------- |
+| 1 | Back on the PIN challenge | Challenge re-presents; no session; no launch |
+| 2 | Repeated back presses | Challenge persists across presses |
+| 3 | Correct PIN after back | Loop ends; session granted; app launched |
+| 4 | Back on the pattern challenge | Same behavior for the pattern surface |
+| 5 | Back on a re-presented queued challenge (Maps) | Challenge stays; Maps never launched |
+| 6 | Home press during challenge (regression) | Still dismisses; re-challenges on return |
+
+NOTE: the 5E/5F "cancelling the challenge" tests were UPDATED — the old
+behavior (challenge pops and the app UI is exposed) was the very bypass
+5N closes; the tests now assert the hardened re-present behavior with
+the same security invariants (no session, no launch).

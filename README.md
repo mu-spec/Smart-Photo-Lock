@@ -67,6 +67,7 @@ implemented yet.
 | 5K | Screen-off re-lock (screen turns off → every unlock session revoked; enforced on resume) | ✅ |
 | 5L | Grace period (configurable re-lock delay: immediate / 30s / 1m / 5m) | ✅ |
 | 5M | Home-button hardening (challenge dismissed on leave; requirements re-queued, never dropped) | ✅ |
+| 5N | Back-navigation hardening (Back cannot dismiss a challenge; re-presents in the foreground) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -580,7 +581,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.2.1 / 9.4.1 / built-in Kotlin with KGP 2.3.20 (settings classpath `apply false` + buildscript; `android.builtInKotlin=true`; AGP legacy-DSL compat `android.newDsl=false` until the Flutter tool finishes its new-DSL migration) |
 | Java | 17 |
-| versionName / versionCode | `0.35.14` / `79` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.35.15` / `80` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM), `local_auth` (biometrics) |
 
 ## Prerequisites (on your machine)
@@ -1168,6 +1169,28 @@ The Home button is now safe in every lock-flow state:
   re-evaluates the foreground and re-presents the challenge when the
   protected app is still current; the in-flight-pop window is handled
   by the challenge-close path.
+
+### Phase 5N ✅ — Back-Navigation Hardening
+
+Back can never bypass the lock:
+
+- **Back cannot dismiss a challenge** — dismissing the unlock route with
+  Back (or the predictive-back gesture) while the app is foreground
+  immediately RE-PRESENTS the challenge: the user can never walk past
+  the PIN/pattern gate into Smart App Lock's own UI (Apps tab,
+  unprotect, etc.).
+- **No grant on dismissal** — the re-presented dismissal still resolves
+  null for the host (5I), so no session is granted and the protected
+  app is never launched.
+- **Latest requirement wins** — if a second protected app became
+  foreground while a challenge was up, the re-presentation shows that
+  app's challenge instead of the stale one.
+- **Home still works** — the 5M Home-press dismissal (background) is
+  untouched: the challenge dismisses on leave and re-challenges on
+  return; Back hardening applies only in the foreground.
+- **Double-pop guard** — the Home-press dismissal is idempotent and
+  `canPop`-guarded, so a second lifecycle event can never pop the shell
+  route beneath the challenge.
 
 ## Next phases
 

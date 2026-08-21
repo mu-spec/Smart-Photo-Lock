@@ -1111,3 +1111,27 @@ _presentChallenge while busy:
   completes on Home-press dismissal, and the close path always runs.
 - The pending slot holds exactly one (latest) requirement; a newer
   requirement supersedes the older one.
+
+## 5N. Back-navigation hardening
+
+Back cannot bypass the lock:
+
+```
+_presentChallenge(package)
+  ├─ _lastPresentedPackage = package
+  ├─ pushNamed(unlock route) -> unlocked (true only on AuthSuccess, 5I)
+  └─ _afterChallengeClosed(passed):
+        ├─ passed                 -> _maybePresentPending()   (5M)
+        ├─ interrupted && foreground -> re-evaluate + challenge (5M)
+        ├─ !foreground (Home)     -> defer to resume path     (5M)
+        └─ foreground && !passed  -> _scheduleReChallenge()   (5N)
+                                     (post-frame re-present; pending wins)
+```
+
+- Back-press and predictive-back dismissals resolve null -> the host
+  re-presents the challenge on the next frame: the app's own UI (Apps
+  tab, settings, unprotect) is never reachable past a live challenge.
+- `_onLeftForeground` (Home) is idempotent and `canPop`-guarded — a
+  double lifecycle event can never pop the shell route.
+- The re-presentation prefers `_pendingPackage` (a newer requirement)
+  over `_lastPresentedPackage`.

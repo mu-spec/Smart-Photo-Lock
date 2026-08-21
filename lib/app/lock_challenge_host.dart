@@ -11,7 +11,7 @@ import 'app_container.dart';
 import 'app_scope.dart';
 import 'router.dart';
 
-/// Phase 5D/5E/5F/5K: presents the lock challenge when a protected
+/// Phase 5D/5E/5F/5K/5M/5N: presents the lock challenge when a protected
 /// application becomes active — the user's PRIMARY credential (PIN or
 /// pattern) gates access.
 ///
@@ -29,15 +29,18 @@ import 'router.dart';
 ///  * a wrong credential, a cancelled challenge or an active lockout
 ///    leaves the protected app blocked.
 ///
-/// Phase 5K (screen-off re-lock): when the app resumes after a screen
-/// turn-off, the host re-evaluates the current foreground — a protected
-/// app whose session was revoked by the screen-off is challenged again
-/// immediately.
+/// Phase 5M (Home-button hardening): leaving the foreground with a
+/// challenge up dismisses it safely, and requirements are re-queued —
+/// never dropped.
+///
+/// Phase 5N (Back-navigation hardening): dismissing a challenge with
+/// Back while the app is foreground RE-PRESENTS it immediately — Back
+/// can never walk past the challenge into the app's own UI.
 ///
 /// Fail-safe: when NO credential is enrolled there is nothing to
 /// challenge with — the trigger requirement is ignored (setup lives on
 /// the Security tab). Re-entrant requirements while a challenge is
-/// already showing are ignored.
+/// already showing are re-queued, never dropped.
 class LockChallengeHost extends StatefulWidget {
   const LockChallengeHost({
     super.key,
@@ -72,6 +75,11 @@ class _LockChallengeHostState extends State<LockChallengeHost>
   /// while a challenge was up — the on-screen challenge is dismissed
   /// and the resume path re-evaluates the foreground.
   bool _interruptedChallenge = false;
+
+  /// Phase 5N: the package the current (or most recent) challenge was
+  /// presented for — used to re-present it when Back tries to dismiss
+  /// the challenge in the foreground.
+  String? _lastPresentedPackage;
 
   /// Phase 5M: whether the app is currently in the foreground (drives
   /// the pending re-presentation; tracked explicitly so tests and
@@ -131,16 +139,22 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     }
   }
 
-  /// Phase 5M: Home-press handling — dismiss the on-screen challenge.
+  /// Phase 5M/5N: Home-press handling — dismiss the on-screen challenge.
   void _onLeftForeground() {
-    if (!_challenging) {
+    // Idempotent: a second lifecycle event must not double-pop (the
+    // second pop would remove the SHELL route beneath the challenge).
+    if (!_challenging || _interruptedChallenge) {
       return;
     }
     _interruptedChallenge = true;
     // Pop the challenge route: its awaited future completes with null
     // (Phase 5I: null never grants a session), which clears
-    // `_challenging` through the finally block below.
-    widget.navigatorKey.currentState?.pop();
+    // `_challenging` through the finally block below. canPop guards
+    // the shell from being popped when nothing sits above it.
+    final NavigatorState? navigator = widget.navigatorKey.currentState;
+    if (navigator != null && navigator.canPop()) {
+      navigator.pop();
+    }
   }
 
   Future<void> _onResumed() async {
@@ -205,6 +219,10 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     // A fresh challenge supersedes the interrupted state (Home-press
     // dismissal) — nothing is pending to re-evaluate anymore.
     _interruptedChallenge = false;
+    // Phase 5N: remember what this challenge guards, so a Back-press
+    // dismissal can be re-presented instead of exposing the app UI.
+    _lastPresentedPackage = packageName;
+    bool passed = false;
     try {
       // Phase 5F: route by the user's PRIMARY credential (the one they
       // enrolled last), not a hardcoded PIN preference. Both PIN and
@@ -230,7 +248,8 @@ class _LockChallengeHostState extends State<LockChallengeHost>
       // cancellation and service failures all resolve false/null) — and
       // the host re-checks `mounted` after the await so a torn-down tree
       // can never grant.
-      if (unlocked == true) {
+      passed = unlocked == true;
+      if (passed) {
         if (!mounted) {
           return;
         }
@@ -242,22 +261,55 @@ class _LockChallengeHostState extends State<LockChallengeHost>
         await container.installedAppsService.launchApp(packageName);
       }
     } finally {
-      _afterChallengeClosed();
+      _afterChallengeClosed(passed);
     }
   }
 
-  /// Phase 5M: runs whenever a challenge closes (completed, cancelled,
-  /// or dismissed by a Home press). An interrupted challenge whose pop
-  /// just completed re-evaluates the foreground; otherwise a pending
-  /// requirement re-presents — both only while the app is foreground.
-  void _afterChallengeClosed() {
+  /// Phase 5M/5N: runs whenever a challenge closes (completed,
+  /// cancelled, dismissed by a Home press, or popped by Back).
+  ///
+  ///  * passed            -> a queued requirement for another app
+  ///                         re-presents (5M);
+  ///  * interrupted       -> the Home-press dismissal just completed;
+  ///                         foreground re-evaluates, background defers
+  ///                         to the resume path (5M);
+  ///  * NOT passed, NOT interrupted, foreground:
+  ///    **Back-press dismissal** — the challenge RE-PRESENTS
+  ///    immediately: Back can never bypass the lock into the app UI.
+  void _afterChallengeClosed(bool passed) {
     _challenging = false;
+    if (passed) {
+      _maybePresentPending();
+      return;
+    }
     if (_interruptedChallenge && _appForeground && mounted) {
       _interruptedChallenge = false;
       _reevaluateAndChallenge();
       return;
     }
-    _maybePresentPending();
+    if (!_appForeground || !mounted) {
+      // Home-press dismissal (backgrounded): the resume path owns the
+      // re-challenge; a pending requirement waits as well.
+      _maybePresentPending();
+      return;
+    }
+    // Phase 5N: Back-press dismissal while foreground — re-present.
+    _scheduleReChallenge();
+  }
+
+  /// Phase 5N: re-presents the dismissed challenge on the next frame
+  /// (the latest requirement wins over the interrupted package).
+  void _scheduleReChallenge() {
+    final String? target = _pendingPackage ?? _lastPresentedPackage;
+    if (target == null) {
+      return;
+    }
+    _pendingPackage = null;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && !_challenging && _pendingPackage == null) {
+        _presentChallenge(target);
+      }
+    });
   }
 
   /// Phase 5M: re-probes detection and challenges the current

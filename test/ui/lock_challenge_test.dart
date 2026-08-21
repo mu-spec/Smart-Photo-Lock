@@ -351,8 +351,8 @@ void main() {
     expect(sessionFor(container, 'com.whatsapp'), isNull);
   });
 
-  testWidgets('cancelling the pattern challenge leaves the app blocked '
-      '(Phase 5F)', (WidgetTester tester) async {
+  testWidgets('Back cannot dismiss the pattern challenge (Phase 5N)',
+      (WidgetTester tester) async {
     final AppContainer container = await pumpApp(tester);
     await container.auth.enrollPattern(const <int>[3, 6, 9, 8]);
     await protect(container, 'com.whatsapp');
@@ -360,19 +360,31 @@ void main() {
     await openApp(tester, container, 'com.whatsapp');
     expect(find.byType(PatternUnlockScreen), findsOneWidget);
 
+    // Back-press: the challenge RE-PRESENTS instead of exposing the
+    // app UI — and it never grants a session or launches the app.
     await tester.pageBack();
     await tester.pumpAndSettle();
 
-    expect(find.byType(PatternUnlockScreen), findsNothing);
+    expect(find.byType(PatternUnlockScreen), findsOneWidget);
     final StaticInstalledAppsService apps =
         container.installedAppsService as StaticInstalledAppsService;
     expect(apps.launchAppCalls, 0);
-    // Phase 5I: a cancelled challenge never grants a session.
+    // Phase 5I: a dismissed challenge never grants a session.
     expect(sessionFor(container, 'com.whatsapp'), isNull);
 
-    // No unlock window either: the next activation challenges again.
-    await openApp(tester, container, 'com.whatsapp');
+    // The challenge survives repeated back presses too.
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    await tester.pageBack();
+    await tester.pumpAndSettle();
     expect(find.byType(PatternUnlockScreen), findsOneWidget);
+    expect(apps.launchAppCalls, 0);
+
+    // Only the correct pattern ends the loop and unlocks.
+    await drawPattern(tester, const <int>[3, 6, 9, 8]);
+    await tester.pumpAndSettle();
+    expect(find.byType(PatternUnlockScreen), findsNothing);
+    expect(sessionFor(container, 'com.whatsapp'), isNotNull);
   });
 
 
@@ -402,8 +414,8 @@ void main() {
     expect(sessionFor(container, 'com.whatsapp'), isNull);
   });
 
-  testWidgets('cancelling the challenge leaves the app blocked '
-      '(Phase 5E)', (WidgetTester tester) async {
+  testWidgets('Back cannot dismiss the PIN challenge (Phase 5N)',
+      (WidgetTester tester) async {
     final AppContainer container = await pumpApp(tester);
     await container.auth.enrollPin('1234');
     await protect(container, 'com.whatsapp');
@@ -411,19 +423,26 @@ void main() {
     await openApp(tester, container, 'com.whatsapp');
     expect(find.byType(PinUnlockScreen), findsOneWidget);
 
-    // The user backs out instead of entering the PIN.
+    // The user backs out instead of entering the PIN: the challenge
+    // re-presents — Back can never walk past it into the app UI.
     await tester.pageBack();
     await tester.pumpAndSettle();
 
-    expect(find.byType(PinUnlockScreen), findsNothing);
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
     final StaticInstalledAppsService apps =
         container.installedAppsService as StaticInstalledAppsService;
     expect(apps.launchAppCalls, 0);
-    // Phase 5I: a cancelled challenge never grants a session.
+    // Phase 5I: a dismissed challenge never grants a session.
     expect(sessionFor(container, 'com.whatsapp'), isNull);
-    // No unlock window either: the next activation challenges again.
-    await openApp(tester, container, 'com.whatsapp');
-    expect(find.byType(PinUnlockScreen), findsOneWidget);
+
+    // Only the correct PIN ends the loop.
+    for (final String digit in <String>['1', '2', '3', '4']) {
+      await tester.tap(find.byKey(Key('pin_key_$digit')));
+      await tester.pumpAndSettle();
+    }
+    expect(find.byType(PinUnlockScreen), findsNothing);
+    expect(sessionFor(container, 'com.whatsapp'), isNotNull);
+    expect(apps.launchAppCalls, 1);
   });
 
   testWidgets('a failed bring-to-front presents no challenge',
@@ -635,10 +654,11 @@ void main() {
         container.overlay as StaticOverlayLockService;
     expect(overlay.lastLockPackage, 'com.example.maps');
 
-    // Cancel it: no Maps session, no Maps launch.
+    // Phase 5N: Back cannot dismiss the re-presented challenge either —
+    // no Maps session, no Maps launch, and the challenge stays up.
     await tester.pageBack();
     await tester.pumpAndSettle();
-    expect(find.byType(PinUnlockScreen), findsNothing);
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
     expect(sessionFor(container, 'com.example.maps'), isNull);
     final StaticInstalledAppsService apps =
         container.installedAppsService as StaticInstalledAppsService;
