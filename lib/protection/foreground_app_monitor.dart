@@ -165,11 +165,14 @@ class ForegroundAppMonitor {
   /// Stops polling and the accessibility subscription. The change stream
   /// stays open ([start] may be called again to resume detection).
   Future<void> stop() async {
+    // Audit fix: clear the started flag SYNCHRONOUSLY — a start() that
+    // lands while the subscription cancel is in flight must see the
+    // stopped state and re-arm detection, not silently no-op.
+    _started = false;
     _timer?.cancel();
     _timer = null;
     await _accessibilitySub?.cancel();
     _accessibilitySub = null;
-    _started = false;
   }
 
   /// Permanently tears the monitor down: stops detection and closes the

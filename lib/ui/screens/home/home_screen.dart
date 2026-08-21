@@ -76,7 +76,7 @@ class HomeScreen extends StatelessWidget {
                 .pushNamed(RouteNames.detectionDiagnostics),
             child: Row(
               children: <Widget>[
-                Icon(Icons.terminal, color: Theme.of(context).dsColors.primary),
+                Icon(Icons.terminal, color: context.dsColors.primary),
                 const SizedBox(width: DsSpacing.md),
                 const Expanded(
                   child: Column(
@@ -93,7 +93,7 @@ class HomeScreen extends StatelessWidget {
                 ),
                 Icon(
                   Icons.chevron_right,
-                  color: Theme.of(context).dsColors.textSecondary,
+                  color: context.dsColors.textSecondary,
                 ),
               ],
             ),

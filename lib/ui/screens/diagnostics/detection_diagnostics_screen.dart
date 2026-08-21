@@ -89,9 +89,22 @@ class _DetectionDiagnosticsScreenState
   @override
   void dispose() {
     // Stop exactly what this screen started — no timer may outlive it.
+    // Audit fix: the monitor is SHARED with the production lock flow.
+    // When the lock trigger is running (real app: the LockChallengeHost
+    // owns detection), closing this screen must NOT stop the monitor —
+    // only our own subscription goes away. When the trigger is NOT
+    // running (standalone diagnostics/tests), we stop what we started.
     _subscription?.cancel();
-    _monitor?.stop();
+    final bool triggerOwnsDetection = _triggerIsRunning();
+    if (!triggerOwnsDetection) {
+      _monitor?.stop();
+    }
     super.dispose();
+  }
+
+  bool _triggerIsRunning() {
+    final AppContainer? container = AppScope.read(context);
+    return container?.lockTrigger.isRunning ?? false;
   }
 
   void _onChange(ForegroundAppChange change) {
@@ -149,7 +162,13 @@ class _DetectionDiagnosticsScreenState
     setState(() {
       _tick++; // rebuild the status pill
       if (_monitor!.isRunning) {
-        _monitor!.stop();
+        // Audit fix: never stop the shared monitor while the production
+        // lock trigger owns detection (the toggle is a standalone
+        // diagnostics control; in the real app the pill simply keeps
+        // reading "Detecting").
+        if (!_triggerIsRunning()) {
+          _monitor!.stop();
+        }
       } else {
         _monitor!.start();
       }

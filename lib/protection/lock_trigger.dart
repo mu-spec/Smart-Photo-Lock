@@ -67,11 +67,19 @@ class LockTrigger {
   /// Stops the pipeline: unsubscribes and stops the monitor. The lock
   /// stream stays open ([start] may be called again).
   Future<void> stop() async {
+    // Audit fix: clear the started flag SYNCHRONOUSLY — a start() that
+    // lands while the subscription cancel is in flight must see the
+    // stopped state and re-arm the pipeline, not silently no-op.
+    _started = false;
     await _subscription?.cancel();
     _subscription = null;
-    _started = false;
     await _monitor.stop();
   }
+
+  /// True while the pipeline is running (audit: lets other components —
+  /// e.g. the diagnostics screen — know whether detection is owned by
+  /// the production lock flow).
+  bool get isRunning => _started;
 
   /// Permanently tears the pipeline down.
   Future<void> dispose() async {
