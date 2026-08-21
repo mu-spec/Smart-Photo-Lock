@@ -21,6 +21,53 @@ import 'package:smart_app_lock/utilities/result.dart';
 /// challenge through the production app wiring (monitor -> matcher ->
 /// access controller -> challenge host -> router -> unlock screen).
 void main() {
+
+  Future<AppContainer> pumpApp(
+    WidgetTester tester, {
+    AppContainer? container,
+    BiometricService? biometrics,
+    DateTime Function()? accessClock,
+  }) async {
+    tester.view.physicalSize = const Size(800, 1600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final AppContainer c = container ??
+        AppContainer.inMemory(
+          biometrics: biometrics,
+          accessClock: accessClock,
+        );
+    await tester.pumpWidget(SmartAppLockApp(container: c));
+    await tester.pumpAndSettle();
+    return c;
+  }
+
+  /// The user opens another app: the detection-only accessibility
+  /// service reports a window-state change (production fallback path).
+  Future<void> openApp(
+    WidgetTester tester,
+    AppContainer container,
+    String package,
+  ) async {
+    (container.accessibility as StaticAccessibilityLockService)
+        .emitForegroundPackage(package);
+    await tester.pumpAndSettle();
+  }
+
+  Future<void> protect(AppContainer container, String package) =>
+      container.protectedApps.add(
+        ProtectedApp(
+          packageName: package,
+          label: package,
+          addedAt: DateTime(2026, 8, 21),
+        ),
+      );
+
+  /// Phase 5I: the unlock session currently open for [package] (null =
+  /// no session was granted — failed authentication must never create
+  /// one).
+  Object? sessionFor(AppContainer container, String package) =>
+      (container.accessController as DefaultAccessController)
+          .sessionFor(package);
   /// Draws [nodes] on the unlock screen's pattern grid: bounds-derived
   /// node centers, a small horizontal arena-winning move first, then
   /// micro-stepped device-like strokes (mirrors the pattern-suite
@@ -1179,50 +1226,5 @@ class _FakeBiometricService implements BiometricService {
     BiometricOptions? options,
   }) async =>
       Result.success(passes);
-  Future<AppContainer> pumpApp(
-    WidgetTester tester, {
-    AppContainer? container,
-    BiometricService? biometrics,
-    DateTime Function()? accessClock,
-  }) async {
-    tester.view.physicalSize = const Size(800, 1600);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
-    final AppContainer c = container ??
-        AppContainer.inMemory(
-          biometrics: biometrics,
-          accessClock: accessClock,
-        );
-    await tester.pumpWidget(SmartAppLockApp(container: c));
-    await tester.pumpAndSettle();
-    return c;
-  }
 
-  /// The user opens another app: the detection-only accessibility
-  /// service reports a window-state change (production fallback path).
-  Future<void> openApp(
-    WidgetTester tester,
-    AppContainer container,
-    String package,
-  ) async {
-    (container.accessibility as StaticAccessibilityLockService)
-        .emitForegroundPackage(package);
-    await tester.pumpAndSettle();
-  }
-
-  Future<void> protect(AppContainer container, String package) =>
-      container.protectedApps.add(
-        ProtectedApp(
-          packageName: package,
-          label: package,
-          addedAt: DateTime(2026, 8, 21),
-        ),
-      );
-
-  /// Phase 5I: the unlock session currently open for [package] (null =
-  /// no session was granted — failed authentication must never create
-  /// one).
-  Object? sessionFor(AppContainer container, String package) =>
-      (container.accessController as DefaultAccessController)
-          .sessionFor(package);
 }

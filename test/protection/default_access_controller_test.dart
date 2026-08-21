@@ -520,8 +520,8 @@ void main() {
       matcher: container.protectedAppMatcher,
       auth: container.auth,
       now: () => clock,
-      gracePeriod: const Duration(seconds: 30),
     );
+    controller.setGracePeriod(const Duration(seconds: 30));
 
     // Entry 1 challenges; unlock, then three rapid cycles of
     // leave + quick return (10s each) stay inside the grace.

@@ -821,3 +821,23 @@ Fifty analyzer issues traced to six root causes, all repaired:
 | 4 | `MockStreamHandlerEventSink.error` is a NAMED-parameter API (`code:` required) in Flutter 3.47; two tests passed 3 positional args | Both call sites migrated to `events.error(code: ..., message: ...)` |
 | 5 | `drawPattern` was declared after its call sites inside `main()` (Dart local functions are not hoisted) | The helper now sits at the top of `main()` in `lock_engine_regression_test.dart` and `lock_challenge_test.dart`; the scrambled test/class layout in the latter was rebuilt cleanly (37 tests in main, `_FakeBiometricService` after it) |
 | 6 | Minor dead code | Removed the unused `access_controller.dart` import in `lock_trigger_test.dart`, the unused `returnToApp` helper in `lock_engine_regression_test.dart`, and the write-only `_tick` field in `detection_diagnostics_screen.dart` |
+
+---
+
+# Phase 5 — Fix #1 (analyzer/compilation)
+
+Two root causes behind the analyzer cascade, repaired:
+
+| # | Root cause | Fix |
+| - | ---------- | --- |
+| 1 | The previous rebuild of `lock_challenge_test.dart` dropped the shared harness (`pumpApp`, `openApp`, `protect`, `sessionFor`) from `main()` and left a stray copy inside `_FakeBiometricService` — every test's helper references were undefined | The helper block was moved back to the TOP of `main()` (before `drawPattern` and all 37 tests); the class now contains only its own members |
+| 2 | One 5Q test passed a stale `gracePeriod:` named parameter to the `DefaultAccessController` constructor (the production API applies grace via `setGracePeriod`) | The stale parameter was removed; the test now constructs the controller then calls `setGracePeriod(const Duration(seconds: 30))` |
+
+Verified after the fixes:
+
+- Every helper called by the lock-challenge tests is defined in `main()`
+  (called set == defined set).
+- `gracePeriod:` appears nowhere as a production constructor argument
+  (the remaining hits are the gauntlet's `pumpApp`/`boot` helper
+  parameters, which route to `setGracePeriod`).
+- No `test()`/`testWidgets()` sits inside a class anywhere in `test/`.
