@@ -58,6 +58,7 @@ implemented yet.
 | 5B | Detection diagnostics (on-device verification of foreground transitions) | ✅ |
 | 5C | Protected-app matching (foreground package ↔ protected list) | ✅ |
 | 5D | Basic lock trigger (protected app active → authentication challenge) | ✅ |
+| 5E | PIN integration (PIN gates protected-app access; lockout denies; app relaunched on success) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -571,7 +572,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.2.1 / 9.4.1 / built-in Kotlin with KGP 2.3.20 (settings classpath `apply false` + buildscript; `android.builtInKotlin=true`; AGP legacy-DSL compat `android.newDsl=false` until the Flutter tool finishes its new-DSL migration) |
 | Java | 17 |
-| versionName / versionCode | `0.35.3` / `68` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.35.4` / `69` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM), `local_auth` (biometrics) |
 
 ## Prerequisites (on your machine)
@@ -973,6 +974,29 @@ authentication:
   service are wired accordingly (4D's fail-closed stubs retired).
 - `AppContainer` wires `accessController` + `lockTrigger`; the app root
   hosts the challenge presenter.
+
+### Phase 5E ✅ — PIN Integration
+
+The PIN now genuinely gates protected-app access:
+
+- **PIN-first challenge routing** — an enrolled PIN is always the
+  challenge credential (pattern remains the fallback for pattern-only
+  users); a wrong PIN or a cancelled challenge leaves the protected app
+  blocked — no unlock window, no launch.
+- **Lockout denial** — `DefaultAccessController` now consults the
+  credential manager: an active Phase 2F cooldown returns
+  `AccessDecision.deny`; the trigger still blocks the app behind the
+  challenge surface (the unlock screen shows the countdown). An expired
+  lockout returns to a normal challenge. Unprotected apps stay allowed
+  during a lockout.
+- **Access proceeds after the PIN** — a correct PIN grants the unlock
+  session, dismisses the challenge, and **launches the protected app**
+  (new native `launchApp` bridge: MAIN/LAUNCHER intent + NEW_TASK,
+  total, fail-quiet) so the user proceeds straight into the app they
+  opened.
+- **Service surface** — `InstalledAppsService.launchApp` + method
+  channel + static test impl (`launchAppCalls`, `launchedPackages`,
+  `launchAppSucceeds`).
 
 ## Next phases
 

@@ -1,23 +1,29 @@
+import '../../security/credentials/credential_manager.dart';
+import '../../security/credentials/credential_state.dart';
 import '../../utilities/result.dart';
 import '../access_controller.dart';
 import '../lock_session.dart';
 import '../protected_app_matcher.dart';
 
-/// Phase 5D implementation of [AccessController].
+/// Phase 5D/5E implementation of [AccessController].
 ///
 /// Decides how to handle an app becoming active:
 ///
 ///  * the package is not in the protected list            -> `allow`;
 ///  * an unlock [LockSession] for the package is active   -> `allow`
 ///    (the temporary post-challenge window);
+///  * the PIN/pattern authentication is in an active
+///    lockout (Phase 2F cooldown)                         -> `deny`
+///    (the challenge surface blocks with its countdown);
 ///  * protected and no active session                     -> `challenge`
-///    (the lock trigger must present authentication);
+///    (the lock trigger must present the PIN);
 ///  * the protected-list read failed                      -> `challenge`
 ///    (fail-closed: the decision is unknown, so Smart App Lock errs on
 ///    the side of protection).
 ///
-/// [AccessDecision.deny] is reserved for the cooldown policy in a later
-/// phase — 5D never returns it.
+/// Phase 5E integration: the controller consults the [CredentialManager]
+/// so a lockout state is part of the decision itself — access is never
+/// granted while authentication is blocked.
 ///
 /// Sessions live in memory for this phase (a 2-minute window per
 /// package, per [LockSession]); persistence lands with the lock-screen
@@ -25,11 +31,14 @@ import '../protected_app_matcher.dart';
 class DefaultAccessController implements AccessController {
   DefaultAccessController({
     required ProtectedAppMatcher matcher,
+    required CredentialManager auth,
     DateTime Function()? now,
   })  : _matcher = matcher,
+        _auth = auth,
         _now = now ?? DateTime.now;
 
   final ProtectedAppMatcher _matcher;
+  final CredentialManager _auth;
   final DateTime Function() _now;
 
   /// Active unlock windows keyed by package name.
@@ -41,7 +50,11 @@ class DefaultAccessController implements AccessController {
     if (match.decision == ProtectedMatchDecision.notProtected) {
       return AccessDecision.allow;
     }
-    // protected OR unknown (fail-closed) — both require a session.
+    // protected OR unknown (fail-closed) — both require authentication.
+    final CredentialState? state = (await _auth.status()).valueOrNull;
+    if (state != null && state.statusAt(_now()) == CredentialStatus.lockedOut) {
+      return AccessDecision.deny;
+    }
     final LockSession? session = _sessions[packageName];
     if (session != null && session.isActiveAt(_now())) {
       return AccessDecision.allow;

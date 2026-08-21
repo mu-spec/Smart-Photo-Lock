@@ -912,3 +912,26 @@ ForegroundAppMonitor change
   phase (capabilities.md).
 - Sessions are in memory (2-minute windows); persistence/policies land
   with the lock-screen phase.
+
+## 5E. PIN integration
+
+The PIN gates access to protected apps:
+
+```
+LockRequired
+  -> challenge surface (PIN preferred, pattern fallback)
+       ├─ wrong PIN / cancelled -> app stays BLOCKED
+       └─ correct PIN
+            -> grantAccess (session window)
+            -> hideLockChallenge
+            -> launchApp(package)  [MAIN/LAUNCHER + NEW_TASK]
+```
+
+- `DefaultAccessController` consults the credential manager: an active
+  lockout (2F cooldown) yields `AccessDecision.deny`; the trigger still
+  emits `LockRequired` so the blocked app sits behind the countdown
+  screen. Expired lockouts challenge normally; unprotected apps stay
+  allowed.
+- `InstalledAppsChannel.launchApp` is total (false when the app has no
+  launcher intent); the host treats a failed launch as non-fatal — the
+  session is already granted.

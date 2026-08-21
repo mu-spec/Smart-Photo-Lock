@@ -113,6 +113,18 @@ object InstalledAppsChannel {
                         result.success(null)
                     }
                 }
+                "launchApp" -> {
+                    // Phase 5E: opens the protected app AFTER a successful
+                    // PIN challenge — the "allow access" half of the lock
+                    // flow. Total: false when the app has no launcher
+                    // intent or cannot be started.
+                    val packageName = call.argument<String>("packageName")
+                    if (packageName == null) {
+                        result.success(false)
+                    } else {
+                        result.success(launchApp(activity, packageName))
+                    }
+                }
                 else -> result.notImplemented()
             }
         }
@@ -268,6 +280,25 @@ object InstalledAppsChannel {
             bestPackage
         } catch (e: Exception) {
             null
+        }
+    }
+
+    /**
+     * Phase 5E: opens [packageName] through its MAIN/LAUNCHER intent —
+     * the "allow access" half of the lock flow, called after a
+     * successful PIN challenge. Total: false when the app has no
+     * launcher intent or cannot be started (never crashes the bridge).
+     */
+    fun launchApp(context: Context, packageName: String): Boolean {
+        return try {
+            val intent =
+                context.packageManager.getLaunchIntentForPackage(packageName)
+                    ?: return false
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(intent)
+            true
+        } catch (e: Exception) {
+            false
         }
     }
 

@@ -2,11 +2,18 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:smart_app_lock/app/app_container.dart';
 import 'package:smart_app_lock/data/models/protected_app.dart';
+import 'package:smart_app_lock/data/repositories/impl/security_settings_repository_impl.dart';
 import 'package:smart_app_lock/data/repositories/protected_apps_repository.dart';
+import 'package:smart_app_lock/data/repositories/security_settings_repository.dart';
+import 'package:smart_app_lock/data/storage/impl/in_memory_local_database.dart';
 import 'package:smart_app_lock/protection/access_controller.dart';
 import 'package:smart_app_lock/protection/impl/default_access_controller.dart';
 import 'package:smart_app_lock/protection/lock_session.dart';
 import 'package:smart_app_lock/protection/protected_app_matcher.dart';
+import 'package:smart_app_lock/security/credentials/credential_state_machine.dart';
+import 'package:smart_app_lock/security/credentials/impl/default_credential_manager.dart';
+import 'package:smart_app_lock/security/credentials/pattern_hasher.dart';
+import 'package:smart_app_lock/security/pin_hasher.dart';
 import 'package:smart_app_lock/utilities/result.dart';
 
 /// Phase 5D: the access decision policy — protected apps require a
@@ -111,9 +118,85 @@ void main() {
     // must treat unknown as challenge (never allow).
     final DefaultAccessController failing = DefaultAccessController(
       matcher: ProtectedAppMatcher(repository: _FailingRepository()),
+      auth: container.auth,
     );
     expect(
       await failing.evaluate('com.anything'),
+      AccessDecision.challenge,
+    );
+  });
+
+  test('an active authentication lockout denies protected access '
+      '(Phase 5E)', () async {
+    await protect('com.whatsapp');
+    final SecuritySettingsRepository settings =
+        SecuritySettingsRepositoryImpl(InMemoryLocalDatabase());
+    final DefaultCredentialManager manager = DefaultCredentialManager(
+      settings: settings,
+      pinHasher: Pbkdf2PinHasher(iterations: 200),
+      patternHasher: Pbkdf2PatternHasher(iterations: 200),
+      stateMachine: CredentialStateMachine(
+        maxFailedAttempts: 3,
+        lockoutDuration: const Duration(seconds: 30),
+      ),
+    );
+    await manager.enrollPin('1234');
+    // Three wrong attempts trip the 30-second lockout.
+    for (int i = 0; i < 3; i++) {
+      await manager.authenticatePin('9999');
+    }
+
+    final DefaultAccessController lockedOut = DefaultAccessController(
+      matcher: container.protectedAppMatcher,
+      auth: manager,
+      now: () => DateTime(2026, 8, 21, 9, 0),
+    );
+    expect(
+      await lockedOut.evaluate('com.whatsapp'),
+      AccessDecision.deny,
+    );
+
+    // Unprotected apps stay allowed even during a lockout.
+    expect(
+      await lockedOut.evaluate('com.example.chat'),
+      AccessDecision.allow,
+    );
+  });
+
+  test('a lockout that has expired challenges again (Phase 5E)',
+      () async {
+    await protect('com.whatsapp');
+    final SecuritySettingsRepository settings =
+        SecuritySettingsRepositoryImpl(InMemoryLocalDatabase());
+    final DefaultCredentialManager manager = DefaultCredentialManager(
+      settings: settings,
+      pinHasher: Pbkdf2PinHasher(iterations: 200),
+      patternHasher: Pbkdf2PatternHasher(iterations: 200),
+      stateMachine: CredentialStateMachine(
+        maxFailedAttempts: 3,
+        lockoutDuration: const Duration(seconds: 30),
+      ),
+    );
+    await manager.enrollPin('1234');
+    for (int i = 0; i < 3; i++) {
+      await manager.authenticatePin('9999');
+    }
+
+    final DefaultAccessController lockedOut = DefaultAccessController(
+      matcher: container.protectedAppMatcher,
+      auth: manager,
+      now: () => DateTime(2026, 8, 21, 9, 0),
+    );
+    expect(await lockedOut.evaluate('com.whatsapp'), AccessDecision.deny);
+
+    // Past the cooldown the decision returns to a normal challenge.
+    final DefaultAccessController expired = DefaultAccessController(
+      matcher: container.protectedAppMatcher,
+      auth: manager,
+      now: () => DateTime(2026, 8, 21, 9, 1),
+    );
+    expect(
+      await expired.evaluate('com.whatsapp'),
       AccessDecision.challenge,
     );
   });

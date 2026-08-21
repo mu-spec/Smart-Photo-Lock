@@ -321,3 +321,26 @@ Automated suites: `test/protection/default_access_controller_test.dart`,
 Device QA: protect WhatsApp on the Apps tab, enroll a PIN, then open
 WhatsApp — Smart App Lock must come to the front and ask for the PIN.
 A correct PIN lets WhatsApp open without re-prompting for 2 minutes.
+
+---
+
+# Phase 5E — PIN Integration
+
+Automated suites: `test/services/installed_apps_service_test.dart`
+(launchApp), `test/protection/default_access_controller_test.dart`
+(lockout), `test/ui/lock_challenge_test.dart` (gate behavior).
+
+| # | Scenario | Expected |
+| - | -------- | -------- |
+| 1 | launchApp native success/failure | Result maps; args carry the package |
+| 2 | launchApp static recording | Calls + launchedPackages + failure flag |
+| 3 | Active lockout + protected app | `deny` (Phase 5E) |
+| 4 | Active lockout + unprotected app | `allow` (lockout is irrelevant) |
+| 5 | Expired lockout | Back to `challenge` |
+| 6 | Correct PIN on protected app | Session granted + app LAUNCHED |
+| 7 | Wrong PIN | Challenge stays; no launch |
+| 8 | Cancelled challenge | No launch, no session; re-challenge next time |
+
+Device QA: protect WhatsApp, open it, enter the PIN — WhatsApp must
+open automatically. Fail the PIN three times — the next open shows the
+countdown and WhatsApp cannot be reached until it ends.

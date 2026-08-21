@@ -36,4 +36,9 @@ abstract interface class InstalledAppsService {
   /// error, never a fabricated app) — callers treat null as
   /// "no detection available".
   Future<Result<String?>> getForegroundPackage();
+
+  /// Phase 5E: opens [packageName] through its MAIN/LAUNCHER intent —
+  /// the "allow access" half of the lock flow, called after a
+  /// successful PIN challenge.
+  Future<Result<void>> launchApp(String packageName);
 }

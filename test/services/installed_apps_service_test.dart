@@ -124,6 +124,36 @@ void main() {
       expect((await service.getForegroundPackage()).isFailure, isTrue);
     });
 
+    test('launchApp forwards the package and reports success (Phase 5E)',
+        () async {
+      messenger.setMockMethodCallHandler(channel, (MethodCall call) async {
+        expect(call.method, 'launchApp');
+        expect(call.arguments, <String, dynamic>{
+          'packageName': 'com.whatsapp',
+        });
+        return true;
+      });
+      final InstalledAppsService service = MethodChannelInstalledAppsService();
+      expect((await service.launchApp('com.whatsapp')).isSuccess, isTrue);
+    });
+
+    test('launchApp reports failure when the native side cannot launch',
+        () async {
+      messenger.setMockMethodCallHandler(channel, (MethodCall call) async => false);
+      final InstalledAppsService service = MethodChannelInstalledAppsService();
+      final result = await service.launchApp('com.whatsapp');
+      expect(result.isFailure, isTrue);
+      expect(result.errorOrNull.toString(), contains('Could not open'));
+    });
+
+    test('launchApp platform errors fail closed', () async {
+      messenger.setMockMethodCallHandler(channel, (MethodCall call) async {
+        throw PlatformException(code: 'launch_error', message: 'boom');
+      });
+      final InstalledAppsService service = MethodChannelInstalledAppsService();
+      expect((await service.launchApp('com.whatsapp')).isFailure, isTrue);
+    });
+
     test('hasUsageAccess decodes the native grant state', () async {
       messenger.setMockMethodCallHandler(channel, (MethodCall call) async {
         expect(call.method, 'hasUsageAccess');
@@ -276,6 +306,19 @@ void main() {
       service.foregroundPackage = 'com.whatsapp';
       expect((await service.getForegroundPackage()).valueOrNull, 'com.whatsapp');
       expect(service.getForegroundPackageCalls, 2);
+    });
+
+    test('launchApp is counted and recorded (Phase 5E)', () async {
+      final StaticInstalledAppsService service = StaticInstalledAppsService(apps);
+
+      expect((await service.launchApp('com.whatsapp')).isSuccess, isTrue);
+      expect(service.launchAppCalls, 1);
+      expect(service.launchedPackages, <String>['com.whatsapp']);
+
+      service.launchAppSucceeds = false;
+      expect((await service.launchApp('com.whatsapp')).isFailure, isTrue);
+      expect(service.launchAppCalls, 2);
+      expect(service.launchedPackages, <String>['com.whatsapp']);
     });
 
     test('getAppIcon returns seeded bytes or null', () async {

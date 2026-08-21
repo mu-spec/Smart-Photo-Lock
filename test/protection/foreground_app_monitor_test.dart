@@ -227,4 +227,8 @@ class _FailingInstalledAppsService implements InstalledAppsService {
   @override
   Future<Result<String?>> getForegroundPackage() async =>
       Result.failure(StateError('backend unavailable'));
+
+  @override
+  Future<Result<void>> launchApp(String packageName) async =>
+      Result.failure(StateError('backend unavailable'));
 }

@@ -139,4 +139,12 @@ class _FailingAppsService implements InstalledAppsService {
   @override
   Future<Result<void>> requestUsageAccess() async =>
       Result.failure(StateError('n/a'));
+
+  @override
+  Future<Result<String?>> getForegroundPackage() async =>
+      Result.failure(StateError('n/a'));
+
+  @override
+  Future<Result<void>> launchApp(String packageName) async =>
+      Result.failure(StateError('n/a'));
 }

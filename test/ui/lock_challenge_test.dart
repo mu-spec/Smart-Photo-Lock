@@ -5,6 +5,7 @@ import 'package:smart_app_lock/app/app.dart';
 import 'package:smart_app_lock/app/app_container.dart';
 import 'package:smart_app_lock/data/models/protected_app.dart';
 import 'package:smart_app_lock/services/impl/static_accessibility_lock_service.dart';
+import 'package:smart_app_lock/services/impl/static_installed_apps_service.dart';
 import 'package:smart_app_lock/services/impl/static_overlay_lock_service.dart';
 import 'package:smart_app_lock/ui/screens/pattern/pattern_unlock_screen.dart';
 import 'package:smart_app_lock/ui/screens/pin/pin_unlock_screen.dart';
@@ -50,7 +51,8 @@ void main() {
 
   testWidgets(
       'a protected app becoming active presents the PIN challenge; a '
-      'correct PIN unlocks the session', (WidgetTester tester) async {
+      'correct PIN unlocks the session and launches the app (Phase 5E)',
+      (WidgetTester tester) async {
     final AppContainer container = await pumpApp(tester);
     await container.auth.enrollPin('1234');
     await protect(container, 'com.whatsapp');
@@ -65,13 +67,18 @@ void main() {
     expect(overlay.showLockChallengeCalls, 1);
     expect(overlay.lastLockPackage, 'com.whatsapp');
 
-    // Correct PIN -> the screen pops and the session is granted.
+    // Correct PIN -> the screen pops, the session is granted, and the
+    // protected app is LAUNCHED (Phase 5E: the PIN gates the access).
     for (final String digit in <String>['1', '2', '3', '4']) {
       await tester.tap(find.byKey(Key('pin_key_$digit')));
       await tester.pumpAndSettle();
     }
     expect(find.byType(PinUnlockScreen), findsNothing);
     expect(overlay.hideLockChallengeCalls, 1);
+    final StaticInstalledAppsService apps =
+        container.installedAppsService as StaticInstalledAppsService;
+    expect(apps.launchAppCalls, 1);
+    expect(apps.launchedPackages, <String>['com.whatsapp']);
 
     // The open unlock window suppresses an immediate re-challenge.
     await openApp(tester, container, 'com.whatsapp');
@@ -114,7 +121,8 @@ void main() {
     expect(find.byType(PinUnlockScreen), findsNothing);
   });
 
-  testWidgets('a wrong PIN keeps the challenge up', (WidgetTester tester) async {
+  testWidgets('a wrong PIN keeps the challenge up and the app blocked '
+      '(Phase 5E)', (WidgetTester tester) async {
     final AppContainer container = await pumpApp(tester);
     await container.auth.enrollPin('1234');
     await protect(container, 'com.whatsapp');
@@ -127,10 +135,36 @@ void main() {
       await tester.pumpAndSettle();
     }
 
-    // Still locked: the screen stays, the error is visible.
+    // Still locked: the screen stays, the error is visible, and the
+    // protected app was never launched.
     expect(find.byType(PinUnlockScreen), findsOneWidget);
     expect(find.textContaining(PinUnlockScreen.wrongPinPrefix),
         findsOneWidget);
+    final StaticInstalledAppsService apps =
+        container.installedAppsService as StaticInstalledAppsService;
+    expect(apps.launchAppCalls, 0);
+  });
+
+  testWidgets('cancelling the challenge leaves the app blocked '
+      '(Phase 5E)', (WidgetTester tester) async {
+    final AppContainer container = await pumpApp(tester);
+    await container.auth.enrollPin('1234');
+    await protect(container, 'com.whatsapp');
+
+    await openApp(tester, container, 'com.whatsapp');
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+
+    // The user backs out instead of entering the PIN.
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    expect(find.byType(PinUnlockScreen), findsNothing);
+    final StaticInstalledAppsService apps =
+        container.installedAppsService as StaticInstalledAppsService;
+    expect(apps.launchAppCalls, 0);
+    // No unlock window either: the next activation challenges again.
+    await openApp(tester, container, 'com.whatsapp');
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
   });
 
   testWidgets('a failed bring-to-front presents no challenge',

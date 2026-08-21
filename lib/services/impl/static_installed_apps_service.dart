@@ -33,6 +33,13 @@ class StaticInstalledAppsService implements InstalledAppsService {
   /// mutable so tests can simulate foreground switches.
   String? foregroundPackage;
 
+  /// Phase 5E: launch behavior, mutable for tests.
+  bool launchAppSucceeds = true;
+  int launchAppCalls = 0;
+
+  /// Phase 5E: every package the trigger asked to launch, in order.
+  final List<String> launchedPackages = <String>[];
+
   /// Tracks calls so tests can assert polling behavior of consumers.
   int getForegroundPackageCalls = 0;
 
@@ -74,5 +81,15 @@ class StaticInstalledAppsService implements InstalledAppsService {
   Future<Result<String?>> getForegroundPackage() async {
     getForegroundPackageCalls++;
     return Result.success(foregroundPackage);
+  }
+
+  @override
+  Future<Result<void>> launchApp(String packageName) async {
+    launchAppCalls++;
+    if (launchAppSucceeds) {
+      launchedPackages.add(packageName);
+      return Result.success(null);
+    }
+    return Result.failure(StateError('Could not open the application.'));
   }
 }

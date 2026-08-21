@@ -96,13 +96,6 @@ class AppContainer {
     // — one shared instance for diagnostics now and the lock engine in
     // 5D+.
     protectedAppMatcher = ProtectedAppMatcher(repository: protectedApps);
-    // Phase 5D: the access decision pipeline (protected -> challenge ->
-    // session) and the trigger that drives it from foreground changes.
-    accessController = DefaultAccessController(matcher: protectedAppMatcher);
-    lockTrigger = LockTrigger(
-      monitor: foregroundMonitor,
-      controller: accessController,
-    );
     // Biometric foundation (Phase 2J): platform BiometricPrompt bridge.
     // Tests may override it with a fake for deterministic availability
     // states; production always uses the real local_auth service.
@@ -117,6 +110,19 @@ class AppContainer {
         policy: CredentialHashPolicy.strict,
       ),
       biometricService: biometrics,
+    );
+    // Phase 5D: the access decision pipeline (protected -> challenge ->
+    // session) and the trigger that drives it from foreground changes.
+    // Phase 5E: the controller also consults the credential manager so
+    // an active authentication lockout yields `deny`. Constructed AFTER
+    // `auth` — the controller reads credential state on every decision.
+    accessController = DefaultAccessController(
+      matcher: protectedAppMatcher,
+      auth: auth,
+    );
+    lockTrigger = LockTrigger(
+      monitor: foregroundMonitor,
+      controller: accessController,
     );
   }
 

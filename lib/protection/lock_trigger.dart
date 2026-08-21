@@ -15,12 +15,14 @@ class LockRequired {
       'LockRequired($packageName at ${at.toIso8601String()})';
 }
 
-/// Phase 5D: the basic lock trigger.
+/// Phase 5D/5E: the basic lock trigger.
 ///
 /// Subscribes to [ForegroundAppMonitor] changes, evaluates each through
 /// the [AccessController], and emits [LockRequired] whenever the
-/// decision is [AccessDecision.challenge] — i.e. a protected application
-/// became active and no unlock session covers it.
+/// decision is [AccessDecision.challenge] or [AccessDecision.deny] —
+/// i.e. a protected application became active and must be blocked
+/// behind the PIN challenge (deny = authentication is in an active
+/// lockout; the challenge surface shows the cooldown).
 ///
 /// The trigger is a pure decision pipeline: it never presents UI and
 /// never touches the platform. The app layer listens to [lockRequired]
@@ -80,7 +82,12 @@ class LockTrigger {
   Future<void> _onChange(ForegroundAppChange change) async {
     final AccessDecision decision =
         await _controller.evaluate(change.packageName);
-    if (decision != AccessDecision.challenge) {
+    // Phase 5E: `challenge` requires the PIN; `deny` (authentication in
+    // an active lockout) ALSO emits a requirement — the protected app
+    // stays blocked behind the challenge surface, whose unlock screen
+    // shows the cooldown countdown. Only `allow` passes silently.
+    if (decision != AccessDecision.challenge &&
+        decision != AccessDecision.deny) {
       return;
     }
     _lockRequired.add(

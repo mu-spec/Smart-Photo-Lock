@@ -9,8 +9,8 @@ import '../security/credentials/credential_state.dart';
 import 'app_scope.dart';
 import 'router.dart';
 
-/// Phase 5D: presents the lock challenge when a protected application
-/// becomes active.
+/// Phase 5D/5E: presents the lock challenge when a protected application
+/// becomes active — the PIN (preferred) or pattern gates access.
 ///
 /// Owns the production lifecycle of the lock trigger:
 ///  * starts the trigger (monitor + evaluation pipeline) on mount,
@@ -20,8 +20,11 @@ import 'router.dart';
 ///    unlock screen matching the user's enrolled credential (PIN
 ///    preferred, pattern as fallback);
 ///  * a correct unlock grants the package an unlock window
-///    ([AccessController.grantAccess]) so it does not immediately
-///    re-lock.
+///    ([AccessController.grantAccess]) and then LAUNCHES the protected
+///    app (Phase 5E: the PIN is the gate — access proceeds only after
+///    it passes);
+///  * a wrong PIN, a cancelled challenge or an active lockout leaves
+///    the protected app blocked.
 ///
 /// Fail-safe: when NO credential is enrolled there is nothing to
 /// challenge with — the trigger requirement is ignored (setup lives on
@@ -102,8 +105,14 @@ class _LockChallengeHostState extends State<LockChallengeHost> {
       final bool? unlocked =
           await widget.navigatorKey.currentState?.pushNamed<bool>(route);
       if (unlocked == true) {
+        // Phase 5E: the PIN passed — open the session, dismiss the
+        // challenge, then LAUNCH the protected app so the user proceeds
+        // straight into it.
         await container.accessController.grantAccess(requirement.packageName);
         await container.overlay.hideLockChallenge();
+        await container.installedAppsService.launchApp(
+          requirement.packageName,
+        );
       }
     } finally {
       _challenging = false;

@@ -136,6 +136,26 @@ class MethodChannelInstalledAppsService implements InstalledAppsService {
     }
   }
 
+  @override
+  Future<Result<void>> launchApp(String packageName) async {
+    try {
+      final bool? launched = await _channel.invokeMethod<bool>(
+        'launchApp',
+        <String, dynamic>{'packageName': packageName},
+      );
+      if (launched == true) {
+        return Result.success(null);
+      }
+      return Result.failure(
+        StateError('Could not open the application.'),
+      );
+    } on PlatformException catch (e) {
+      return Result.failure(e);
+    } on MissingPluginException catch (e) {
+      return Result.failure(e);
+    }
+  }
+
   /// The channel name, exported for tests.
   static String get channelName => _channelName;
 }
