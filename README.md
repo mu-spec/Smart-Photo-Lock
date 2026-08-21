@@ -565,9 +565,9 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | ------- | ----- |
 | Application ID | `com.smartapplock.app` (debug builds: `com.smartapplock.app.debug`) |
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
-| AGP / Gradle / Kotlin | 9.1.0 / 9.3.1 / built-in (Flutter-managed, `android.builtInKotlin=true`) |
+| AGP / Gradle / Kotlin | 9.1.0 / 9.3.1 / built-in (Flutter-managed, `android.builtInKotlin=true` + `android.newDsl=true`) |
 | Java | 17 |
-| versionName / versionCode | `0.34.16` / `56` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.34.17` / `57` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM), `local_auth` (biometrics) |
 
 ## Prerequisites (on your machine)
