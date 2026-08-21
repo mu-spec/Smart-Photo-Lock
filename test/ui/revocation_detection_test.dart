@@ -6,6 +6,7 @@ import 'package:smart_app_lock/app/app_container.dart';
 import 'package:smart_app_lock/app/app_scope.dart';
 import 'package:smart_app_lock/app/capability_watch_guard.dart';
 import 'package:smart_app_lock/design_system/design_system.dart';
+import 'package:smart_app_lock/services/impl/static_accessibility_lock_service.dart';
 import 'package:smart_app_lock/services/impl/static_installed_apps_service.dart';
 import 'package:smart_app_lock/services/impl/static_overlay_lock_service.dart';
 import 'package:smart_app_lock/ui/screens/security/security_screen.dart';
@@ -102,5 +103,94 @@ void main() {
     // started — the framework's pending-timer check at teardown
     // verifies that no timer survives the widget disposal.
     await tester.pumpWidget(const SizedBox());
+  });
+
+  /// The user returns from the Android settings screen: the resume
+  /// observer on the Security tab re-checks the LIVE capability state.
+  Future<void> resumeFromSettings(WidgetTester tester) async {
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets(
+      'restoring ALL revoked capabilities clears the warning without a '
+      'restart', (WidgetTester tester) async {
+    useTallViewport(tester);
+    final AppContainer container = AppContainer.inMemory(
+      usageAccessGranted: true,
+      accessibilityEnabled: true,
+      overlayGranted: true,
+    );
+    await tester.pumpWidget(SmartAppLockApp(container: container));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('nav_security')));
+    await tester.pumpAndSettle();
+    expect(find.text(SecurityScreen.revokedTitle), findsNothing);
+
+    // All three revoked in the system settings.
+    (container.installedAppsService as StaticInstalledAppsService)
+        .usageAccessGranted = false;
+    (container.accessibility as StaticAccessibilityLockService).enabled =
+        false;
+    (container.overlay as StaticOverlayLockService).overlayGranted = false;
+    await container.capabilityMonitor.probe();
+    await tester.pumpAndSettle();
+    expect(find.text(SecurityScreen.revokedTitle), findsOneWidget);
+
+    // The user restores ALL three and returns to the app.
+    (container.installedAppsService as StaticInstalledAppsService)
+        .usageAccessGranted = true;
+    (container.accessibility as StaticAccessibilityLockService).enabled =
+        true;
+    (container.overlay as StaticOverlayLockService).overlayGranted = true;
+    await resumeFromSettings(tester);
+
+    expect(find.text(SecurityScreen.revokedTitle), findsNothing);
+
+    // And a NEW revocation after recovery is detected again.
+    (container.installedAppsService as StaticInstalledAppsService)
+        .usageAccessGranted = false;
+    await container.capabilityMonitor.probe();
+    await tester.pumpAndSettle();
+    expect(find.text(SecurityScreen.revokedTitle), findsOneWidget);
+
+    await container.capabilityMonitor.dispose();
+  });
+
+  testWidgets(
+      'restoring only ONE revoked capability keeps the warning until all '
+      'are healthy', (WidgetTester tester) async {
+    useTallViewport(tester);
+    final AppContainer container = AppContainer.inMemory(
+      usageAccessGranted: true,
+      accessibilityEnabled: true,
+      overlayGranted: true,
+    );
+    await tester.pumpWidget(SmartAppLockApp(container: container));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('nav_security')));
+    await tester.pumpAndSettle();
+
+    // Revoke usage access AND overlay.
+    (container.installedAppsService as StaticInstalledAppsService)
+        .usageAccessGranted = false;
+    (container.overlay as StaticOverlayLockService).overlayGranted = false;
+    await container.capabilityMonitor.probe();
+    await tester.pumpAndSettle();
+    expect(find.text(SecurityScreen.revokedTitle), findsOneWidget);
+
+    // Restore ONLY usage access: the warning MUST remain.
+    (container.installedAppsService as StaticInstalledAppsService)
+        .usageAccessGranted = true;
+    await resumeFromSettings(tester);
+    expect(find.text(SecurityScreen.revokedTitle), findsOneWidget);
+
+    // Restore overlay too: now everything is healthy -> clears.
+    (container.overlay as StaticOverlayLockService).overlayGranted = true;
+    await resumeFromSettings(tester);
+    expect(find.text(SecurityScreen.revokedTitle), findsNothing);
+
+    await container.capabilityMonitor.dispose();
   });
 }

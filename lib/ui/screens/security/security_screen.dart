@@ -75,7 +75,9 @@ class _SecurityScreenState extends State<SecurityScreen>
   bool _overlayGranted = false;
 
   /// Phase 4F: capabilities detected as revoked this session (drives the
-  /// alert banner).
+  /// alert banner). Reconciled against the LIVE capability snapshot on
+  /// every status load — a restored capability leaves the set, and when
+  /// it empties the banner and dot clear immediately (no restart).
   final Set<CapabilityKind> _revokedKinds = <CapabilityKind>{};
 
   bool get _hasRevokedCapability => _revokedKinds.isNotEmpty;
@@ -159,6 +161,20 @@ class _SecurityScreenState extends State<SecurityScreen>
       _usageAccessGranted = usageAccessGranted;
       _accessibilityEnabled = accessibilityEnabled;
       _overlayGranted = overlayGranted;
+      // Phase 4 device-QA fix: reconcile the session revocation set with
+      // the LIVE capability snapshot. A capability that now probes
+      // granted is no longer revoked — drop its marker. The banner and
+      // attention dot clear the moment ALL required capabilities are
+      // healthy again, and a capability that stays revoked keeps the
+      // warning in place. Fail-closed: a probe failure leaves the
+      // boolean false, so the marker is retained.
+      _revokedKinds.removeWhere(
+        (CapabilityKind kind) => switch (kind) {
+          CapabilityKind.usageAccess => usageAccessGranted,
+          CapabilityKind.accessibility => accessibilityEnabled,
+          CapabilityKind.overlay => overlayGranted,
+        },
+      );
     });
   }
 
