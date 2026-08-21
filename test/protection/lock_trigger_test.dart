@@ -7,6 +7,7 @@ import 'package:smart_app_lock/protection/impl/default_access_controller.dart';
 import 'package:smart_app_lock/protection/lock_trigger.dart';
 import 'package:smart_app_lock/services/impl/static_accessibility_lock_service.dart';
 import 'package:smart_app_lock/services/impl/static_installed_apps_service.dart';
+import 'package:smart_app_lock/services/impl/static_screen_state_service.dart';
 
 /// Phase 5D: the lock trigger — a protected app becoming active emits a
 /// lock requirement; unprotected apps and open unlock windows do not.
@@ -194,6 +195,51 @@ void main() {
     await Future<void>.delayed(Duration.zero);
 
     expect(controller.sessionFor('com.whatsapp'), isNull);
+
+    await trigger.stop();
+  });
+
+  // -- screen-off re-lock (Phase 5K) -----------------------------------------
+
+  test('a screen-off revokes every unlock session and marks pending',
+      () async {
+    await protect('com.whatsapp');
+    await protect('com.example.maps');
+    final DefaultAccessController controller =
+        container.accessController as DefaultAccessController;
+    await controller.grantAccess('com.whatsapp');
+    await controller.grantAccess('com.example.maps');
+    expect(controller.sessionFor('com.whatsapp'), isNotNull);
+    expect(controller.sessionFor('com.example.maps'), isNotNull);
+
+    await trigger.start();
+    expect(trigger.takeScreenOffPending(), isFalse);
+
+    (container.screenState as StaticScreenStateService).emitScreenOff();
+    await Future<void>.delayed(Duration.zero);
+
+    // Every session is gone, and the resume-enforcement marker is set
+    // exactly once.
+    expect(controller.sessionFor('com.whatsapp'), isNull);
+    expect(controller.sessionFor('com.example.maps'), isNull);
+    expect(trigger.takeScreenOffPending(), isTrue);
+    expect(trigger.takeScreenOffPending(), isFalse); // consumed
+
+    await trigger.stop();
+  });
+
+  test('a screen-on event revokes nothing', () async {
+    await protect('com.whatsapp');
+    final DefaultAccessController controller =
+        container.accessController as DefaultAccessController;
+    await controller.grantAccess('com.whatsapp');
+
+    await trigger.start();
+    (container.screenState as StaticScreenStateService).emitScreenOn();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(controller.sessionFor('com.whatsapp'), isNotNull);
+    expect(trigger.takeScreenOffPending(), isFalse);
 
     await trigger.stop();
   });

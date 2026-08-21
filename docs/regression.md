@@ -454,3 +454,27 @@ NOTE: 5J supersedes the 5H re-entry expectations (5H rows 5/6): the
 widget tests that asserted "no challenge on re-entry within the window"
 were replaced by the immediate re-lock flows above. The controller-level
 inactivity window remains as a fallback timeout.
+
+---
+
+# Phase 5K — Screen-Off Re-lock
+
+Automated suites: `test/services/screen_state_service_test.dart`,
+`test/protection/lock_trigger_test.dart` (5K group),
+`test/protection/default_access_controller_test.dart` (revokeAllAccess),
+`test/ui/lock_challenge_test.dart` (screen-off flows).
+
+| # | Scenario | Expected |
+| - | -------- | -------- |
+| 1 | Native payload relay | screen_off/screen_on map to enum values |
+| 2 | Unknown payload / channel error | `Result.failure` — never fabricated |
+| 3 | Static service | Emits + counts screen states |
+| 4 | Screen-off event | Every session revoked; pending marker set once |
+| 5 | Screen-on event | Nothing revoked; no pending marker |
+| 6 | `revokeAllAccess` | All windows cleared; both apps challenge again |
+| 7 | Widget: screen-off then resume | Session gone; protected app challenged again |
+| 8 | Widget: resume without screen-off | No challenge; session intact |
+
+Device QA: unlock WhatsApp, press the power button to turn the screen
+off, wake the phone, return to Smart App Lock — the challenge must
+appear again for WhatsApp.

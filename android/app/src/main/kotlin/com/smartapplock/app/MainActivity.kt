@@ -27,5 +27,6 @@ class MainActivity : FlutterFragmentActivity() {
         InstalledAppsChannel.register(flutterEngine, this)
         AccessibilityStatusChannel.register(flutterEngine, this)
         OverlayStatusChannel.register(flutterEngine, this)
+        ScreenStateChannel.register(flutterEngine, this)
     }
 }

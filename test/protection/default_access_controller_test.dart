@@ -317,6 +317,28 @@ void main() {
     expect((await controller.revokeAccess('com.example.other')).isSuccess,
         isTrue);
   });
+
+  test('revokeAllAccess ends every unlock window at once (Phase 5K)',
+      () async {
+    await protect('com.whatsapp');
+    await protect('com.example.maps');
+    await controller.grantAccess('com.whatsapp');
+    await controller.grantAccess('com.example.maps');
+    expect(controller.sessionFor('com.whatsapp'), isNotNull);
+    expect(controller.sessionFor('com.example.maps'), isNotNull);
+
+    expect((await controller.revokeAllAccess()).isSuccess, isTrue);
+    expect(controller.sessionFor('com.whatsapp'), isNull);
+    expect(controller.sessionFor('com.example.maps'), isNull);
+    expect(
+      await controller.evaluate('com.whatsapp'),
+      AccessDecision.challenge,
+    );
+    expect(
+      await controller.evaluate('com.example.maps'),
+      AccessDecision.challenge,
+    );
+  });
 }
 
 /// [ProtectedAppsRepository] whose reads always fail — proves the

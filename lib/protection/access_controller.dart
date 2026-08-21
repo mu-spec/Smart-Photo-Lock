@@ -30,4 +30,8 @@ abstract interface class AccessController {
   /// Phase 5J: immediately ends the unlock window for [packageName] —
   /// the protected app re-locks the moment the user leaves it.
   Future<Result<void>> revokeAccess(String packageName);
+
+  /// Phase 5K: immediately ends EVERY unlock window — the screen
+  /// turned off, so every protected app re-locks at once.
+  Future<Result<void>> revokeAllAccess();
 }

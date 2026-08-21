@@ -39,12 +39,15 @@ import '../services/impl/local_auth_biometric_service.dart';
 import '../services/impl/method_channel_accessibility_lock_service.dart';
 import '../services/impl/method_channel_installed_apps_service.dart';
 import '../services/impl/method_channel_overlay_lock_service.dart';
+import '../services/impl/method_channel_screen_state_service.dart';
 import '../services/impl/static_accessibility_lock_service.dart';
 import '../services/impl/static_installed_apps_service.dart';
 import '../services/impl/static_overlay_lock_service.dart';
+import '../services/impl/static_screen_state_service.dart';
 import '../services/capability_monitor.dart';
 import '../services/installed_apps_service.dart';
 import '../services/overlay_lock_service.dart';
+import '../services/screen_state_service.dart';
 
 /// Application dependency container — the single wiring point for all
 /// persistence and security storage.
@@ -63,6 +66,7 @@ class AppContainer {
     required InstalledAppsService installedAppsService,
     required AccessibilityLockService accessibilityService,
     required OverlayLockService overlayService,
+    required ScreenStateService screenStateService,
     required this.capabilityMonitor,
     BiometricService? biometricsOverride,
     PreferencesStore? preferencesOverride,
@@ -71,7 +75,8 @@ class AppContainer {
         secretStore = secretStore,
         installedAppsService = installedAppsService,
         accessibility = accessibilityService,
-        overlay = overlayService {
+        overlay = overlayService,
+        screenState = screenStateService {
     settingsCipher = AesGcmSettingsCipher(secretStore);
     preferences = preferencesOverride ?? PreferencesStoreImpl(_keyValueStore);
     protectedApps = ProtectedAppsRepositoryImpl(_database);
@@ -116,6 +121,8 @@ class AppContainer {
     // Phase 5E: the controller also consults the credential manager so
     // an active authentication lockout yields `deny`. Constructed AFTER
     // `auth` — the controller reads credential state on every decision.
+    // Phase 5K: the trigger also watches the device screen state —
+    // a screen-off revokes every unlock session immediately.
     accessController = DefaultAccessController(
       matcher: protectedAppMatcher,
       auth: auth,
@@ -124,6 +131,7 @@ class AppContainer {
     lockTrigger = LockTrigger(
       monitor: foregroundMonitor,
       controller: accessController,
+      screenState: screenStateService,
     );
   }
 
@@ -154,6 +162,7 @@ class AppContainer {
       installedAppsService: installedAppsService,
       accessibilityService: accessibilityService,
       overlayService: overlayService,
+      screenStateService: MethodChannelScreenStateService(),
       capabilityMonitor: CapabilityMonitor(
         hasUsageAccess: installedAppsService.hasUsageAccess,
         isAccessibilityEnabled: accessibilityService.isServiceEnabled,
@@ -201,6 +210,7 @@ class AppContainer {
       installedAppsService: installedAppsService,
       accessibilityService: accessibilityService,
       overlayService: overlayService,
+      screenStateService: StaticScreenStateService(),
       capabilityMonitor: CapabilityMonitor(
         hasUsageAccess: installedAppsService.hasUsageAccess,
         isAccessibilityEnabled: accessibilityService.isServiceEnabled,
@@ -277,6 +287,11 @@ class AppContainer {
   /// state + settings routing; the lock window itself lands with the
   /// lock-screen phase.
   final OverlayLockService overlay;
+
+  /// Phase 5K: the device screen-state bridge (screen off/on
+  /// broadcasts) — the lock trigger revokes all unlock sessions when
+  /// the screen turns off.
+  final ScreenStateService screenState;
 
   /// Revocation watcher (Phase 4F): probes the same services and emits
   /// granted→revoked changes. Started by the app root.

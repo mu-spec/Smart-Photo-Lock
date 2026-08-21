@@ -6,10 +6,11 @@ import '../protection/access_controller.dart';
 import '../protection/lock_trigger.dart';
 import '../security/credentials/auth_type.dart';
 import '../security/credentials/credential_state.dart';
+import 'app_container.dart';
 import 'app_scope.dart';
 import 'router.dart';
 
-/// Phase 5D/5E/5F: presents the lock challenge when a protected
+/// Phase 5D/5E/5F/5K: presents the lock challenge when a protected
 /// application becomes active — the user's PRIMARY credential (PIN or
 /// pattern) gates access.
 ///
@@ -26,6 +27,11 @@ import 'router.dart';
 ///    app (Phase 5E);
 ///  * a wrong credential, a cancelled challenge or an active lockout
 ///    leaves the protected app blocked.
+///
+/// Phase 5K (screen-off re-lock): when the app resumes after a screen
+/// turn-off, the host re-evaluates the current foreground — a protected
+/// app whose session was revoked by the screen-off is challenged again
+/// immediately.
 ///
 /// Fail-safe: when NO credential is enrolled there is nothing to
 /// challenge with — the trigger requirement is ignored (setup lives on
@@ -48,7 +54,8 @@ class LockChallengeHost extends StatefulWidget {
   State<LockChallengeHost> createState() => _LockChallengeHostState();
 }
 
-class _LockChallengeHostState extends State<LockChallengeHost> {
+class _LockChallengeHostState extends State<LockChallengeHost>
+    with WidgetsBindingObserver {
   LockTrigger? _trigger;
   StreamSubscription<LockRequired>? _subscription;
 
@@ -58,6 +65,7 @@ class _LockChallengeHostState extends State<LockChallengeHost> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _trigger = AppScope.read(context)?.lockTrigger;
     _subscription = _trigger?.lockRequired.listen(_onLockRequired);
     _trigger?.start();
@@ -67,16 +75,62 @@ class _LockChallengeHostState extends State<LockChallengeHost> {
   void dispose() {
     // Stop exactly what this host started: the subscription and the
     // trigger (which stops the monitor's polling timer).
+    WidgetsBinding.instance.removeObserver(this);
     _subscription?.cancel();
     _trigger?.stop();
     super.dispose();
   }
 
-  Future<void> _onLockRequired(LockRequired requirement) async {
+  /// Phase 5K: when the app resumes after a screen turn-off, enforce
+  /// the re-lock — re-evaluate the current foreground and challenge a
+  /// protected app whose session the screen-off revoked.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _onResumed();
+    }
+  }
+
+  Future<void> _onResumed() async {
+    final LockTrigger? trigger = _trigger;
+    final AppContainer? container = AppScope.read(context);
+    if (trigger == null || container == null || !mounted) {
+      return;
+    }
+    // Only screen-off re-lock enforcement — a plain resume (e.g. the
+    // user simply returning to Smart App Lock) must not re-challenge a
+    // still-valid session.
+    if (!trigger.takeScreenOffPending()) {
+      return;
+    }
+    // Refresh detection, then evaluate the last known foreground.
+    await container.foregroundMonitor.probe();
+    if (!mounted) {
+      return;
+    }
+    final String? current = container.foregroundMonitor.currentPackage;
+    if (current == null) {
+      return;
+    }
+    final AccessDecision decision =
+        await container.accessController.evaluate(current);
+    if (!mounted) {
+      return;
+    }
+    if (decision == AccessDecision.challenge ||
+        decision == AccessDecision.deny) {
+      await _presentChallenge(current);
+    }
+  }
+
+  Future<void> _onLockRequired(LockRequired requirement) =>
+      _presentChallenge(requirement.packageName);
+
+  Future<void> _presentChallenge(String packageName) async {
     if (_challenging || !mounted) {
       return;
     }
-    final container = AppScope.read(context);
+    final AppContainer? container = AppScope.read(context);
     if (container == null) {
       return;
     }
@@ -91,9 +145,7 @@ class _LockChallengeHostState extends State<LockChallengeHost> {
 
     // Bring Smart App Lock to the front (basic challenge presentation;
     // the overlay window lands in the lock-screen phase).
-    final shown = await container.overlay.showLockChallenge(
-      requirement.packageName,
-    );
+    final shown = await container.overlay.showLockChallenge(packageName);
     if (!mounted || shown.isFailure) {
       return;
     }
@@ -131,11 +183,9 @@ class _LockChallengeHostState extends State<LockChallengeHost> {
         // Phase 5E/5F: the credential passed — open the session,
         // dismiss the challenge, then LAUNCH the protected app so the
         // user proceeds straight into it.
-        await container.accessController.grantAccess(requirement.packageName);
+        await container.accessController.grantAccess(packageName);
         await container.overlay.hideLockChallenge();
-        await container.installedAppsService.launchApp(
-          requirement.packageName,
-        );
+        await container.installedAppsService.launchApp(packageName);
       }
     } finally {
       _challenging = false;

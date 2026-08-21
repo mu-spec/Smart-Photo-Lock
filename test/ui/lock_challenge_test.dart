@@ -11,6 +11,7 @@ import 'package:smart_app_lock/services/biometric_service.dart';
 import 'package:smart_app_lock/services/impl/static_accessibility_lock_service.dart';
 import 'package:smart_app_lock/services/impl/static_installed_apps_service.dart';
 import 'package:smart_app_lock/services/impl/static_overlay_lock_service.dart';
+import 'package:smart_app_lock/services/impl/static_screen_state_service.dart';
 import 'package:smart_app_lock/ui/screens/pattern/pattern_unlock_screen.dart';
 import 'package:smart_app_lock/ui/screens/pin/pin_unlock_screen.dart';
 import 'package:smart_app_lock/utilities/result.dart';
@@ -103,6 +104,69 @@ void main() {
     // Returning to WhatsApp challenges again right away.
     await openApp(tester, container, 'com.whatsapp');
     expect(find.byType(PinUnlockScreen), findsOneWidget);
+  });
+
+  testWidgets(
+      'screen-off revokes the session and resume re-challenges (Phase 5K)',
+      (WidgetTester tester) async {
+    final AppContainer container = await pumpApp(tester);
+    await container.auth.enrollPin('1234');
+    await protect(container, 'com.whatsapp');
+
+    // Unlock the protected app normally.
+    await openApp(tester, container, 'com.whatsapp');
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+    for (final String digit in <String>['1', '2', '3', '4']) {
+      await tester.tap(find.byKey(Key('pin_key_$digit')));
+      await tester.pumpAndSettle();
+    }
+    expect(find.byType(PinUnlockScreen), findsNothing);
+    expect(sessionFor(container, 'com.whatsapp'), isNotNull);
+
+    // The device screen turns off: every session dies immediately.
+    (container.screenState as StaticScreenStateService).emitScreenOff();
+    await tester.pump();
+    expect(sessionFor(container, 'com.whatsapp'), isNull);
+
+    // The screen turns back on and the user returns to Smart App Lock:
+    // the re-lock is enforced — the protected app is challenged again.
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+
+    // Authenticating again re-opens the session.
+    for (final String digit in <String>['1', '2', '3', '4']) {
+      await tester.tap(find.byKey(Key('pin_key_$digit')));
+      await tester.pumpAndSettle();
+    }
+    expect(find.byType(PinUnlockScreen), findsNothing);
+    expect(sessionFor(container, 'com.whatsapp'), isNotNull);
+  });
+
+  testWidgets(
+      'resume without a screen-off never re-challenges (Phase 5K)',
+      (WidgetTester tester) async {
+    final AppContainer container = await pumpApp(tester);
+    await container.auth.enrollPin('1234');
+    await protect(container, 'com.whatsapp');
+
+    await openApp(tester, container, 'com.whatsapp');
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+    for (final String digit in <String>['1', '2', '3', '4']) {
+      await tester.tap(find.byKey(Key('pin_key_$digit')));
+      await tester.pumpAndSettle();
+    }
+    expect(find.byType(PinUnlockScreen), findsNothing);
+    expect(sessionFor(container, 'com.whatsapp'), isNotNull);
+
+    // A plain return to the app (no screen-off in between) must NOT
+    // re-challenge: the still-valid session stays intact.
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+    expect(find.byType(PinUnlockScreen), findsNothing);
+    expect(sessionFor(container, 'com.whatsapp'), isNotNull);
   });
 
   testWidgets(

@@ -1036,3 +1036,29 @@ LockTrigger._onChange(change):
   trigger-level revoke supersedes it for the normal switch-away flow.
 - Restart-safe: seeding from the monitor's last known foreground means
   a restarted trigger still revokes on the next leave transition.
+
+## 5K. Screen-off re-lock
+
+Turning the screen off re-locks every protected app immediately:
+
+```
+ScreenStateChannel (native runtime receiver, ACTION_SCREEN_OFF/ON)
+  -> EventChannel smart_app_lock/screen_state
+  -> LockTrigger._onScreenEvent(screenOff)
+       ├─ _screenOffPending = true
+       └─ accessController.revokeAllAccess()      // all sessions die
+LockChallengeHost (WidgetsBindingObserver)
+  -> resumed && trigger.takeScreenOffPending()
+       ├─ foregroundMonitor.probe()
+       └─ evaluate(current) -> challenge/deny -> present challenge
+```
+
+- Lifecycle pauses are NOT used as the re-lock signal: launching the
+  protected app pauses Smart App Lock, so pause-based re-lock would
+  revoke every fresh session. The screen-state broadcast distinguishes
+  a real screen-off.
+- The receiver is runtime-registered (these broadcasts are not
+  manifest-deliverable), non-exported on API 33+, unregistered on
+  cancel.
+- The pending marker makes the resume enforcement precise: ordinary
+  returns to the app never re-challenge a valid session.

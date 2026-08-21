@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import '../services/screen_state_service.dart';
+import '../utilities/result.dart';
 import 'access_controller.dart';
 import 'foreground_app_monitor.dart';
 
@@ -40,20 +42,28 @@ class LockTrigger {
   LockTrigger({
     required ForegroundAppMonitor monitor,
     required AccessController controller,
+    required ScreenStateService screenState,
     DateTime Function()? now,
   })  : _monitor = monitor,
         _controller = controller,
+        _screenState = screenState,
         _now = now ?? DateTime.now;
 
   final ForegroundAppMonitor _monitor;
   final AccessController _controller;
+  final ScreenStateService _screenState;
   final DateTime Function() _now;
 
   final StreamController<LockRequired> _lockRequired =
       StreamController<LockRequired>.broadcast();
 
   StreamSubscription<ForegroundAppChange>? _subscription;
+  StreamSubscription<Result<ScreenStateEvent>>? _screenSub;
   bool _started = false;
+
+  /// Phase 5K: true once a screen-off was observed since the last
+  /// resume — the re-lock enforcement marker consumed by the app layer.
+  bool _screenOffPending = false;
 
   /// The last foreground package the trigger evaluated (Phase 5J): a
   /// transition AWAY from it revokes that package's unlock session
@@ -76,6 +86,9 @@ class LockTrigger {
     _previousPackage ??= _monitor.currentPackage;
     await _monitor.start();
     _subscription = _monitor.changes.listen(_onChange);
+    // Phase 5K: watch the device screen state — a screen-off revokes
+    // every unlock session immediately.
+    _screenSub = _screenState.events.listen(_onScreenEvent);
   }
 
   /// Stops the pipeline: unsubscribes and stops the monitor. The lock
@@ -87,7 +100,32 @@ class LockTrigger {
     _started = false;
     await _subscription?.cancel();
     _subscription = null;
+    await _screenSub?.cancel();
+    _screenSub = null;
     await _monitor.stop();
+  }
+
+  /// Phase 5K: consumes and clears the screen-off marker — the app
+  /// layer calls this on resume to decide whether re-lock enforcement
+  /// must re-evaluate the current foreground.
+  bool takeScreenOffPending() {
+    final bool pending = _screenOffPending;
+    _screenOffPending = false;
+    return pending;
+  }
+
+  Future<void> _onScreenEvent(Result<ScreenStateEvent> event) async {
+    if (event.isFailure) {
+      return; // fail-quiet
+    }
+    if (event.valueOrNull != ScreenStateEvent.screenOff) {
+      return; // screen-on: nothing to re-lock
+    }
+    // Phase 5K: the screen turned off — every unlock session ends NOW.
+    // The marker tells the app layer to re-evaluate the foreground on
+    // resume, so returning to a protected app challenges immediately.
+    _screenOffPending = true;
+    await _controller.revokeAllAccess();
   }
 
   /// True while the pipeline is running (audit: lets other components —

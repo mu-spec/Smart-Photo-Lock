@@ -89,6 +89,12 @@ class DefaultAccessController implements AccessController {
     return Result.success(null);
   }
 
+  @override
+  Future<Result<void>> revokeAllAccess() async {
+    _sessions.clear();
+    return Result.success(null);
+  }
+
   /// Test/diagnostic view of the active unlock windows.
   Map<String, LockSession> get activeSessions =>
       Map<String, LockSession>.unmodifiable(_sessions);
