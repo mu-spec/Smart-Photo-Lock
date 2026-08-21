@@ -82,6 +82,7 @@ class ForegroundAppMonitor {
   Timer? _timer;
   String? _current;
   bool _started = false;
+  bool _disposed = false;
 
   /// Foreground transitions (deduplicated per package across sources).
   Stream<ForegroundAppChange> get changes => _controller.stream;
@@ -110,8 +111,13 @@ class ForegroundAppMonitor {
   /// Starts detection: an immediate probe, periodic usage-stats polls,
   /// and the accessibility fallback subscription.
   ///
-  /// Idempotent — a second call does nothing.
+  /// Idempotent — a second call does nothing. Starting a DISPOSED
+  /// monitor is a programming error and fails loudly instead of
+  /// silently pretending to monitor.
   Future<void> start() async {
+    if (_disposed) {
+      throw StateError('ForegroundAppMonitor.start() after dispose().');
+    }
     if (_started) {
       return;
     }
@@ -176,9 +182,22 @@ class ForegroundAppMonitor {
   }
 
   /// Permanently tears the monitor down: stops detection and closes the
-  /// change stream. Not recoverable.
+  /// change stream. Not recoverable. Idempotent — a second dispose is a
+  /// safe no-op (the periodic timer is cancelled exactly once, and the
+  /// stream is closed exactly once).
   Future<void> dispose() async {
-    await stop();
+    if (_disposed) {
+      return;
+    }
+    _disposed = true;
+    // Cancel the timer FIRST, synchronously — no await may pass before
+    // the periodic timer is dead, so a dispose() racing an in-flight
+    // stop() can never leave the timer alive.
+    _timer?.cancel();
+    _timer = null;
+    _started = false;
+    await _accessibilitySub?.cancel();
+    _accessibilitySub = null;
     await _controller.close();
   }
 }

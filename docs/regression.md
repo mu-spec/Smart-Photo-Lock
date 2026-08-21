@@ -841,3 +841,30 @@ Verified after the fixes:
   (the remaining hits are the gauntlet's `pumpApp`/`boot` helper
   parameters, which route to `setGracePeriod`).
 - No `test()`/`testWidgets()` sits inside a class anywhere in `test/`.
+
+---
+
+# Phase 5 — Fix #2 (ForegroundAppMonitor only)
+
+Root cause: the accessibility/merged tests emitted fallback events
+through the static service WITHOUT starting the monitor — the monitor
+only subscribes to the accessibility stream inside `start()` (the
+production trigger starts it at app boot), so unlistened broadcast
+events were dropped: fallback tests saw 0 events, the merged chain lost
+its accessibility event, and the accessibility counter under-counted.
+
+Fixes:
+
+- The four affected tests now call `monitor.start()` before emitting
+  (matching production semantics; the baseline probe sees no foreground
+  package and emits nothing).
+- `dispose()` hardened: idempotent (`_disposed` guard), and the
+  periodic timer is cancelled SYNCHRONOUSLY first — a dispose racing an
+  in-flight stop can never leave the timer alive; the stream closes
+  exactly once.
+- `start()` after `dispose()` now fails loudly (StateError) instead of
+  silently pretending to monitor.
+- New lifecycle tests: repeated start/stop cycles keep detection
+  working; double dispose is safe; start-after-dispose throws; and a
+  testWidgets proof that disposing from the running state cancels the
+  periodic timer (framework pending-timer check) with no further polls.

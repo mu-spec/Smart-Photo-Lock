@@ -84,6 +84,11 @@ void main() {
 
   group('accessibility fallback path', () {
     test('window-state events report transitions and dedupe', () async {
+      // The fallback path is only live while the monitor is RUNNING:
+      // start() establishes the accessibility subscription (in
+      // production the lock trigger starts the monitor at app boot).
+      // The baseline probe sees no foreground package and emits nothing.
+      await monitor.start();
       accessibility.emitForegroundPackage('com.example.chat');
       await Future<void>.delayed(Duration.zero);
       accessibility.emitForegroundPackage('com.example.chat');
@@ -103,6 +108,7 @@ void main() {
 
   group('merged sources', () {
     test('both paths share one deduplicated transition chain', () async {
+      await monitor.start(); // subscribe to the fallback; null baseline
       installed.foregroundPackage = 'com.example.chat';
       await monitor.probe(); // usage: chat
       accessibility.emitForegroundPackage('com.example.maps');
@@ -121,6 +127,7 @@ void main() {
 
     test('the same package reported by the OTHER source is not a new '
         'transition', () async {
+      await monitor.start(); // subscribe to the fallback; null baseline
       installed.foregroundPackage = 'com.example.chat';
       await monitor.probe();
       accessibility.emitForegroundPackage('com.example.chat');
@@ -144,6 +151,10 @@ void main() {
       expect(monitor.probeCount, 2);
       expect(monitor.nullProbeCount, 1);
 
+      // Subscribe to the fallback path before emitting (production
+      // always runs the monitor via start()); the baseline probe sees
+      // the already-reported package and adds no transition.
+      await monitor.start();
       accessibility.emitForegroundPackage('com.example.maps');
       await Future<void>.delayed(Duration.zero);
       expect(monitor.accessibilityEventCount, 1);
@@ -197,6 +208,49 @@ void main() {
       await monitor.start();
       expect(installed.getForegroundPackageCalls, 1);
       await monitor.stop();
+    });
+
+    test('repeated start/stop cycles are safe and detection keeps '
+        'working', () async {
+      for (int i = 0; i < 3; i++) {
+        await monitor.start();
+        await monitor.stop();
+      }
+
+      // After three full cycles the monitor still detects correctly.
+      installed.foregroundPackage = 'com.example.chat';
+      await monitor.probe();
+      expect(changes, hasLength(1));
+      expect(changes.single.packageName, 'com.example.chat');
+      expect(monitor.probeCount, greaterThanOrEqualTo(1));
+
+      await monitor.stop();
+    });
+
+    test('dispose is idempotent (double dispose is safe)', () async {
+      await monitor.start();
+      await monitor.dispose();
+      await monitor.dispose(); // must not throw
+    });
+
+    test('start after dispose fails loudly (contract guard)', () async {
+      await monitor.dispose();
+      await expectLater(monitor.start(), throwsStateError);
+    });
+
+    testWidgets('dispose cancels the periodic timer even without stop',
+        (WidgetTester tester) async {
+      installed.foregroundPackage = 'com.example.chat';
+      await monitor.start();
+      await tester.pump();
+      expect(changes, hasLength(1));
+
+      // Dispose directly from the running state: the periodic timer must
+      // die (the framework's pending-timer check at teardown proves it)
+      // and no further poll may run.
+      await monitor.dispose();
+      await tester.pump(monitor.pollInterval * 3);
+      expect(installed.getForegroundPackageCalls, 1);
     });
   });
 }
