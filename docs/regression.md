@@ -478,3 +478,29 @@ Automated suites: `test/services/screen_state_service_test.dart`,
 Device QA: unlock WhatsApp, press the power button to turn the screen
 off, wake the phone, return to Smart App Lock — the challenge must
 appear again for WhatsApp.
+
+---
+
+# Phase 5L — Grace Period
+
+Automated suites: `test/protection/default_access_controller_test.dart`
+(grace group), `test/data/lock_settings_repository_test.dart` (grace
+group), `test/ui/security_screen_test.dart` (grace UI),
+`test/ui/lock_challenge_test.dart` (grace flow).
+
+| # | Scenario | Expected |
+| - | -------- | -------- |
+| 1 | Grace 30s: leave then re-enter within | Allowed; marker consumed |
+| 2 | Grace 30s: leave then re-enter after | Challenge; session pruned |
+| 3 | Grace zero | Immediate re-lock (5J default) |
+| 4 | Screen-off with grace configured | Still immediate (never softened) |
+| 5 | Repository default | Zero |
+| 6 | Repository round-trip / negative clamp / corrupt value | 30s/1m round-trip; negative→0; corrupt→0 |
+| 7 | Security tab: select 30 seconds | Persisted AND applied live (session survives a leave) |
+| 8 | Widget: leave+return within grace | No challenge |
+| 9 | Widget: leave+return after grace | Challenge appears |
+
+NOTE (5H audit fix): the 5H controller tests previously time-travelled
+across FRESH controller instances whose session maps were empty — the
+refresh and expiry assertions now use ONE controller with a mutable
+clock, testing what they claim.

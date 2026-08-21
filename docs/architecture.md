@@ -1062,3 +1062,27 @@ LockChallengeHost (WidgetsBindingObserver)
   cancel.
 - The pending marker makes the resume enforcement precise: ordinary
   returns to the app never re-challenge a valid session.
+
+## 5L. Grace period
+
+Configurable re-lock grace, applied ONLY to the leave path:
+
+```
+DefaultAccessController:
+  setGracePeriod(duration)          // zero = immediate (5J default)
+  revokeAccess(pkg):
+    ├─ grace > 0 && session exists -> _graceUntil[pkg] = now + grace
+    └─ else                         -> remove session (immediate)
+  evaluate(pkg):
+    ├─ grace pending && within     -> allow, consume marker, refresh
+    ├─ grace pending && expired    -> remove session + grace, challenge
+    └─ ... (existing session policy)
+  revokeAllAccess()                 // screen-off: ALWAYS immediate
+```
+
+- Persistence: `lock.grace_period_seconds` in the database settings
+  key-value layer via `LockSettingsRepository`.
+- UI: Security tab "Re-lock" section (segmented: Immediate / 30s / 1m /
+  5m); selection applies live to the shared controller and persists.
+- Startup: the lock challenge host applies the persisted grace when the
+  app mounts.

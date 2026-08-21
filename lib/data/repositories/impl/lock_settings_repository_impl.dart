@@ -92,4 +92,41 @@ class LockSettingsRepositoryImpl implements LockSettingsRepository {
       return Result.failure(e);
     }
   }
+
+  // -- re-lock grace (Phase 5L) ---------------------------------------------
+
+  /// DB key holding the grace period in whole seconds.
+  static const String gracePeriodKey = 'lock.grace_period_seconds';
+
+  @override
+  Future<Result<Duration>> getGracePeriod() async {
+    try {
+      final String? raw = await _database.getSetting(gracePeriodKey);
+      if (raw == null) {
+        return Result.success(Duration.zero);
+      }
+      final int? seconds = int.tryParse(raw);
+      if (seconds == null || seconds < 0) {
+        return Result.success(Duration.zero);
+      }
+      return Result.success(Duration(seconds: seconds));
+    } catch (e) {
+      return Result.failure(e);
+    }
+  }
+
+  @override
+  Future<Result<void>> setGracePeriod(Duration period) async {
+    try {
+      final Duration clamped =
+          period.isNegative ? Duration.zero : period;
+      await _database.setSetting(
+        gracePeriodKey,
+        '${clamped.inSeconds}',
+      );
+      return Result.success(null);
+    } catch (e) {
+      return Result.failure(e);
+    }
+  }
 }

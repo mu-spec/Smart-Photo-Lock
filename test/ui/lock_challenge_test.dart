@@ -170,6 +170,44 @@ void main() {
   });
 
   testWidgets(
+      'a configured grace period delays re-lock after leaving (Phase 5L)',
+      (WidgetTester tester) async {
+    DateTime clock = DateTime(2026, 8, 21, 9, 0);
+    final AppContainer container = await pumpApp(
+      tester,
+      accessClock: () => clock,
+    );
+    await container.auth.enrollPin('1234');
+    await protect(container, 'com.whatsapp');
+    container.accessController.setGracePeriod(const Duration(seconds: 30));
+
+    // Unlock the protected app.
+    await openApp(tester, container, 'com.whatsapp');
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+    for (final String digit in <String>['1', '2', '3', '4']) {
+      await tester.tap(find.byKey(Key('pin_key_$digit')));
+      await tester.pumpAndSettle();
+    }
+    expect(find.byType(PinUnlockScreen), findsNothing);
+    expect(sessionFor(container, 'com.whatsapp'), isNotNull);
+
+    // Leave WhatsApp, then return 20 seconds later — within the grace
+    // period: no re-challenge.
+    await openApp(tester, container, 'com.example.launcher');
+    clock = DateTime(2026, 8, 21, 9, 0, 20);
+    await openApp(tester, container, 'com.whatsapp');
+    expect(find.byType(PinUnlockScreen), findsNothing);
+    expect(sessionFor(container, 'com.whatsapp'), isNotNull);
+
+    // Leave again; now return AFTER the 30-second grace: the challenge
+    // appears.
+    await openApp(tester, container, 'com.example.launcher');
+    clock = DateTime(2026, 8, 21, 9, 1, 10);
+    await openApp(tester, container, 'com.whatsapp');
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+  });
+
+  testWidgets(
       're-lock is immediate — no grace window after leaving (Phase 5J)',
       (WidgetTester tester) async {
     // A controllable clock proves the re-lock happens well INSIDE the

@@ -5,7 +5,9 @@ import 'package:smart_app_lock/app/app_scope.dart';
 import 'package:smart_app_lock/app/app_container.dart';
 import 'package:smart_app_lock/app/router.dart';
 import 'package:smart_app_lock/app/theme/app_theme.dart';
+import 'package:smart_app_lock/data/models/protected_app.dart';
 import 'package:smart_app_lock/design_system/design_system.dart';
+import 'package:smart_app_lock/protection/impl/default_access_controller.dart';
 import 'package:smart_app_lock/security/credentials/auth_type.dart';
 import 'package:smart_app_lock/security/credentials/biometric_options.dart';
 import 'package:smart_app_lock/services/biometric_service.dart';
@@ -524,6 +526,63 @@ void main() {
     expect(find.text('Accessibility service'), findsOneWidget);
     expect(find.text('Draw over apps'), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  // -------------------------------------------------------------------
+  // Re-lock grace period (Phase 5L)
+  // -------------------------------------------------------------------
+  testWidgets('selecting a grace period persists it and applies it live',
+      (WidgetTester tester) async {
+    final AppContainer container = AppContainer.inMemory();
+    await pumpWithScope(tester, container: container);
+
+    final Finder selector = find.byKey(const Key('grace_selector'));
+    await tester.ensureVisible(selector);
+    await tester.pumpAndSettle();
+    expect(find.text('Grace period'), findsOneWidget);
+    expect(find.text('Immediate'), findsOneWidget);
+    expect(find.text('30 seconds'), findsOneWidget);
+
+    await tester.tap(find.text('30 seconds'));
+    await tester.pumpAndSettle();
+
+    // Persisted to the lock settings repository...
+    final result = await container.lockSettings.getGracePeriod();
+    expect(result.isSuccess, isTrue);
+    expect(result.valueOrNull, const Duration(seconds: 30));
+
+    // ...and applied LIVE to the access controller: with a grace
+    // configured, leaving a protected app no longer removes its session
+    // instantly.
+    await container.protectedApps.add(
+      ProtectedApp(
+        packageName: 'com.whatsapp',
+        label: 'WhatsApp',
+        addedAt: DateTime(2026, 8, 21),
+      ),
+    );
+    await container.accessController.grantAccess('com.whatsapp');
+    await container.accessController.revokeAccess('com.whatsapp');
+    expect(
+      (container.accessController as DefaultAccessController)
+          .sessionFor('com.whatsapp'),
+      isNotNull, // grace keeps the session alive
+    );
+  });
+
+  testWidgets('Immediate is the default grace selection',
+      (WidgetTester tester) async {
+    final AppContainer container = AppContainer.inMemory();
+    await pumpWithScope(tester, container: container);
+
+    final Finder selector = find.byKey(const Key('grace_selector'));
+    await tester.ensureVisible(selector);
+    await tester.pumpAndSettle();
+
+    expect(
+      (await container.lockSettings.getGracePeriod()).valueOrNull,
+      Duration.zero,
+    );
   });
 }
 

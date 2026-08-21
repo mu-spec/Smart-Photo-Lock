@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../app/app_container.dart';
 import '../../../app/app_scope.dart';
 import '../../../app/router.dart';
+import '../../../data/repositories/lock_settings_repository.dart';
 import '../../../data/storage/preferences_store.dart';
 import '../../../design_system/design_system.dart';
 import '../../../security/credentials/auth_type.dart';
@@ -95,6 +96,33 @@ class _SecurityScreenState extends State<SecurityScreen>
   bool _accessibilityEverGranted = false;
   bool _overlayEverGranted = false;
 
+  /// Phase 5L: the configured re-lock grace period in whole seconds.
+  /// Zero = immediate re-lock. Null while loading.
+  int? _graceSeconds;
+
+  /// The grace options offered by the Re-lock section.
+  static const List<(String, Duration)> graceOptions =
+      <(String, Duration)>[
+    ('Immediate', Duration.zero),
+    ('30 seconds', Duration(seconds: 30)),
+    ('1 minute', Duration(minutes: 1)),
+    ('5 minutes', Duration(minutes: 5)),
+  ];
+
+  /// The current grace option's index (fallback: Immediate).
+  int get _graceIndex {
+    final int? seconds = _graceSeconds;
+    if (seconds == null || seconds <= 0) {
+      return 0;
+    }
+    for (int i = 0; i < graceOptions.length; i++) {
+      if (graceOptions[i].$2.inSeconds == seconds) {
+        return i;
+      }
+    }
+    return 0;
+  }
+
   /// A capability that was granted before and is now missing.
   bool get _hasRevokedCapability =>
       (!_usageAccessGranted && _usageAccessEverGranted) ||
@@ -166,6 +194,7 @@ class _SecurityScreenState extends State<SecurityScreen>
     final AccessibilityLockService accessibility = container.accessibility;
     final OverlayLockService overlay = container.overlay;
     final PreferencesStore preferences = container.preferences;
+    final LockSettingsRepository lockSettings = container.lockSettings;
 
     final state = (await auth.status()).valueOrNull;
     if (!mounted || state == null) {
@@ -211,6 +240,15 @@ class _SecurityScreenState extends State<SecurityScreen>
       overlayEver = await preferences.wasCapabilityEverGranted('overlay');
     }
 
+    // Phase 5L: the configured re-lock grace (fail-quiet: a storage
+    // failure leaves the previous value in place).
+    int? graceSeconds;
+    final Result<Duration> grace = await lockSettings.getGracePeriod();
+    if (grace.isSuccess) {
+      final Duration period = grace.valueOrNull ?? Duration.zero;
+      graceSeconds = period.isNegative ? 0 : period.inSeconds;
+    }
+
     if (!mounted) {
       return;
     }
@@ -226,6 +264,9 @@ class _SecurityScreenState extends State<SecurityScreen>
       _usageAccessEverGranted = usageEver;
       _accessibilityEverGranted = accessibilityEver;
       _overlayEverGranted = overlayEver;
+      if (graceSeconds != null) {
+        _graceSeconds = graceSeconds;
+      }
     });
   }
 
@@ -374,6 +415,31 @@ class _SecurityScreenState extends State<SecurityScreen>
     }
   }
 
+  // -- re-lock grace (Phase 5L) ---------------------------------------------
+
+  /// Persists the selected grace period and applies it to the shared
+  /// access controller immediately — no restart needed.
+  Future<void> _setGrace(Duration period) async {
+    final int seconds = period.isNegative ? 0 : period.inSeconds;
+    setState(() => _graceSeconds = seconds); // optimistic
+    final AppContainer? container = AppScope.read(context);
+    if (container == null) {
+      return;
+    }
+    container.accessController.setGracePeriod(Duration(seconds: seconds));
+    final result = await container.lockSettings.setGracePeriod(
+      Duration(seconds: seconds),
+    );
+    if (!mounted) {
+      return;
+    }
+    if (result.isFailure) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text(SecurityScreen.couldNotSaveMessage)),
+      );
+    }
+  }
+
   // -- biometric (Phase 2J) -------------------------------------------------
 
   Future<void> _onBiometricTap() async {
@@ -445,6 +511,7 @@ class _SecurityScreenState extends State<SecurityScreen>
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
+    final DsPalette palette = context.dsColors;
     return SafeArea(
       child: ListView(
         padding: DsInsets.screen,
@@ -612,6 +679,45 @@ class _SecurityScreenState extends State<SecurityScreen>
                       : SecurityLevel.notSet,
                   statusLabel: _overlayGranted ? 'Enabled' : 'Needed',
                   onTap: _onOverlayTap,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: DsSpacing.xl),
+          // Phase 5L: re-lock grace — how long after LEAVING a protected
+          // app it may be reopened without the PIN again.
+          const DsSectionTitle('Re-lock'),
+          const SizedBox(height: DsSpacing.sm),
+          DsCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  'Grace period',
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: DsSpacing.xs),
+                Text(
+                  'How soon a protected app re-locks after you leave it. '
+                  'The screen turning off always re-locks immediately.',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: palette.textSecondary,
+                  ),
+                ),
+                const SizedBox(height: DsSpacing.md),
+                DsSegmented<Duration>(
+                  key: const Key('grace_selector'),
+                  segments: <DsSegment<Duration>>[
+                    for (final (String, Duration) option in graceOptions)
+                      DsSegment<Duration>(
+                        value: option.$2,
+                        label: option.$1,
+                      ),
+                  ],
+                  selected: graceOptions[_graceIndex].$2,
+                  onSelected: _setGrace,
                 ),
               ],
             ),

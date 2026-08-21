@@ -65,6 +65,7 @@ implemented yet.
 | 5I | Authentication failure (failed auth never grants a session; enrollment ≠ authentication) | ✅ |
 | 5J | Immediate re-lock (leaving a protected app ends its unlock session at once) | ✅ |
 | 5K | Screen-off re-lock (screen turns off → every unlock session revoked; enforced on resume) | ✅ |
+| 5L | Grace period (configurable re-lock delay: immediate / 30s / 1m / 5m) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -578,7 +579,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.2.1 / 9.4.1 / built-in Kotlin with KGP 2.3.20 (settings classpath `apply false` + buildscript; `android.builtInKotlin=true`; AGP legacy-DSL compat `android.newDsl=false` until the Flutter tool finishes its new-DSL migration) |
 | Java | 17 |
-| versionName / versionCode | `0.35.11` / `76` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.35.12` / `77` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM), `local_auth` (biometrics) |
 
 ## Prerequisites (on your machine)
@@ -1125,6 +1126,29 @@ Turning the screen off re-locks everything immediately:
   a valid session.
 - **Fail-closed** — screen-state channel problems surface as failures
   and are ignored; nothing is fabricated.
+
+### Phase 5L ✅ — Grace Period
+
+Configurable re-lock grace periods — how soon a protected app re-locks
+after you leave it:
+
+- **Options** — Immediate (the 5J default), 30 seconds, 1 minute,
+  5 minutes — a new "Re-lock" section on the Security tab with a
+  design-system segmented control.
+- **Semantics** — leaving a protected app starts the grace clock
+  instead of removing the session; re-entering within the grace is
+  allowed without re-authentication (the marker is consumed and the
+  session refreshed, so the next leave starts a fresh clock). After
+  the grace, the next activation challenges normally.
+- **Screen-off stays hard** — `revokeAllAccess` (5K) always re-locks
+  immediately; the grace period never softens a screen-off.
+- **Persistence** — `LockSettingsRepository.getGracePeriod()/
+  setGracePeriod()` store whole seconds in the database key-value
+  settings layer (absent/unparsable/negative → zero). Applied live on
+  selection AND on app startup (the lock challenge host loads the
+  persisted value).
+- **`AccessController.setGracePeriod`** — the controller-level policy;
+  zeroed grace invalidates pending grace clocks.
 
 ## Next phases
 

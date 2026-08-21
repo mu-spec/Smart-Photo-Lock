@@ -21,4 +21,11 @@ abstract interface class LockSettingsRepository {
   Future<Result<List<LockRule>>> getRules();
 
   Future<Result<void>> saveRules(List<LockRule> rules);
+
+  /// Phase 5L: the re-lock grace period applied when the user leaves a
+  /// protected app (zero = immediate re-lock). Persisted in whole
+  /// seconds; an absent or unparsable value reads as zero.
+  Future<Result<Duration>> getGracePeriod();
+
+  Future<Result<void>> setGracePeriod(Duration period);
 }

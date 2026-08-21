@@ -44,6 +44,15 @@ class DefaultAccessController implements AccessController {
   /// Active unlock windows keyed by package name.
   final Map<String, LockSession> _sessions = <String, LockSession>{};
 
+  /// Phase 5L: per-package grace deadlines — while the clock is before
+  /// this moment, re-entering a left app is allowed without
+  /// re-authentication.
+  final Map<String, DateTime> _graceUntil = <String, DateTime>{};
+
+  /// Phase 5L: the re-lock grace applied when the user LEAVES a
+  /// protected app. Zero = immediate re-lock (the 5J default).
+  Duration _gracePeriod = Duration.zero;
+
   @override
   Future<AccessDecision> evaluate(String packageName) async {
     final ProtectedMatch match = await _matcher.match(packageName);
@@ -56,13 +65,29 @@ class DefaultAccessController implements AccessController {
       return AccessDecision.deny;
     }
     final LockSession? session = _sessions[packageName];
-    if (session != null && session.isActiveAt(_now())) {
-      // Phase 5H: an allowed re-entry REFRESHES the inactivity window —
-      // active use of the protected app never re-prompts mid-session.
-      _sessions[packageName] = session.refresh(_now());
-      return AccessDecision.allow;
-    }
+    final DateTime? graceUntil = _graceUntil[packageName];
     if (session != null) {
+      if (graceUntil != null) {
+        if (_now().isBefore(graceUntil)) {
+          // Phase 5L: re-entry within the grace period — allowed
+          // without re-authentication. The grace marker is consumed
+          // and the session refreshed so the NEXT leave starts a fresh
+          // grace clock.
+          _graceUntil.remove(packageName);
+          _sessions[packageName] = session.refresh(_now());
+          return AccessDecision.allow;
+        }
+        // Grace expired: fall through to revocation + challenge.
+        _graceUntil.remove(packageName);
+        _sessions.remove(packageName);
+        return AccessDecision.challenge;
+      }
+      if (session.isActiveAt(_now())) {
+        // Phase 5H: an allowed re-entry REFRESHES the inactivity window —
+        // active use of the protected app never re-prompts mid-session.
+        _sessions[packageName] = session.refresh(_now());
+        return AccessDecision.allow;
+      }
       // Expired — prune it so the map only ever holds live sessions.
       _sessions.remove(packageName);
     }
@@ -85,14 +110,36 @@ class DefaultAccessController implements AccessController {
 
   @override
   Future<Result<void>> revokeAccess(String packageName) async {
+    // Phase 5L: with a grace period configured, leaving starts the
+    // grace clock instead of removing the session — re-entry within
+    // the grace is allowed. Without grace (zero), the session ends
+    // immediately (the 5J default).
+    if (_gracePeriod > Duration.zero && _sessions.containsKey(packageName)) {
+      _graceUntil[packageName] = _now().add(_gracePeriod);
+      return Result.success(null);
+    }
     _sessions.remove(packageName);
+    _graceUntil.remove(packageName);
     return Result.success(null);
   }
 
   @override
   Future<Result<void>> revokeAllAccess() async {
+    // Phase 5K/5L: screen-off re-locks EVERYTHING immediately — the
+    // grace period never softens a screen-off.
     _sessions.clear();
+    _graceUntil.clear();
     return Result.success(null);
+  }
+
+  @override
+  void setGracePeriod(Duration period) {
+    _gracePeriod = period.isNegative ? Duration.zero : period;
+    // A shrunk (or zeroed) grace invalidates any pending grace clocks
+    // that now outlive it.
+    if (_gracePeriod == Duration.zero) {
+      _graceUntil.clear();
+    }
   }
 
   /// Test/diagnostic view of the active unlock windows.

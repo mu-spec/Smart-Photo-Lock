@@ -6,6 +6,7 @@ import '../protection/access_controller.dart';
 import '../protection/lock_trigger.dart';
 import '../security/credentials/auth_type.dart';
 import '../security/credentials/credential_state.dart';
+import '../utilities/result.dart';
 import 'app_container.dart';
 import 'app_scope.dart';
 import 'router.dart';
@@ -69,6 +70,21 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     _trigger = AppScope.read(context)?.lockTrigger;
     _subscription = _trigger?.lockRequired.listen(_onLockRequired);
     _trigger?.start();
+    _applyPersistedGracePeriod();
+  }
+
+  /// Phase 5L: applies the persisted re-lock grace on startup, so the
+  /// configured policy is live without visiting any settings screen.
+  Future<void> _applyPersistedGracePeriod() async {
+    final AppContainer? container = AppScope.read(context);
+    if (container == null) {
+      return;
+    }
+    final Result<Duration> result = await container.lockSettings.getGracePeriod();
+    if (!mounted || result.isFailure) {
+      return;
+    }
+    container.accessController.setGracePeriod(result.valueOrNull ?? Duration.zero);
   }
 
   @override

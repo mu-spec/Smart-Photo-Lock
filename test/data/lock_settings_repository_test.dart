@@ -127,4 +127,45 @@ void main() {
       expect(rules.any((LockRule r) => r.id == 'old'), isFalse);
     });
   });
+
+  group('re-lock grace (Phase 5L)', () {
+    test('defaults to zero (immediate re-lock)', () async {
+      expect((await repo.getGracePeriod()).valueOrNull, Duration.zero);
+    });
+
+    test('set + get round-trips whole seconds', () async {
+      await repo.setGracePeriod(const Duration(minutes: 1));
+      expect(
+        (await repo.getGracePeriod()).valueOrNull,
+        const Duration(minutes: 1),
+      );
+
+      await repo.setGracePeriod(const Duration(seconds: 30));
+      expect(
+        (await repo.getGracePeriod()).valueOrNull,
+        const Duration(seconds: 30),
+      );
+    });
+
+    test('a negative period clamps to zero', () async {
+      await repo.setGracePeriod(const Duration(seconds: -30));
+      expect((await repo.getGracePeriod()).valueOrNull, Duration.zero);
+    });
+
+    test('an unparsable stored value reads as zero (fail-quiet)',
+        () async {
+      await repo.setGracePeriod(const Duration(minutes: 5));
+      // Corrupt the raw stored value directly in the database layer.
+      final InMemoryLocalDatabase db = InMemoryLocalDatabase();
+      await db.setSetting(
+        LockSettingsRepositoryImpl.gracePeriodKey,
+        'not-a-number',
+      );
+      final LockSettingsRepository corrupted = LockSettingsRepositoryImpl(db);
+      expect(
+        (await corrupted.getGracePeriod()).valueOrNull,
+        Duration.zero,
+      );
+    });
+  });
 }

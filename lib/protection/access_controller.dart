@@ -29,9 +29,18 @@ abstract interface class AccessController {
 
   /// Phase 5J: immediately ends the unlock window for [packageName] —
   /// the protected app re-locks the moment the user leaves it.
+  ///
+  /// Phase 5L: when a grace period is configured, this STARTS the grace
+  /// clock instead of removing the session — re-entering within the
+  /// grace is allowed without re-authentication.
   Future<Result<void>> revokeAccess(String packageName);
 
   /// Phase 5K: immediately ends EVERY unlock window — the screen
-  /// turned off, so every protected app re-locks at once.
+  /// turned off, so every protected app re-locks at once. The grace
+  /// period NEVER applies here (screen-off is a hard security signal).
   Future<Result<void>> revokeAllAccess();
+
+  /// Phase 5L: configures the re-lock grace period applied when the
+  /// user leaves a protected app (zero = immediate re-lock).
+  void setGracePeriod(Duration period);
 }

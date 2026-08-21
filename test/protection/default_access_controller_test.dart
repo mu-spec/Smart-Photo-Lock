@@ -77,23 +77,23 @@ void main() {
 
   test('sessions expire after their window', () async {
     await protect('com.whatsapp');
-    final DefaultAccessController clocked = DefaultAccessController(
+    DateTime clock = DateTime(2026, 8, 21, 9, 0);
+    final DefaultAccessController controller = DefaultAccessController(
       matcher: container.protectedAppMatcher,
-      now: () => DateTime(2026, 8, 21, 9, 0),
+      auth: container.auth,
+      now: () => clock,
     );
-    await clocked.grantAccess('com.whatsapp');
+    await controller.grantAccess('com.whatsapp');
     expect(
-      await clocked.evaluate('com.whatsapp'),
+      await controller.evaluate('com.whatsapp'),
       AccessDecision.allow,
     );
 
-    // A controller past the 2-minute window must challenge again.
-    final DefaultAccessController later = DefaultAccessController(
-      matcher: container.protectedAppMatcher,
-      now: () => DateTime(2026, 8, 21, 9, 3),
-    );
+    // Three minutes later the same controller must challenge again —
+    // the 2-minute inactivity window expired.
+    clock = DateTime(2026, 8, 21, 9, 3);
     expect(
-      await later.evaluate('com.whatsapp'),
+      await controller.evaluate('com.whatsapp'),
       AccessDecision.challenge,
     );
   });
@@ -236,37 +236,32 @@ void main() {
   test('an allowed re-entry REFRESHES the inactivity window '
       '(Phase 5H)', () async {
     await protect('com.whatsapp');
-    final DefaultAccessController clocked = DefaultAccessController(
+    // ONE controller with a MUTABLE clock: sessions live in the
+    // controller, so time travel must happen inside it, not across
+    // fresh instances (whose session maps would be empty).
+    DateTime clock = DateTime(2026, 8, 21, 9, 0);
+    final DefaultAccessController controller = DefaultAccessController(
       matcher: container.protectedAppMatcher,
       auth: container.auth,
-      now: () => DateTime(2026, 8, 21, 9, 0),
+      now: () => clock,
     );
-    await clocked.grantAccess('com.whatsapp');
+    await controller.grantAccess('com.whatsapp');
 
     // Re-entry 90 seconds later: allowed AND the window slides forward
     // (the session now ends 2 minutes after the re-entry, not after
     // the original grant).
-    final DefaultAccessController later = DefaultAccessController(
-      matcher: container.protectedAppMatcher,
-      auth: container.auth,
-      now: () => DateTime(2026, 8, 21, 9, 1, 30),
-    );
-    expect(await later.evaluate('com.whatsapp'), AccessDecision.allow);
+    clock = DateTime(2026, 8, 21, 9, 1, 30);
+    expect(await controller.evaluate('com.whatsapp'), AccessDecision.allow);
     expect(
-      later.sessionFor('com.whatsapp')!.expiresAt,
+      controller.sessionFor('com.whatsapp')!.expiresAt,
       DateTime(2026, 8, 21, 9, 3, 30),
     );
 
     // The refreshed window keeps the user un-prompted past the
     // ORIGINAL expiry (9:02:00) — active use never re-prompts.
-    final DefaultAccessController pastOriginalExpiry =
-        DefaultAccessController(
-      matcher: container.protectedAppMatcher,
-      auth: container.auth,
-      now: () => DateTime(2026, 8, 21, 9, 2, 30),
-    );
+    clock = DateTime(2026, 8, 21, 9, 2, 30);
     expect(
-      await pastOriginalExpiry.evaluate('com.whatsapp'),
+      await controller.evaluate('com.whatsapp'),
       AccessDecision.allow,
     );
   });
@@ -274,23 +269,20 @@ void main() {
   test('expired sessions are pruned and challenge again (Phase 5H)',
       () async {
     await protect('com.whatsapp');
-    final DefaultAccessController clocked = DefaultAccessController(
+    DateTime clock = DateTime(2026, 8, 21, 9, 0);
+    final DefaultAccessController controller = DefaultAccessController(
       matcher: container.protectedAppMatcher,
       auth: container.auth,
-      now: () => DateTime(2026, 8, 21, 9, 0),
+      now: () => clock,
     );
-    await clocked.grantAccess('com.whatsapp');
-    expect(clocked.sessionFor('com.whatsapp'), isNotNull);
+    await controller.grantAccess('com.whatsapp');
+    expect(controller.sessionFor('com.whatsapp'), isNotNull);
 
     // Four minutes of INACTIVITY later: the window expired.
-    final DefaultAccessController expired = DefaultAccessController(
-      matcher: container.protectedAppMatcher,
-      auth: container.auth,
-      now: () => DateTime(2026, 8, 21, 9, 4),
-    );
-    expect(await expired.evaluate('com.whatsapp'), AccessDecision.challenge);
+    clock = DateTime(2026, 8, 21, 9, 4);
+    expect(await controller.evaluate('com.whatsapp'), AccessDecision.challenge);
     // The dead session was pruned from the map.
-    expect(expired.sessionFor('com.whatsapp'), isNull);
+    expect(controller.sessionFor('com.whatsapp'), isNull);
   });
 
   test('revokeAccess ends the unlock window immediately (Phase 5J)',
@@ -363,4 +355,75 @@ class _FailingRepository implements ProtectedAppsRepository {
   @override
   Future<Result<int>> count() async =>
       Result.failure(StateError('database unavailable'));
+  // -- re-lock grace (Phase 5L) ---------------------------------------------
+
+  test('a grace period delays re-lock after leaving (Phase 5L)', () async {
+    await protect('com.whatsapp');
+    DateTime clock = DateTime(2026, 8, 21, 9, 0);
+    final DefaultAccessController controller = DefaultAccessController(
+      matcher: container.protectedAppMatcher,
+      auth: container.auth,
+      now: () => clock,
+    );
+    controller.setGracePeriod(const Duration(seconds: 30));
+    await controller.grantAccess('com.whatsapp');
+
+    // Leaving starts the grace clock instead of removing the session.
+    await controller.revokeAccess('com.whatsapp');
+    expect(controller.sessionFor('com.whatsapp'), isNotNull);
+
+    // Re-entry 20 seconds later (within grace): allowed without
+    // re-authentication, and the grace marker is consumed.
+    clock = DateTime(2026, 8, 21, 9, 0, 20);
+    expect(await controller.evaluate('com.whatsapp'), AccessDecision.allow);
+
+    // Leave again, then return AFTER the 30-second grace: challenge.
+    await controller.revokeAccess('com.whatsapp');
+    clock = DateTime(2026, 8, 21, 9, 0, 51);
+    expect(
+      await controller.evaluate('com.whatsapp'),
+      AccessDecision.challenge,
+    );
+    expect(controller.sessionFor('com.whatsapp'), isNull);
+  });
+
+  test('zero grace keeps the immediate re-lock default (Phase 5L)',
+      () async {
+    await protect('com.whatsapp');
+    final DefaultAccessController clocked = DefaultAccessController(
+      matcher: container.protectedAppMatcher,
+      auth: container.auth,
+      now: () => DateTime(2026, 8, 21, 9, 0),
+    );
+    await clocked.grantAccess('com.whatsapp');
+    await clocked.revokeAccess('com.whatsapp'); // grace is zero
+    expect(clocked.sessionFor('com.whatsapp'), isNull);
+    expect(
+      await clocked.evaluate('com.whatsapp'),
+      AccessDecision.challenge,
+    );
+  });
+
+  test('screen-off revokeAllAccess ignores the grace (Phase 5L)',
+      () async {
+    await protect('com.whatsapp');
+    DateTime clock = DateTime(2026, 8, 21, 9, 0);
+    final DefaultAccessController controller = DefaultAccessController(
+      matcher: container.protectedAppMatcher,
+      auth: container.auth,
+      now: () => clock,
+    );
+    controller.setGracePeriod(const Duration(minutes: 5));
+    await controller.grantAccess('com.whatsapp');
+    await controller.revokeAccess('com.whatsapp'); // grace clock starts
+    expect(controller.sessionFor('com.whatsapp'), isNotNull);
+
+    // The screen turning off re-locks EVERYTHING immediately.
+    await controller.revokeAllAccess();
+    expect(controller.sessionFor('com.whatsapp'), isNull);
+    expect(
+      await controller.evaluate('com.whatsapp'),
+      AccessDecision.challenge,
+    );
+  });
 }
