@@ -240,6 +240,85 @@ void main() {
 
     expect(controller.sessionFor('com.whatsapp'), isNotNull);
     expect(trigger.takeScreenOffPending(), isFalse);
+    // Phase 5R: a plain screen-on (no pending re-lock) enforces nothing.
+    expect(requirements, isEmpty);
+
+    await trigger.stop();
+  });
+
+  // -- screen sleep/wake (Phase 5R) ------------------------------------------
+
+  test('waking into a protected app re-challenges immediately '
+      '(Phase 5R)', () async {
+    await protect('com.whatsapp');
+    final DefaultAccessController controller =
+        container.accessController as DefaultAccessController;
+    final StaticInstalledAppsService installed =
+        container.installedAppsService as StaticInstalledAppsService;
+    final StaticScreenStateService screen =
+        container.screenState as StaticScreenStateService;
+
+    // The user unlocked WhatsApp and is inside it when the screen
+    // turns off.
+    await controller.grantAccess('com.whatsapp');
+    installed.foregroundPackage = 'com.whatsapp';
+    await container.foregroundMonitor.probe();
+    await trigger.start();
+    expect(requirements, isEmpty);
+
+    screen.emitScreenOff();
+    await Future<void>.delayed(Duration.zero);
+    expect(controller.sessionFor('com.whatsapp'), isNull);
+
+    // The screen turns back on with WhatsApp still the foreground:
+    // wake enforcement fires the requirement NOW — no resume needed.
+    screen.emitScreenOn();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(requirements, hasLength(1));
+    expect(requirements.single.packageName, 'com.whatsapp');
+
+    await trigger.stop();
+  });
+
+  test('waking into an unprotected foreground enforces nothing '
+      '(Phase 5R)', () async {
+    await protect('com.whatsapp');
+    final StaticInstalledAppsService installed =
+        container.installedAppsService as StaticInstalledAppsService;
+    final StaticScreenStateService screen =
+        container.screenState as StaticScreenStateService;
+
+    installed.foregroundPackage = 'com.example.launcher';
+    await container.foregroundMonitor.probe();
+    await trigger.start();
+
+    screen.emitScreenOff();
+    screen.emitScreenOn();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(requirements, isEmpty);
+
+    await trigger.stop();
+  });
+
+  test('wake enforcement without a screen-off stays quiet (Phase 5R)',
+      () async {
+    await protect('com.whatsapp');
+    final StaticInstalledAppsService installed =
+        container.installedAppsService as StaticInstalledAppsService;
+    final StaticScreenStateService screen =
+        container.screenState as StaticScreenStateService;
+
+    installed.foregroundPackage = 'com.whatsapp';
+    await container.foregroundMonitor.probe();
+    await trigger.start();
+
+    // Screen-on alone (no screen-off first): no pending re-lock, no
+    // requirement.
+    screen.emitScreenOn();
+    await Future<void>.delayed(Duration.zero);
+    expect(requirements, isEmpty);
 
     await trigger.stop();
   });

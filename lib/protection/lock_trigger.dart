@@ -27,9 +27,11 @@ class LockRequired {
 /// lockout; the challenge surface shows the cooldown).
 ///
 /// Phase 5J adds IMMEDIATE RE-LOCK: every transition AWAY from a
-/// package revokes that package's unlock session first, so leaving a
-/// protected app re-locks it instantly — returning always requires
-/// authentication again.
+/// package applies the configured grace policy — `immediate` revokes
+/// its unlock session instantly (5J), other grace periods (5L) arm the
+/// re-lock deadline. Screen-off (5K) revokes EVERY unlock session
+/// immediately; screen-on (5R) wakes the enforcement and re-challenges
+/// a protected foreground app at once.
 ///
 /// The trigger is a pure decision pipeline: it never presents UI and
 /// never touches the platform. The app layer listens to [lockRequired]
@@ -121,14 +123,34 @@ class LockTrigger {
     if (event.isFailure) {
       return; // fail-quiet
     }
-    if (event.valueOrNull != ScreenStateEvent.screenOff) {
-      return; // screen-on: nothing to re-lock
+    if (event.valueOrNull == ScreenStateEvent.screenOff) {
+      // Phase 5K: the screen turned off — every unlock session ends NOW.
+      // The marker tells the app layer to re-evaluate the foreground on
+      // resume, so returning to a protected app challenges immediately.
+      _screenOffPending = true;
+      await _controller.revokeAllAccess();
+      return;
     }
-    // Phase 5K: the screen turned off — every unlock session ends NOW.
-    // The marker tells the app layer to re-evaluate the foreground on
-    // resume, so returning to a protected app challenges immediately.
-    _screenOffPending = true;
-    await _controller.revokeAllAccess();
+    // Phase 5R: WAKING the screen enforces the pending re-lock
+    // immediately — if the user is looking at a protected app whose
+    // session the screen-off revoked, the challenge fires right now
+    // instead of revealing the unlocked app until Smart App Lock
+    // happens to resume.
+    if (!_screenOffPending) {
+      return; // plain screen-on with no pending re-lock: nothing to do
+    }
+    await _monitor.probe();
+    final String? current = _monitor.currentPackage;
+    if (current == null) {
+      return;
+    }
+    final AccessDecision decision = await _controller.evaluate(current);
+    if (decision == AccessDecision.challenge ||
+        decision == AccessDecision.deny) {
+      _lockRequired.add(
+        LockRequired(packageName: current, at: _now()),
+      );
+    }
   }
 
   /// True while the pipeline is running (audit: lets other components —

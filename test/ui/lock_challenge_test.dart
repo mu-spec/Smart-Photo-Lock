@@ -1037,6 +1037,122 @@ void main() {
     expect(find.byType(PinUnlockScreen), findsOneWidget);
   });
 
+  // -- screen sleep/wake (Phase 5R) -------------------------------------------
+
+  /// Turns the device screen off and back on.
+  Future<void> sleepWake(WidgetTester tester, AppContainer container) async {
+    final StaticScreenStateService screen =
+        container.screenState as StaticScreenStateService;
+    screen.emitScreenOff();
+    await tester.pump();
+    screen.emitScreenOn();
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets(
+      'waking into the protected app re-challenges immediately '
+      '(Phase 5R)', (WidgetTester tester) async {
+    final AppContainer container = await pumpApp(tester);
+    await container.auth.enrollPin('1234');
+    await protect(container, 'com.whatsapp');
+
+    // Unlock WhatsApp normally.
+    await openApp(tester, container, 'com.whatsapp');
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+    for (final String digit in <String>['1', '2', '3', '4']) {
+      await tester.tap(find.byKey(Key('pin_key_$digit')));
+      await tester.pumpAndSettle();
+    }
+    expect(find.byType(PinUnlockScreen), findsNothing);
+    expect(sessionFor(container, 'com.whatsapp'), isNotNull);
+
+    // The screen sleeps and wakes with WhatsApp still the foreground:
+    // the wake enforcement presents the challenge immediately.
+    await sleepWake(tester, container);
+    expect(sessionFor(container, 'com.whatsapp'), isNull);
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+    final StaticInstalledAppsService apps =
+        container.installedAppsService as StaticInstalledAppsService;
+    expect(apps.launchAppCalls, 1); // only the original unlock launched
+
+    // The correct PIN ends the wake challenge.
+    for (final String digit in <String>['1', '2', '3', '4']) {
+      await tester.tap(find.byKey(Key('pin_key_$digit')));
+      await tester.pumpAndSettle();
+    }
+    expect(find.byType(PinUnlockScreen), findsNothing);
+    expect(sessionFor(container, 'com.whatsapp'), isNotNull);
+  });
+
+  testWidgets(
+      'sleep/wake while a challenge is up never stacks (Phase 5R)',
+      (WidgetTester tester) async {
+    final AppContainer container = await pumpApp(tester);
+    await container.auth.enrollPin('1234');
+    await protect(container, 'com.whatsapp');
+    final StaticOverlayLockService overlay =
+        container.overlay as StaticOverlayLockService;
+
+    await openApp(tester, container, 'com.whatsapp');
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+
+    await sleepWake(tester, container);
+    await sleepWake(tester, container);
+
+    // Exactly one challenge at all times — no stacked screens.
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+    expect(sessionFor(container, 'com.whatsapp'), isNull);
+
+    // Only the PIN ends it.
+    for (final String digit in <String>['1', '2', '3', '4']) {
+      await tester.tap(find.byKey(Key('pin_key_$digit')));
+      await tester.pumpAndSettle();
+    }
+    expect(find.byType(PinUnlockScreen), findsNothing);
+    expect(sessionFor(container, 'com.whatsapp'), isNotNull);
+    expect(overlay.secureWindow, isFalse);
+  });
+
+  testWidgets(
+      'rapid sleep/wake cycles stay consistent (Phase 5R)',
+      (WidgetTester tester) async {
+    final AppContainer container = await pumpApp(tester);
+    await container.auth.enrollPin('1234');
+    await protect(container, 'com.whatsapp');
+    final StaticScreenStateService screen =
+        container.screenState as StaticScreenStateService;
+
+    // Unlock once.
+    await openApp(tester, container, 'com.whatsapp');
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+    for (final String digit in <String>['1', '2', '3', '4']) {
+      await tester.tap(find.byKey(Key('pin_key_$digit')));
+      await tester.pumpAndSettle();
+    }
+    expect(find.byType(PinUnlockScreen), findsNothing);
+
+    // Three rapid sleep/wake cycles.
+    for (int i = 0; i < 3; i++) {
+      screen.emitScreenOff();
+      await tester.pump();
+      screen.emitScreenOn();
+      await tester.pump();
+    }
+    await tester.pumpAndSettle();
+
+    // Exactly one challenge, no grants, no stacking.
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+    expect(sessionFor(container, 'com.whatsapp'), isNull);
+
+    // The PIN ends the whole storm.
+    for (final String digit in <String>['1', '2', '3', '4']) {
+      await tester.tap(find.byKey(Key('pin_key_$digit')));
+      await tester.pumpAndSettle();
+    }
+    expect(find.byType(PinUnlockScreen), findsNothing);
+    expect(sessionFor(container, 'com.whatsapp'), isNotNull);
+  });
+
   /// Draws [nodes] on the unlock screen's pattern grid: bounds-derived
   /// node centers, a small horizontal arena-winning move first, then
   /// micro-stepped device-like strokes (mirrors the pattern-suite

@@ -643,3 +643,25 @@ recents/home gestures between WhatsApp and the launcher — the challenge
 never doubles up. With a 30-second grace, hop WhatsApp → launcher →
 WhatsApp repeatedly — no prompts within the window; the first return
 past 30 seconds prompts once.
+
+---
+
+# Phase 5R — Screen Off/On
+
+Automated suites: `test/protection/lock_trigger_test.dart` (5R group),
+`test/ui/lock_challenge_test.dart` (5R group).
+
+| # | Scenario | Expected |
+| - | -------- | -------- |
+| 1 | Wake into a protected app | Requirement fires immediately (no resume) |
+| 2 | Wake into an unprotected foreground | Nothing |
+| 3 | Screen-on without a prior screen-off | Nothing (existing 5K test extended) |
+| 4 | Widget: unlock -> sleep -> wake | Session revoked; challenge presented on wake |
+| 5 | Widget: sleep/wake while a challenge is up | Exactly one challenge; PIN ends it |
+| 6 | Widget: three rapid sleep/wake cycles | One challenge; no grants; PIN ends the storm |
+
+Device QA: unlock WhatsApp, turn the screen off, turn it back on —
+WhatsApp must NOT appear unlocked: the challenge comes up right away
+(or the instant Smart App Lock is reachable on devices restricting
+background activity launches). Repeat the off/on cycle rapidly — the
+challenge never doubles up.

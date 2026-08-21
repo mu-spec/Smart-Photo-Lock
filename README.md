@@ -71,6 +71,7 @@ implemented yet.
 | 5O | Recents hardening (FLAG_SECURE challenge snapshots; task-switch re-challenge) | ✅ |
 | 5P | Gesture navigation hardening (cancelled gestures never dismiss; paused/hidden count as leaves) | ✅ |
 | 5Q | Rapid switching (ordered transition processing; no stacked challenges; grace-aware re-entry) | ✅ |
+| 5R | Screen off/on (sleep revokes all sessions; wake enforces the re-lock immediately) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -584,7 +585,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.2.1 / 9.4.1 / built-in Kotlin with KGP 2.3.20 (settings classpath `apply false` + buildscript; `android.builtInKotlin=true`; AGP legacy-DSL compat `android.newDsl=false` until the Flutter tool finishes its new-DSL migration) |
 | Java | 17 |
-| versionName / versionCode | `0.35.18` / `83` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.35.19` / `84` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM), `local_auth` (biometrics) |
 
 ## Prerequisites (on your machine)
@@ -1254,6 +1255,23 @@ Protected → unprotected → protected storms are handled correctly:
 - **Grace-aware cycles** — rapid leave/return inside a grace window
   never re-challenges; leaving re-arms the deadline each time; the
   first return past the grace challenges exactly once.
+
+### Phase 5R ✅ — Screen Off/On
+
+Protected-app state survives the full sleep/wake cycle:
+
+- **Sleep re-locks everything (5K)** — `ACTION_SCREEN_OFF` revokes
+  every unlock session and every grace deadline at once.
+- **Wake enforces immediately (new)** — on `ACTION_SCREEN_ON` with a
+  pending re-lock, the trigger probes the foreground and emits the
+  lock requirement AT ONCE: waking the phone into a protected app
+  presents the challenge immediately instead of revealing the unlocked
+  app until Smart App Lock happens to resume.
+- **No stacking across cycles** — repeated sleep/wake storms yield
+  exactly one challenge (the 5Q presentation gate re-queues extras);
+  the correct credential ends the whole cycle.
+- **Quiet wake** — a screen-on without a pending re-lock (or into an
+  unprotected foreground) enforces nothing.
 
 ## Next phases
 

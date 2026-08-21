@@ -1202,3 +1202,28 @@ LockChallengeHost._presentChallenge
   challenge screen at any moment; the launcher passes silently.
 - Grace windows: each leave re-arms the deadline; returns inside grace
   consume it; the first return past grace challenges once.
+
+## 5R. Screen off/on
+
+Protected-app state through sleep/wake:
+
+```
+screen-off (5K):
+  _screenOffPending = true
+  revokeAllAccess()         // every session + grace deadline dies
+screen-on (5R wake enforcement):
+  if !_screenOffPending -> nothing
+  monitor.probe()
+  evaluate(currentPackage)
+    challenge/deny -> LockRequired  (challenge fires on wake, no resume
+                                     needed; the host's present gate
+                                     re-queues during storms)
+resume (host):
+  takeScreenOffPending() -> re-evaluate -> challenge (5K fallback)
+```
+
+- The wake path closes the "wake straight into the unlocked app"
+  window: the requirement fires the moment the screen turns on while a
+  protected app is foreground.
+- Rapid off/on storms degrade to exactly one challenge via the 5Q
+  synchronous presentation gate.
