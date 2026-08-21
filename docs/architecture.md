@@ -935,3 +935,24 @@ LockRequired
 - `InstalledAppsChannel.launchApp` is total (false when the app has no
   launcher intent); the host treats a failed launch as non-fatal — the
   session is already granted.
+
+## 5F. Pattern integration
+
+Pattern authentication joins the protected-app flow as a first-class
+gate:
+
+```
+LockRequired
+  -> challenge route chosen by CredentialState.primary
+       ├─ primary == pattern (and enrolled) -> PatternUnlockScreen
+       ├─ primary == pin (and enrolled)     -> PinUnlockScreen
+       ├─ legacy/absent primary + PIN       -> PinUnlockScreen
+       └─ pattern-only                      -> PatternUnlockScreen
+  -> correct drawing/PIN -> grantAccess + hideLockChallenge + launchApp
+  -> wrong / cancelled   -> app stays BLOCKED
+```
+
+- `enrollPattern` already records `primaryAuthType: pattern` (last
+  enrolled wins), so the host honors the user's chosen credential.
+- Pattern lockouts share the PIN cooldown state (2F): the controller's
+  deny path covers both credentials unchanged.

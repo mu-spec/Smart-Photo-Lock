@@ -200,6 +200,38 @@ void main() {
       AccessDecision.challenge,
     );
   });
+
+  test('a pattern-driven lockout denies protected access (Phase 5F)',
+      () async {
+    await protect('com.whatsapp');
+    final SecuritySettingsRepository settings =
+        SecuritySettingsRepositoryImpl(InMemoryLocalDatabase());
+    final DefaultCredentialManager manager = DefaultCredentialManager(
+      settings: settings,
+      pinHasher: Pbkdf2PinHasher(iterations: 200),
+      patternHasher: Pbkdf2PatternHasher(iterations: 200),
+      stateMachine: CredentialStateMachine(
+        maxFailedAttempts: 3,
+        lockoutDuration: const Duration(seconds: 30),
+      ),
+    );
+    await manager.enrollPattern(const <int>[3, 6, 9, 8]);
+    // Patterns share the PIN lockout state (2F): three wrong drawings
+    // trip the same cooldown.
+    for (int i = 0; i < 3; i++) {
+      await manager.authenticatePattern(const <int>[1, 2, 3, 5]);
+    }
+
+    final DefaultAccessController lockedOut = DefaultAccessController(
+      matcher: container.protectedAppMatcher,
+      auth: manager,
+      now: () => DateTime(2026, 8, 21, 9, 0),
+    );
+    expect(
+      await lockedOut.evaluate('com.whatsapp'),
+      AccessDecision.deny,
+    );
+  });
 }
 
 /// [ProtectedAppsRepository] whose reads always fail — proves the

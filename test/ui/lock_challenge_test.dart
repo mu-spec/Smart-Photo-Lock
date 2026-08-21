@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:smart_app_lock/app/app.dart';
 import 'package:smart_app_lock/app/app_container.dart';
 import 'package:smart_app_lock/data/models/protected_app.dart';
+import 'package:smart_app_lock/design_system/design_system.dart';
 import 'package:smart_app_lock/services/impl/static_accessibility_lock_service.dart';
 import 'package:smart_app_lock/services/impl/static_installed_apps_service.dart';
 import 'package:smart_app_lock/services/impl/static_overlay_lock_service.dart';
@@ -112,7 +113,7 @@ void main() {
   testWidgets('a pattern-only user is challenged with the pattern screen',
       (WidgetTester tester) async {
     final AppContainer container = await pumpApp(tester);
-    await container.auth.enrollPattern(const <int>[1, 2, 3, 6]);
+    await container.auth.enrollPattern(const <int>[3, 6, 9, 8]);
     await protect(container, 'com.whatsapp');
 
     await openApp(tester, container, 'com.whatsapp');
@@ -120,6 +121,104 @@ void main() {
     expect(find.byType(PatternUnlockScreen), findsOneWidget);
     expect(find.byType(PinUnlockScreen), findsNothing);
   });
+
+  testWidgets('the PRIMARY credential decides the challenge screen: '
+      'pattern-primary users get the pattern (Phase 5F)',
+      (WidgetTester tester) async {
+    final AppContainer container = await pumpApp(tester);
+    // PIN enrolled first, pattern second -> primary is the pattern.
+    await container.auth.enrollPin('1234');
+    await container.auth.enrollPattern(const <int>[3, 6, 9, 8]);
+    await protect(container, 'com.whatsapp');
+
+    await openApp(tester, container, 'com.whatsapp');
+
+    expect(find.byType(PatternUnlockScreen), findsOneWidget);
+    expect(find.byType(PinUnlockScreen), findsNothing);
+  });
+
+  testWidgets('the PRIMARY credential decides the challenge screen: '
+      'PIN-primary users get the PIN (Phase 5F)',
+      (WidgetTester tester) async {
+    final AppContainer container = await pumpApp(tester);
+    // Pattern enrolled first, PIN second -> primary is the PIN.
+    await container.auth.enrollPattern(const <int>[3, 6, 9, 8]);
+    await container.auth.enrollPin('1234');
+    await protect(container, 'com.whatsapp');
+
+    await openApp(tester, container, 'com.whatsapp');
+
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+    expect(find.byType(PatternUnlockScreen), findsNothing);
+  });
+
+  testWidgets(
+      'a correct pattern unlocks the session and launches the app '
+      '(Phase 5F)', (WidgetTester tester) async {
+    final AppContainer container = await pumpApp(tester);
+    await container.auth.enrollPattern(const <int>[3, 6, 9, 8]);
+    await protect(container, 'com.whatsapp');
+
+    await openApp(tester, container, 'com.whatsapp');
+    expect(find.byType(PatternUnlockScreen), findsOneWidget);
+
+    await drawPattern(tester, const <int>[3, 6, 9, 8]);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(PatternUnlockScreen), findsNothing);
+    final StaticOverlayLockService overlay =
+        container.overlay as StaticOverlayLockService;
+    expect(overlay.hideLockChallengeCalls, 1);
+    final StaticInstalledAppsService apps =
+        container.installedAppsService as StaticInstalledAppsService;
+    expect(apps.launchAppCalls, 1);
+    expect(apps.launchedPackages, <String>['com.whatsapp']);
+
+    // The open unlock window suppresses an immediate re-challenge.
+    await openApp(tester, container, 'com.whatsapp');
+    expect(find.byType(PatternUnlockScreen), findsNothing);
+  });
+
+  testWidgets('a wrong pattern keeps the challenge up and the app blocked '
+      '(Phase 5F)', (WidgetTester tester) async {
+    final AppContainer container = await pumpApp(tester);
+    await container.auth.enrollPattern(const <int>[3, 6, 9, 8]);
+    await protect(container, 'com.whatsapp');
+
+    await openApp(tester, container, 'com.whatsapp');
+    expect(find.byType(PatternUnlockScreen), findsOneWidget);
+
+    await drawPattern(tester, const <int>[1, 2, 3, 5]);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(PatternUnlockScreen), findsOneWidget);
+    final StaticInstalledAppsService apps =
+        container.installedAppsService as StaticInstalledAppsService;
+    expect(apps.launchAppCalls, 0);
+  });
+
+  testWidgets('cancelling the pattern challenge leaves the app blocked '
+      '(Phase 5F)', (WidgetTester tester) async {
+    final AppContainer container = await pumpApp(tester);
+    await container.auth.enrollPattern(const <int>[3, 6, 9, 8]);
+    await protect(container, 'com.whatsapp');
+
+    await openApp(tester, container, 'com.whatsapp');
+    expect(find.byType(PatternUnlockScreen), findsOneWidget);
+
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    expect(find.byType(PatternUnlockScreen), findsNothing);
+    final StaticInstalledAppsService apps =
+        container.installedAppsService as StaticInstalledAppsService;
+    expect(apps.launchAppCalls, 0);
+
+    // No unlock window either: the next activation challenges again.
+    await openApp(tester, container, 'com.whatsapp');
+    expect(find.byType(PatternUnlockScreen), findsOneWidget);
+  });
+
 
   testWidgets('a wrong PIN keeps the challenge up and the app blocked '
       '(Phase 5E)', (WidgetTester tester) async {
@@ -179,4 +278,51 @@ void main() {
 
     expect(find.byType(PinUnlockScreen), findsNothing);
   });
+  /// Draws [nodes] on the unlock screen's pattern grid: bounds-derived
+  /// node centers, a small horizontal arena-winning move first, then
+  /// micro-stepped device-like strokes (mirrors the pattern-suite
+  /// helper — the challenge flow uses the same production grid).
+  Future<void> drawPattern(WidgetTester tester, List<int> nodes) async {
+    // Settle ALL pending animations before reading bounds (shake
+    // feedback runs 420ms and the view switcher fades 200ms).
+    await tester.pump(const Duration(milliseconds: 450));
+    final Finder gridFinder = find.byType(DsPatternGrid);
+    expect(gridFinder, findsOneWidget);
+    final Rect bounds = tester.getRect(gridFinder);
+
+    final double pad = bounds.width * 0.10;
+    final double step = (bounds.width - 2 * pad) / 2;
+    Offset center(int node) {
+      final int i = node - 1;
+      return Offset(
+        bounds.left + pad + (i % 3) * step,
+        bounds.top + pad + (i ~/ 3) * step,
+      );
+    }
+
+    final TestGesture gesture =
+        await tester.startGesture(center(nodes.first));
+    await tester.pump();
+    // Win the gesture arena from the enclosing scrollable with a small
+    // HORIZONTAL movement before any vertical leg is drawn.
+    await gesture.moveBy(const Offset(20, 0));
+    await tester.pump();
+
+    Offset current = center(nodes.first).translate(20, 0);
+    for (final int node in nodes.skip(1)) {
+      final Offset target = center(node);
+      const int steps = 6;
+      for (int s = 1; s <= steps; s++) {
+        final Offset next = Offset(
+          current.dx + (target.dx - current.dx) * s / steps,
+          current.dy + (target.dy - current.dy) * s / steps,
+        );
+        await gesture.moveTo(next);
+        await tester.pump();
+      }
+      current = target;
+    }
+    await gesture.up();
+    await tester.pump();
+  }
 }

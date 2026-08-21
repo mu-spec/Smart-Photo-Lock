@@ -9,22 +9,23 @@ import '../security/credentials/credential_state.dart';
 import 'app_scope.dart';
 import 'router.dart';
 
-/// Phase 5D/5E: presents the lock challenge when a protected application
-/// becomes active — the PIN (preferred) or pattern gates access.
+/// Phase 5D/5E/5F: presents the lock challenge when a protected
+/// application becomes active — the user's PRIMARY credential (PIN or
+/// pattern) gates access.
 ///
 /// Owns the production lifecycle of the lock trigger:
 ///  * starts the trigger (monitor + evaluation pipeline) on mount,
 ///    stops it on unmount;
 ///  * on a [LockRequired] event: brings Smart App Lock to the front
 ///    through the overlay bridge (`showLockChallenge`), then pushes the
-///    unlock screen matching the user's enrolled credential (PIN
-///    preferred, pattern as fallback);
-///  * a correct unlock grants the package an unlock window
+///    unlock screen for the PRIMARY enrolled credential — pattern
+///    unlock for pattern-primary users, PIN unlock for PIN-primary
+///    users (5F: both credentials are first-class gates);
+///  * a correct credential grants the package an unlock window
 ///    ([AccessController.grantAccess]) and then LAUNCHES the protected
-///    app (Phase 5E: the PIN is the gate — access proceeds only after
-///    it passes);
-///  * a wrong PIN, a cancelled challenge or an active lockout leaves
-///    the protected app blocked.
+///    app (Phase 5E);
+///  * a wrong credential, a cancelled challenge or an active lockout
+///    leaves the protected app blocked.
 ///
 /// Fail-safe: when NO credential is enrolled there is nothing to
 /// challenge with — the trigger requirement is ignored (setup lives on
@@ -99,15 +100,28 @@ class _LockChallengeHostState extends State<LockChallengeHost> {
 
     _challenging = true;
     try {
-      final String route = status.hasEnrolled(AuthType.pin)
-          ? RouteNames.pinUnlock
-          : RouteNames.patternUnlock;
+      // Phase 5F: route by the user's PRIMARY credential (the one they
+      // enrolled last), not a hardcoded PIN preference. Both PIN and
+      // pattern are first-class gates in the protected-app flow.
+      final AuthType? primary = status.primary;
+      final String route;
+      if (primary == AuthType.pattern &&
+          status.hasEnrolled(AuthType.pattern)) {
+        route = RouteNames.patternUnlock;
+      } else if (primary == AuthType.pin &&
+          status.hasEnrolled(AuthType.pin)) {
+        route = RouteNames.pinUnlock;
+      } else if (status.hasEnrolled(AuthType.pin)) {
+        route = RouteNames.pinUnlock; // legacy/absent primary: PIN first
+      } else {
+        route = RouteNames.patternUnlock; // pattern-only user
+      }
       final bool? unlocked =
           await widget.navigatorKey.currentState?.pushNamed<bool>(route);
       if (unlocked == true) {
-        // Phase 5E: the PIN passed — open the session, dismiss the
-        // challenge, then LAUNCH the protected app so the user proceeds
-        // straight into it.
+        // Phase 5E/5F: the credential passed — open the session,
+        // dismiss the challenge, then LAUNCH the protected app so the
+        // user proceeds straight into it.
         await container.accessController.grantAccess(requirement.packageName);
         await container.overlay.hideLockChallenge();
         await container.installedAppsService.launchApp(

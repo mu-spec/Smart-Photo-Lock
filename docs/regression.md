@@ -344,3 +344,25 @@ Automated suites: `test/services/installed_apps_service_test.dart`
 Device QA: protect WhatsApp, open it, enter the PIN — WhatsApp must
 open automatically. Fail the PIN three times — the next open shows the
 countdown and WhatsApp cannot be reached until it ends.
+
+---
+
+# Phase 5F — Pattern Integration
+
+Automated suites: `test/ui/lock_challenge_test.dart` (pattern gate +
+primary routing), `test/protection/default_access_controller_test.dart`
+(pattern lockout).
+
+| # | Scenario | Expected |
+| - | -------- | -------- |
+| 1 | Pattern-only user challenged | PatternUnlockScreen, no PIN screen |
+| 2 | PIN then pattern enrolled (primary=pattern) | PatternUnlockScreen |
+| 3 | Pattern then PIN enrolled (primary=PIN) | PinUnlockScreen |
+| 4 | Correct pattern | Session + challenge dismissed + app launched |
+| 5 | Wrong pattern | Challenge stays; no launch |
+| 6 | Cancelled pattern challenge | No launch; next activation re-challenges |
+| 7 | Three wrong drawings | Shared lockout trips; protected app denied |
+
+Device QA: enroll ONLY a pattern, protect WhatsApp, open it — the
+pattern grid must appear; draw it correctly and WhatsApp opens
+automatically; draw it wrong and WhatsApp stays blocked.
