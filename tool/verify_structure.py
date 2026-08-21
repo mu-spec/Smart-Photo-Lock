@@ -20,12 +20,12 @@ can be verified without compiling:
      PACKAGE_USAGE_STATS directly under <manifest> and no variant
      manifest removes it (Phase 4 device-QA guard).
  12. Toolchain alignment: AGP 9.2.1 + Gradle wrapper 9.4.1 with
-     android.builtInKotlin=true (no KGP application/pin) plus the
-     documented KGP 2.2.20 buildscript classpath override (with its own
-     repositories — AGP 9.2 built-in Kotlin resolves KGP 2.2.10, below
-     Flutter's minimum), and android.newDsl=false (Flutter 3.47
-     compatibility: the Flutter Gradle Plugin still requires the legacy
-     AGP DSL surface).
+     android.builtInKotlin=true (no KGP application anywhere) and KGP
+     2.2.20 raised on BOTH the settings plugin classpath (apply false —
+     the classpath Flutter's dependency checker reads) and the root
+     buildscript classpath (the documented AGP mechanism), plus
+     android.newDsl=false (Flutter 3.47 compatibility: the Flutter
+     Gradle Plugin still requires the legacy AGP DSL surface).
 
 Exit code 0 = all checks green.
 Usage:  python3 tool/verify_structure.py
@@ -379,8 +379,15 @@ def run():
         )
     if 'id("kotlin-android")' in app_gradle:
         built_in_problems.append("app/build.gradle.kts: kotlin-android plugin still applied")
-    if "org.jetbrains.kotlin.android" in settings_gradle:
-        built_in_problems.append("settings.gradle.kts: Kotlin Gradle Plugin still pinned")
+    if 'id("org.jetbrains.kotlin.android") version "2.2.20" apply false' not in settings_gradle:
+        built_in_problems.append(
+            "settings.gradle.kts: KGP 2.2.20 settings-classpath declaration "
+            "missing (Flutter's dependency checker reads the KGP version "
+            "from the settings plugin classpath via AGP's internal "
+            "getKotlinAndroidPluginVersion — add "
+            "id(\"org.jetbrains.kotlin.android\") version \"2.2.20\" "
+            "apply false; the plugin itself is never applied)"
+        )
     if 'version "9.2.1"' not in settings_gradle:
         built_in_problems.append(
             "settings.gradle.kts: AGP 9.2.1 missing "
