@@ -956,3 +956,23 @@ LockRequired
   enrolled wins), so the host honors the user's chosen credential.
 - Pattern lockouts share the PIN cooldown state (2F): the controller's
   deny path covers both credentials unchanged.
+
+## 5G. Biometric integration
+
+Biometric authentication is wired into the protected-app flow as an
+accelerator (never a bypass of the primary credential):
+
+```
+Unlock challenge (PIN or pattern primary)
+  └─ biometric shortcut shown IFF BiometricOptions configured (2J opt-in)
+       ├─ authenticateBiometric -> AuthSuccess  -> pop(true)
+       │     -> grantAccess + hideLockChallenge + launchApp (5E path)
+       ├─ AuthFailure (wrong/cancelled)         -> inline error + shake
+       └─ AuthLockedOut                          -> shared countdown view
+```
+
+- `PatternUnlockScreen` gained the same biometric shortcut the PIN
+  screen shipped in 2J (`pattern_key_biometric`) — both challenge
+  surfaces now honor the user's biometric opt-in.
+- The manager's configuration gates are untouched: biometric requires
+  enrolled primary credential + explicit `BiometricOptions`.

@@ -366,3 +366,25 @@ primary routing), `test/protection/default_access_controller_test.dart`
 Device QA: enroll ONLY a pattern, protect WhatsApp, open it — the
 pattern grid must appear; draw it correctly and WhatsApp opens
 automatically; draw it wrong and WhatsApp stays blocked.
+
+---
+
+# Phase 5G — Biometric Integration
+
+Automated suites: `test/ui/pattern_unlock_screen_test.dart` (biometric
+group), `test/ui/lock_challenge_test.dart` (biometric group).
+
+| # | Scenario | Expected |
+| - | -------- | -------- |
+| 1 | Biometric not enrolled | No biometric key on either unlock screen |
+| 2 | Enrolled (PIN challenge) | `pin_key_biometric` appears |
+| 3 | Enrolled (pattern challenge) | `pattern_key_biometric` appears |
+| 4 | Biometric success (PIN) | Challenge pops; session granted; app launched |
+| 5 | Biometric success (pattern) | Same on the pattern surface |
+| 6 | Biometric failure | Challenge stays; app blocked; error shown |
+| 7 | Pattern screen biometric failure | Screen stays; "Biometric failed" shown |
+
+Device QA: enroll biometric unlock in Security, protect WhatsApp, open
+it — the challenge shows the fingerprint option; authenticate and
+WhatsApp opens automatically; cancel the prompt and the app stays
+locked.

@@ -60,6 +60,7 @@ implemented yet.
 | 5D | Basic lock trigger (protected app active → authentication challenge) | ✅ |
 | 5E | PIN integration (PIN gates protected-app access; lockout denies; app relaunched on success) | ✅ |
 | 5F | Pattern integration (primary-credential challenge routing; pattern gates + launch) | ✅ |
+| 5G | Biometric integration (biometric accelerator on both unlock screens in the lock flow) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -573,7 +574,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.2.1 / 9.4.1 / built-in Kotlin with KGP 2.3.20 (settings classpath `apply false` + buildscript; `android.builtInKotlin=true`; AGP legacy-DSL compat `android.newDsl=false` until the Flutter tool finishes its new-DSL migration) |
 | Java | 17 |
-| versionName / versionCode | `0.35.5` / `70` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.35.6` / `71` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM), `local_auth` (biometrics) |
 
 ## Prerequisites (on your machine)
@@ -1015,6 +1016,24 @@ Pattern authentication is fully connected to the protected-app flow:
 - **Pattern lockouts deny access** — patterns share the Phase 2F
   cooldown state, so three failed drawings trip the same escalating
   lockout and protected apps are denied until it expires.
+
+### Phase 5G ✅ — Biometric Integration
+
+Biometric authentication joins the protected-app flow as an
+accelerator on the challenge surface:
+
+- **Pattern unlock parity** — `PatternUnlockScreen` now offers the same
+  fingerprint shortcut as the PIN screen (`pattern_key_biometric`):
+  shown only when the user enabled biometric unlock in Security,
+  identical outcome mapping (success pops true, failure + shake,
+  lockouts honored).
+- **Challenge flow** — biometric success on either unlock screen grants
+  the unlock session, dismisses the challenge and launches the
+  protected app; failure or cancellation leaves the app blocked.
+- **Opt-in gate preserved** — biometrics never appear (and never
+  authenticate) unless `BiometricOptions` were explicitly configured;
+  the existing fail-closed manager policy (not-configured / not-available)
+  is unchanged.
 
 ## Next phases
 

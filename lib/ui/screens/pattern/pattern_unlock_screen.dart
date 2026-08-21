@@ -81,6 +81,10 @@ class _PatternUnlockScreenState extends State<PatternUnlockScreen>
   // Phase 2K — pattern trail visibility.
   bool _patternVisible = true;
 
+  // Phase 5G — biometric shortcut (offered only when the user enabled
+  // biometric unlock in Security settings).
+  bool _biometricEnabled = false;
+
   CredentialManager get _manager =>
       widget.credentialManager ?? AppScope.read(context)!.auth;
 
@@ -112,6 +116,9 @@ class _PatternUnlockScreenState extends State<PatternUnlockScreen>
       return;
     }
     _patternVisible = state.patternVisibilityEnabled;
+    // Phase 5G: biometric is an accelerator on the challenge surface —
+    // offered only when the user explicitly enabled it in Security.
+    _biometricEnabled = state.hasEnrolled(AuthType.biometric);
     final DateTime? lockout = state.lockedOutUntil;
     if (lockout != null && _now().isBefore(lockout)) {
       _startLockout(lockout, streak: state.lockoutStreak);
@@ -154,6 +161,62 @@ class _PatternUnlockScreenState extends State<PatternUnlockScreen>
       return;
     }
     setState(() => _nodes = <int>[]);
+  }
+
+  // -- biometric (Phase 5G) -------------------------------------------------
+
+  /// Maps biometric failures onto the inline error message (mirrors the
+  /// PIN unlock screen's mapping).
+  String _biometricError(AuthFailure failure) => switch (failure.reason) {
+        AuthFailureReason.notConfigured =>
+          'Enable biometric unlock in Security settings.',
+        AuthFailureReason.notAvailable =>
+          'Biometric authentication is not available.',
+        AuthFailureReason.wrongCredential => failure.remainingAttempts > 0
+            ? 'Biometric failed — ${failure.remainingAttempts} attempts left.'
+            : 'Biometric failed.',
+        AuthFailureReason.cancelled => 'Biometric cancelled.',
+        AuthFailureReason.noCredentialEnrolled => 'No pattern configured.',
+        AuthFailureReason.invalidInput => 'Biometric failed.',
+      };
+
+  Future<void> _onBiometric() async {
+    if (_verifying || _view != _UnlockView.ready) {
+      return;
+    }
+    setState(() => _verifying = true);
+    final result =
+        await _manager.authenticateBiometric(reason: 'Unlock Smart App Lock');
+    if (!mounted) {
+      return;
+    }
+    final outcome = result.valueOrNull;
+
+    if (outcome is AuthSuccess) {
+      Navigator.of(context).pop(true);
+      return;
+    }
+    if (outcome is AuthLockedOut) {
+      _startLockout(outcome.retryAt, streak: outcome.lockoutStreak);
+      return;
+    }
+    if (outcome is AuthFailure) {
+      setState(() {
+        _verifying = false;
+        _nodes = <int>[];
+        _error = _biometricError(outcome);
+      });
+      shake();
+      return;
+    }
+
+    // Service failure (fail-closed): generic message, retry.
+    setState(() {
+      _verifying = false;
+      _nodes = <int>[];
+      _error = PatternUnlockScreen.verifyFailedMessage;
+    });
+    shake();
   }
 
   // -- authentication ------------------------------------------------------
@@ -327,6 +390,21 @@ class _PatternUnlockScreenState extends State<PatternUnlockScreen>
             onPressed: _verifying ? null : _clear,
           ),
         ),
+        // Phase 5G: biometric accelerator — same contract as the PIN
+        // unlock screen (button only when the user opted in).
+        if (_biometricEnabled) ...<Widget>[
+          const SizedBox(height: DsSpacing.sm),
+          Center(
+            child: DsButton(
+              key: const Key('pattern_key_biometric'),
+              label: 'Use fingerprint',
+              variant: DsButtonVariant.secondary,
+              size: DsButtonSize.small,
+              icon: Icons.fingerprint,
+              onPressed: _verifying ? null : _onBiometric,
+            ),
+          ),
+        ],
         if (_verifying) ...<Widget>[
           const SizedBox(height: DsSpacing.lg),
           const Center(

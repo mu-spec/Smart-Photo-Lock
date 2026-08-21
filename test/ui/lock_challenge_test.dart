@@ -5,11 +5,14 @@ import 'package:smart_app_lock/app/app.dart';
 import 'package:smart_app_lock/app/app_container.dart';
 import 'package:smart_app_lock/data/models/protected_app.dart';
 import 'package:smart_app_lock/design_system/design_system.dart';
+import 'package:smart_app_lock/security/credentials/biometric_options.dart';
+import 'package:smart_app_lock/services/biometric_service.dart';
 import 'package:smart_app_lock/services/impl/static_accessibility_lock_service.dart';
 import 'package:smart_app_lock/services/impl/static_installed_apps_service.dart';
 import 'package:smart_app_lock/services/impl/static_overlay_lock_service.dart';
 import 'package:smart_app_lock/ui/screens/pattern/pattern_unlock_screen.dart';
 import 'package:smart_app_lock/ui/screens/pin/pin_unlock_screen.dart';
+import 'package:smart_app_lock/utilities/result.dart';
 
 /// Phase 5D: the basic lock trigger end-to-end — when a protected
 /// application becomes active, Smart App Lock presents the unlock
@@ -19,11 +22,13 @@ void main() {
   Future<AppContainer> pumpApp(
     WidgetTester tester, {
     AppContainer? container,
+    BiometricService? biometrics,
   }) async {
     tester.view.physicalSize = const Size(800, 1600);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
-    final AppContainer c = container ?? AppContainer.inMemory();
+    final AppContainer c =
+        container ?? AppContainer.inMemory(biometrics: biometrics);
     await tester.pumpWidget(SmartAppLockApp(container: c));
     await tester.pumpAndSettle();
     return c;
@@ -278,6 +283,99 @@ void main() {
 
     expect(find.byType(PinUnlockScreen), findsNothing);
   });
+
+  // -- biometric (Phase 5G) ------------------------------------------------
+
+  testWidgets(
+      'biometric success on the PIN challenge unlocks and launches the '
+      'app', (WidgetTester tester) async {
+    final AppContainer container = await pumpApp(
+      tester,
+      biometrics: const _FakeBiometricService(supported: true, passes: true),
+    );
+    await container.auth.enrollPin('1234');
+    await container.auth.updateBiometricOptions(const BiometricOptions());
+    await protect(container, 'com.whatsapp');
+
+    await openApp(tester, container, 'com.whatsapp');
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+    expect(find.byKey(const Key('pin_key_biometric')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('pin_key_biometric')));
+    await tester.pumpAndSettle();
+
+    // Biometric passed: the challenge popped, the session is open and
+    // the protected app was launched.
+    expect(find.byType(PinUnlockScreen), findsNothing);
+    final StaticInstalledAppsService apps =
+        container.installedAppsService as StaticInstalledAppsService;
+    expect(apps.launchAppCalls, 1);
+    expect(apps.launchedPackages, <String>['com.whatsapp']);
+
+    // The open unlock window suppresses an immediate re-challenge.
+    await openApp(tester, container, 'com.whatsapp');
+    expect(find.byType(PinUnlockScreen), findsNothing);
+  });
+
+  testWidgets(
+      'biometric success on the pattern challenge unlocks and launches '
+      'the app', (WidgetTester tester) async {
+    final AppContainer container = await pumpApp(
+      tester,
+      biometrics: const _FakeBiometricService(supported: true, passes: true),
+    );
+    await container.auth.enrollPattern(const <int>[3, 6, 9, 8]);
+    await container.auth.updateBiometricOptions(const BiometricOptions());
+    await protect(container, 'com.whatsapp');
+
+    await openApp(tester, container, 'com.whatsapp');
+    expect(find.byType(PatternUnlockScreen), findsOneWidget);
+    expect(find.byKey(const Key('pattern_key_biometric')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('pattern_key_biometric')));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(PatternUnlockScreen), findsNothing);
+    final StaticInstalledAppsService apps =
+        container.installedAppsService as StaticInstalledAppsService;
+    expect(apps.launchAppCalls, 1);
+    expect(apps.launchedPackages, <String>['com.whatsapp']);
+  });
+
+  testWidgets('biometric failure keeps the protected app blocked '
+      '(Phase 5G)', (WidgetTester tester) async {
+    final AppContainer container = await pumpApp(
+      tester,
+      biometrics: const _FakeBiometricService(supported: true, passes: false),
+    );
+    await container.auth.enrollPin('1234');
+    await container.auth.updateBiometricOptions(const BiometricOptions());
+    await protect(container, 'com.whatsapp');
+
+    await openApp(tester, container, 'com.whatsapp');
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('pin_key_biometric')));
+    await tester.pumpAndSettle();
+
+    // Failed biometrics leave the challenge up and the app blocked.
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+    final StaticInstalledAppsService apps =
+        container.installedAppsService as StaticInstalledAppsService;
+    expect(apps.launchAppCalls, 0);
+  });
+
+  testWidgets('biometric not enrolled -> no biometric key on the '
+      'challenge', (WidgetTester tester) async {
+    final AppContainer container = await pumpApp(tester);
+    await container.auth.enrollPin('1234');
+    await protect(container, 'com.whatsapp');
+
+    await openApp(tester, container, 'com.whatsapp');
+
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+    expect(find.byKey(const Key('pin_key_biometric')), findsNothing);
+  });
   /// Draws [nodes] on the unlock screen's pattern grid: bounds-derived
   /// node centers, a small horizontal arena-winning move first, then
   /// micro-stepped device-like strokes (mirrors the pattern-suite
@@ -325,4 +423,26 @@ void main() {
     await gesture.up();
     await tester.pump();
   }
+}
+
+/// Deterministic biometric fake for the challenge-flow tests (Phase 5G).
+class _FakeBiometricService implements BiometricService {
+  const _FakeBiometricService({required this.supported, required this.passes});
+
+  final bool supported;
+  final bool passes;
+
+  @override
+  Future<Result<bool>> isSupported() async => Result.success(supported);
+
+  @override
+  Future<Result<Set<BiometricKind>>> availableKinds() async =>
+      Result.success(const <BiometricKind>{BiometricKind.strong});
+
+  @override
+  Future<Result<bool>> authenticate({
+    required String reason,
+    BiometricOptions? options,
+  }) async =>
+      Result.success(passes);
 }

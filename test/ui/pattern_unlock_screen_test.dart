@@ -5,21 +5,26 @@ import 'package:smart_app_lock/app/app_scope.dart';
 import 'package:smart_app_lock/app/app_container.dart';
 import 'package:smart_app_lock/app/theme/app_theme.dart';
 import 'package:smart_app_lock/design_system/design_system.dart';
+import 'package:smart_app_lock/security/credentials/biometric_options.dart';
 import 'package:smart_app_lock/security/credentials/credential_state_machine.dart';
 import 'package:smart_app_lock/security/credentials/impl/default_credential_manager.dart';
 import 'package:smart_app_lock/security/credentials/pattern_hasher.dart';
 import 'package:smart_app_lock/security/pin_hasher.dart';
+import 'package:smart_app_lock/services/biometric_service.dart';
 import 'package:smart_app_lock/ui/screens/pattern/pattern_unlock_screen.dart';
+import 'package:smart_app_lock/utilities/result.dart';
 
 /// Phase 2I: pattern authentication — uses the saved pattern (direction
 /// independent), with attempts/lockouts/escalating cooldowns inherited
 /// from the credential manager.
 void main() {
   /// Builds the host: AppScope + a page that pushes the unlock screen and
-  /// records its pop result.
+  /// records its pop result. [biometrics] overrides the platform service
+  /// (Phase 5G tests inject a deterministic fake).
   Future<AppContainer> pumpHosted(
     WidgetTester tester, {
     DateTime Function()? now,
+    BiometricService? biometrics,
   }) async {
     
     // Taller test surface: the default 800x600 viewport pushes pattern
@@ -38,6 +43,7 @@ void main() {
         maxFailedAttempts: 3,
         lockoutDuration: Duration(seconds: 30),
       ),
+      biometricService: biometrics,
       // Same clock as the screen: lockout timestamps stay deterministic.
       now: now,
     );
@@ -407,10 +413,90 @@ void main() {
     final state = (await _ManagerResults.manager.status()).valueOrNull!;
     expect(state.patternVisibilityEnabled, isFalse);
   });
+
+  // -- biometric (Phase 5G) ------------------------------------------------
+
+  testWidgets('biometric button appears only when biometric unlock is '
+      'enabled', (WidgetTester tester) async {
+    await pumpHosted(tester);
+    await enrollPattern(tester, const <int>[3, 6, 9, 8]);
+    await openUnlock(tester);
+
+    // Not enrolled -> no biometric accelerator.
+    expect(find.byKey(const Key('pattern_key_biometric')), findsNothing);
+
+    // Opt in through the manager, reopen the screen.
+    await _ManagerResults.manager
+        .updateBiometricOptions(const BiometricOptions());
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    await openUnlock(tester);
+
+    expect(find.byKey(const Key('pattern_key_biometric')), findsOneWidget);
+  });
+
+  testWidgets('biometric success pops with true (Phase 5G)',
+      (WidgetTester tester) async {
+    await pumpHosted(
+      tester,
+      biometrics: const _FakeBiometricService(supported: true, passes: true),
+    );
+    await enrollPattern(tester, const <int>[3, 6, 9, 8]);
+    await _ManagerResults.manager
+        .updateBiometricOptions(const BiometricOptions());
+    await openUnlock(tester);
+
+    await tester.tap(find.byKey(const Key('pattern_key_biometric')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('open_unlock')), findsOneWidget); // popped
+    expect(_ManagerResults.results.last, true);
+  });
+
+  testWidgets('biometric failure keeps the screen up (Phase 5G)',
+      (WidgetTester tester) async {
+    await pumpHosted(
+      tester,
+      biometrics: const _FakeBiometricService(supported: true, passes: false),
+    );
+    await enrollPattern(tester, const <int>[3, 6, 9, 8]);
+    await _ManagerResults.manager
+        .updateBiometricOptions(const BiometricOptions());
+    await openUnlock(tester);
+
+    await tester.tap(find.byKey(const Key('pattern_key_biometric')));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(PatternUnlockScreen), findsOneWidget); // still up
+    expect(find.textContaining('Biometric failed'), findsOneWidget);
+    expect(find.byKey(const Key('open_unlock')), findsNothing);
+  });
 }
 
 /// Test-only holder so helper functions can reach the manager and results.
 class _ManagerResults {
   static late DefaultCredentialManager manager;
   static late List<Object?> results;
+}
+
+/// Deterministic biometric fake for the unlock flows (Phase 5G tests).
+class _FakeBiometricService implements BiometricService {
+  const _FakeBiometricService({required this.supported, required this.passes});
+
+  final bool supported;
+  final bool passes;
+
+  @override
+  Future<Result<bool>> isSupported() async => Result.success(supported);
+
+  @override
+  Future<Result<Set<BiometricKind>>> availableKinds() async =>
+      Result.success(const <BiometricKind>{BiometricKind.strong});
+
+  @override
+  Future<Result<bool>> authenticate({
+    required String reason,
+    BiometricOptions? options,
+  }) async =>
+      Result.success(passes);
 }
