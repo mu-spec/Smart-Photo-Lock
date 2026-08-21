@@ -665,6 +665,109 @@ void main() {
     expect(apps.launchAppCalls, 1); // WhatsApp only
   });
 
+  // -- recents hardening (Phase 5O) ------------------------------------------
+
+  testWidgets(
+      'the secure window arms while a challenge is up and clears after '
+      'the lock loop ends (Phase 5O)', (WidgetTester tester) async {
+    final AppContainer container = await pumpApp(tester);
+    await container.auth.enrollPin('1234');
+    await protect(container, 'com.whatsapp');
+    final StaticOverlayLockService overlay =
+        container.overlay as StaticOverlayLockService;
+
+    await openApp(tester, container, 'com.whatsapp');
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+    expect(overlay.secureWindow, isTrue);
+
+    for (final String digit in <String>['1', '2', '3', '4']) {
+      await tester.tap(find.byKey(Key('pin_key_$digit')));
+      await tester.pumpAndSettle();
+    }
+    expect(find.byType(PinUnlockScreen), findsNothing);
+    expect(overlay.secureWindow, isFalse);
+    expect(sessionFor(container, 'com.whatsapp'), isNotNull);
+  });
+
+  testWidgets(
+      'tapping OUR task in recents re-presents the interrupted challenge '
+      '(Phase 5O)', (WidgetTester tester) async {
+    final AppContainer container = await pumpApp(tester);
+    await container.auth.enrollPin('1234');
+    await protect(container, 'com.whatsapp');
+    final StaticOverlayLockService overlay =
+        container.overlay as StaticOverlayLockService;
+
+    await openApp(tester, container, 'com.whatsapp');
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+    expect(overlay.secureWindow, isTrue);
+
+    // Recents: the task switcher covers Smart App Lock (inactive),
+    // then the user taps OUR task again (resumed).
+    await pressHome(tester);
+    expect(find.byType(PinUnlockScreen), findsNothing);
+    await returnToApp(tester);
+
+    // The interrupted challenge re-presents; the secure window stays
+    // armed through the cycle.
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+    expect(overlay.secureWindow, isTrue);
+    expect(sessionFor(container, 'com.whatsapp'), isNull);
+
+    // Completing it clears the secure window and grants normally.
+    for (final String digit in <String>['1', '2', '3', '4']) {
+      await tester.tap(find.byKey(Key('pin_key_$digit')));
+      await tester.pumpAndSettle();
+    }
+    expect(find.byType(PinUnlockScreen), findsNothing);
+    expect(overlay.secureWindow, isFalse);
+    expect(sessionFor(container, 'com.whatsapp'), isNotNull);
+  });
+
+  testWidgets(
+      'tapping the PROTECTED app task in recents while backgrounded '
+      'brings the challenge back (Phase 5O)', (WidgetTester tester) async {
+    final AppContainer container = await pumpApp(tester);
+    await container.auth.enrollPin('1234');
+    await protect(container, 'com.whatsapp');
+    final StaticOverlayLockService overlay =
+        container.overlay as StaticOverlayLockService;
+
+    await openApp(tester, container, 'com.whatsapp');
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+
+    // Recents dismisses the challenge (no grant, no launch).
+    await pressHome(tester);
+    expect(find.byType(PinUnlockScreen), findsNothing);
+    expect(sessionFor(container, 'com.whatsapp'), isNull);
+    final StaticInstalledAppsService apps =
+        container.installedAppsService as StaticInstalledAppsService;
+    expect(apps.launchAppCalls, 0);
+
+    // While Smart App Lock is still backgrounded, the user taps
+    // WhatsApp's task in recents: detection fires and the challenge
+    // comes straight back — the protected app is never exposed.
+    await openApp(tester, container, 'com.whatsapp');
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+    expect(overlay.secureWindow, isTrue);
+    expect(overlay.showLockChallengeCalls, greaterThanOrEqualTo(2));
+    expect(sessionFor(container, 'com.whatsapp'), isNull);
+    expect(apps.launchAppCalls, 0);
+
+    // Returning to our task keeps the challenge presented.
+    await returnToApp(tester);
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+
+    // Only the PIN ends it.
+    for (final String digit in <String>['1', '2', '3', '4']) {
+      await tester.tap(find.byKey(Key('pin_key_$digit')));
+      await tester.pumpAndSettle();
+    }
+    expect(find.byType(PinUnlockScreen), findsNothing);
+    expect(overlay.secureWindow, isFalse);
+    expect(sessionFor(container, 'com.whatsapp'), isNotNull);
+  });
+
   /// Draws [nodes] on the unlock screen's pattern grid: bounds-derived
   /// node centers, a small horizontal arena-winning move first, then
   /// micro-stepped device-like strokes (mirrors the pattern-suite

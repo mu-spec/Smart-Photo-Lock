@@ -68,6 +68,7 @@ implemented yet.
 | 5L | Grace period (configurable re-lock delay: immediate / 30s / 1m / 5m) | ✅ |
 | 5M | Home-button hardening (challenge dismissed on leave; requirements re-queued, never dropped) | ✅ |
 | 5N | Back-navigation hardening (Back cannot dismiss a challenge; re-presents in the foreground) | ✅ |
+| 5O | Recents hardening (FLAG_SECURE challenge snapshots; task-switch re-challenge) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -581,7 +582,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.2.1 / 9.4.1 / built-in Kotlin with KGP 2.3.20 (settings classpath `apply false` + buildscript; `android.builtInKotlin=true`; AGP legacy-DSL compat `android.newDsl=false` until the Flutter tool finishes its new-DSL migration) |
 | Java | 17 |
-| versionName / versionCode | `0.35.15` / `80` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.35.16` / `81` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM), `local_auth` (biometrics) |
 
 ## Prerequisites (on your machine)
@@ -1191,6 +1192,25 @@ Back can never bypass the lock:
 - **Double-pop guard** — the Home-press dismissal is idempotent and
   `canPop`-guarded, so a second lifecycle event can never pop the shell
   route beneath the challenge.
+
+### Phase 5O ✅ — Recents Hardening
+
+Recent-app/task switching can no longer leak or bypass the lock:
+
+- **FLAG_SECURE on the challenge** — while a lock challenge is on
+  screen, the activity window sets `FLAG_SECURE`: the recents snapshot
+  (and screenshots) render blank, so the PIN dots, pattern trail and
+  the challenge never leak through task switching. The flag clears the
+  moment the lock loop truly ends (and stays armed across
+  re-presentations so no flicker window opens).
+- **Task-switch flows hardened** — tapping OUR task in recents
+  re-presents the interrupted challenge; tapping the PROTECTED app's
+  task while Smart App Lock is backgrounded brings the challenge
+  straight back (detection fires → challenge presents; no session, no
+  launch). The secure window re-arms with each presentation.
+- **No grants through recents** — every recents path resolves null for
+  the host (5I invariants); sessions are never created by task
+  switching.
 
 ## Next phases
 

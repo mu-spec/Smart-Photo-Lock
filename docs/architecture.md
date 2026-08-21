@@ -1135,3 +1135,27 @@ _presentChallenge(package)
   double lifecycle event can never pop the shell route.
 - The re-presentation prefers `_pendingPackage` (a newer requirement)
   over `_lastPresentedPackage`.
+
+## 5O. Recents hardening
+
+Task switching can neither leak nor bypass the lock:
+
+```
+Challenge up -> overlay.setSecureWindow(true)   (FLAG_SECURE)
+  -> recents snapshot renders blank; screenshots blocked
+Challenge closes:
+  ├─ passed & nothing queued  -> setSecureWindow(false)
+  ├─ Home/Recents dismissal   -> clear secure; resume path re-arms
+  └─ Back re-present (5N)     -> secure STAYS armed (no flicker)
+
+Recents flows:
+  ├─ tap OUR task            -> interrupted challenge re-presents
+  └─ tap PROTECTED app task  -> detection fires while backgrounded;
+                               challenge presents; no session/launch
+```
+
+- Native: `OverlayStatusChannel.setSecureWindow` toggles
+  `WindowManager.LayoutParams.FLAG_SECURE` on the UI thread (total,
+  fail-quiet).
+- The secure toggle is hardening, not enforcement: a failed toggle is
+  tolerated; the lock logic never depends on it.

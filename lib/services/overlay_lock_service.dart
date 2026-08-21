@@ -18,4 +18,9 @@ abstract interface class OverlayLockService {
 
   /// Dismisses the lock challenge (called after a successful unlock).
   Future<Result<void>> hideLockChallenge();
+
+  /// Phase 5O (recents hardening): toggles FLAG_SECURE on the activity
+  /// window — while set, the recents snapshot and screenshots render
+  /// blank, so a lock challenge never leaks through task switching.
+  Future<Result<void>> setSecureWindow(bool secure);
 }

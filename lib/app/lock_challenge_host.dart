@@ -215,6 +215,12 @@ class _LockChallengeHostState extends State<LockChallengeHost>
       return;
     }
 
+    // Phase 5O (recents hardening): FLAG_SECURE keeps the recents
+    // snapshot blank while the challenge is on screen — the PIN dots,
+    // pattern trail or protected-app state never leak through task
+    // switching. Failures are tolerated (hardening, not enforcement).
+    await container.overlay.setSecureWindow(true);
+
     _challenging = true;
     // A fresh challenge supersedes the interrupted state (Home-press
     // dismissal) — nothing is pending to re-evaluate anymore.
@@ -265,11 +271,12 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     }
   }
 
-  /// Phase 5M/5N: runs whenever a challenge closes (completed,
+  /// Phase 5M/5N/5O: runs whenever a challenge closes (completed,
   /// cancelled, dismissed by a Home press, or popped by Back).
   ///
   ///  * passed            -> a queued requirement for another app
-  ///                         re-presents (5M);
+  ///                         re-presents (5M); otherwise the secure
+  ///                         window clears;
   ///  * interrupted       -> the Home-press dismissal just completed;
   ///                         foreground re-evaluates, background defers
   ///                         to the resume path (5M);
@@ -279,6 +286,12 @@ class _LockChallengeHostState extends State<LockChallengeHost>
   void _afterChallengeClosed(bool passed) {
     _challenging = false;
     if (passed) {
+      // The lock loop truly ends only when nothing is queued — the
+      // queued re-presentation keeps the secure window armed (no
+      // flicker window for a recents snapshot to exploit).
+      if (_pendingPackage == null) {
+        _clearSecure();
+      }
       _maybePresentPending();
       return;
     }
@@ -288,13 +301,27 @@ class _LockChallengeHostState extends State<LockChallengeHost>
       return;
     }
     if (!_appForeground || !mounted) {
-      // Home-press dismissal (backgrounded): the resume path owns the
-      // re-challenge; a pending requirement waits as well.
+      // Home/Recents dismissal (backgrounded): no challenge is visible
+      // anymore — the snapshot may show normal content again; the
+      // resume path re-arms the secure window with the re-challenge.
+      _clearSecure();
       _maybePresentPending();
       return;
     }
     // Phase 5N: Back-press dismissal while foreground — re-present.
+    // The secure window STAYS armed: the challenge reappears next
+    // frame (no flicker window for a recents snapshot to exploit).
     _scheduleReChallenge();
+  }
+
+  /// Phase 5O: clears FLAG_SECURE (the lock loop ended). Failures are
+  /// tolerated — hardening, not enforcement.
+  Future<void> _clearSecure() async {
+    final AppContainer? container = AppScope.read(context);
+    if (container == null) {
+      return;
+    }
+    await container.overlay.setSecureWindow(false);
   }
 
   /// Phase 5N: re-presents the dismissed challenge on the next frame

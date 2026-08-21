@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import android.view.WindowManager
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
@@ -76,6 +77,23 @@ object OverlayStatusChannel {
                     // native side has nothing to tear down.
                     result.success(true)
                 }
+                "setSecureWindow" -> {
+                    // Phase 5O (recents hardening): FLAG_SECURE keeps the
+                    // recents snapshot and screenshots blank while the
+                    // lock challenge (or any sensitive state) is on
+                    // screen. Total: false when the toggle cannot be
+                    // applied (never crashes the bridge).
+                    val secure = call.argument<Boolean>("secure") ?: false
+                    try {
+                        result.success(setSecureWindow(activity, secure))
+                    } catch (e: Exception) {
+                        result.error(
+                            "overlay_error",
+                            "Failed to toggle the secure window: ${e.message}",
+                            null,
+                        )
+                    }
+                }
                 else -> result.notImplemented()
             }
         }
@@ -89,6 +107,27 @@ object OverlayStatusChannel {
             }
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             context.startActivity(intent)
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /**
+     * Phase 5O: toggles FLAG_SECURE on the activity window — while set,
+     * the recents snapshot and screenshots render blank, so a challenge
+     * (or any sensitive state) never leaks through task switching.
+     * Window flags must change on the UI thread.
+     */
+    fun setSecureWindow(activity: MainActivity, secure: Boolean): Boolean {
+        return try {
+            activity.runOnUiThread {
+                if (secure) {
+                    activity.window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                } else {
+                    activity.window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                }
+            }
             true
         } catch (e: Exception) {
             false

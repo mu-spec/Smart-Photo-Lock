@@ -572,3 +572,26 @@ NOTE: the 5E/5F "cancelling the challenge" tests were UPDATED — the old
 behavior (challenge pops and the app UI is exposed) was the very bypass
 5N closes; the tests now assert the hardened re-present behavior with
 the same security invariants (no session, no launch).
+
+---
+
+# Phase 5O — Recents Hardening
+
+Automated suites: `test/services/overlay_service_test.dart`
+(setSecureWindow), `test/ui/lock_challenge_test.dart` (5O group).
+
+| # | Scenario | Expected |
+| - | -------- | -------- |
+| 1 | setSecureWindow wire format | Flag relayed; native false → failure |
+| 2 | Static secure toggle | State + call count recorded |
+| 3 | Challenge up | secureWindow true |
+| 4 | Lock loop ends (correct PIN) | secureWindow false; session granted |
+| 5 | Tap OUR task in recents | Interrupted challenge re-presents; secure stays armed; PIN ends the loop |
+| 6 | Tap PROTECTED app task while backgrounded | Challenge returns; no session; no launch; secure re-armed |
+
+Device QA: open a protected app so the challenge shows, press Recents —
+the Smart App Lock thumbnail is blank. Tap the protected app's task —
+the challenge comes straight back. Tap Smart App Lock's own task — the
+challenge is still there. Swipe Smart App Lock away from recents and
+relaunch — everything is locked again (in-memory sessions die with the
+process).

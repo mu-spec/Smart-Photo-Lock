@@ -9,7 +9,9 @@ import '../overlay_lock_service.dart';
 /// how often the settings screen was requested. Phase 5D: the challenge
 /// methods are wired — [showLockChallengeSucceeds] controls the result,
 /// [showLockChallengeCalls]/[hideLockChallengeCalls] count invocations
-/// and [lastLockPackage] records the challenged package.
+/// and [lastLockPackage] records the challenged package. Phase 5O:
+/// [secureWindow] records the FLAG_SECURE state and
+/// [setSecureWindowCalls] counts the toggles.
 class StaticOverlayLockService implements OverlayLockService {
   StaticOverlayLockService({this.overlayGranted = false});
 
@@ -25,6 +27,10 @@ class StaticOverlayLockService implements OverlayLockService {
 
   /// The most recently challenged package, or null.
   String? lastLockPackage;
+
+  /// Phase 5O: the current FLAG_SECURE state the host requested.
+  bool secureWindow = false;
+  int setSecureWindowCalls = 0;
 
   @override
   Future<Result<bool>> canDrawOverlays() async =>
@@ -48,6 +54,13 @@ class StaticOverlayLockService implements OverlayLockService {
   @override
   Future<Result<void>> hideLockChallenge() async {
     hideLockChallengeCalls++;
+    return Result.success(null);
+  }
+
+  @override
+  Future<Result<void>> setSecureWindow(bool secure) async {
+    setSecureWindowCalls++;
+    secureWindow = secure;
     return Result.success(null);
   }
 }

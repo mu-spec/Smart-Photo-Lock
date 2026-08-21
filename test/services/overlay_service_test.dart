@@ -96,6 +96,33 @@ void main() {
           isTrue);
       expect((await service.hideLockChallenge()).isFailure, isTrue);
     });
+
+    test('setSecureWindow relays the flag and reports success (Phase 5O)',
+        () async {
+      final List<bool?> seen = <bool?>[];
+      messenger.setMockMethodCallHandler(channel, (MethodCall call) async {
+        expect(call.method, 'setSecureWindow');
+        seen.add((call.arguments as Map<dynamic, dynamic>?)?['secure'] as bool?);
+        return true;
+      });
+      final OverlayLockService service = MethodChannelOverlayLockService();
+      expect((await service.setSecureWindow(true)).isSuccess, isTrue);
+      expect((await service.setSecureWindow(false)).isSuccess, isTrue);
+      expect(seen, <bool?>[true, false]);
+
+      // A native false reports a failure — never a fabricated success.
+      messenger.setMockMethodCallHandler(channel, (MethodCall call) async => false);
+      expect((await service.setSecureWindow(true)).isFailure, isTrue);
+    });
+
+    test('setSecureWindow platform errors fail closed (Phase 5O)',
+        () async {
+      messenger.setMockMethodCallHandler(channel, (MethodCall call) async {
+        throw PlatformException(code: 'overlay_error', message: 'boom');
+      });
+      final OverlayLockService service = MethodChannelOverlayLockService();
+      expect((await service.setSecureWindow(true)).isFailure, isTrue);
+    });
   });
 
   group('StaticOverlayLockService', () {
@@ -131,6 +158,19 @@ void main() {
         isTrue,
       );
       expect(service.showLockChallengeCalls, 2);
+    });
+
+    test('secure window toggles are recorded (Phase 5O)', () async {
+      final StaticOverlayLockService service = StaticOverlayLockService();
+
+      expect(service.secureWindow, isFalse);
+      expect((await service.setSecureWindow(true)).isSuccess, isTrue);
+      expect(service.secureWindow, isTrue);
+      expect(service.setSecureWindowCalls, 1);
+
+      expect((await service.setSecureWindow(false)).isSuccess, isTrue);
+      expect(service.secureWindow, isFalse);
+      expect(service.setSecureWindowCalls, 2);
     });
   });
 }

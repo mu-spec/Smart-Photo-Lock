@@ -84,4 +84,24 @@ class MethodChannelOverlayLockService implements OverlayLockService {
       return Result.failure(e);
     }
   }
+
+  @override
+  Future<Result<void>> setSecureWindow(bool secure) async {
+    try {
+      final bool? applied = await _channel.invokeMethod<bool>(
+        'setSecureWindow',
+        <String, dynamic>{'secure': secure},
+      );
+      if (applied == true) {
+        return Result.success(null);
+      }
+      return Result.failure(
+        StateError('Could not toggle the secure window.'),
+      );
+    } on PlatformException catch (e) {
+      return Result.failure(e);
+    } on MissingPluginException catch (e) {
+      return Result.failure(e);
+    }
+  }
 }
