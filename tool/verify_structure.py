@@ -21,7 +21,7 @@ can be verified without compiling:
      manifest removes it (Phase 4 device-QA guard).
  12. Toolchain alignment: AGP 9.2.1 + Gradle wrapper 9.4.1 with
      android.builtInKotlin=true (no KGP application anywhere) and KGP
-     2.2.20 raised on BOTH the settings plugin classpath (apply false —
+     2.3.20 raised on BOTH the settings plugin classpath (apply false —
      the classpath Flutter's dependency checker reads) and the root
      buildscript classpath (the documented AGP mechanism), plus
      android.newDsl=false (Flutter 3.47 compatibility: the Flutter
@@ -348,8 +348,8 @@ def run():
     #  * builtInKotlin=true (Kotlin via AGP's built-in support, no KGP
     #    application/pin anywhere);
     #  * AGP 9.2's built-in Kotlin resolves KGP 2.2.10 — the documented
-    #    "upgrade to a higher KGP version" buildscript classpath override
-    #    (with its own repositories) must raise it to >= 2.2.20;
+    #    "upgrade to a higher KGP version" mechanisms must raise it to
+    #    2.3.20 (Flutter's supported range);
     #  * newDsl=false (the Flutter Gradle Plugin still requires the legacy
     #    AGP DSL surface);
     #  * AGP >= 9.2.1 with the matching Gradle wrapper 9.4.1.
@@ -379,13 +379,13 @@ def run():
         )
     if 'id("kotlin-android")' in app_gradle:
         built_in_problems.append("app/build.gradle.kts: kotlin-android plugin still applied")
-    if 'id("org.jetbrains.kotlin.android") version "2.2.20" apply false' not in settings_gradle:
+    if 'id("org.jetbrains.kotlin.android") version "2.3.20" apply false' not in settings_gradle:
         built_in_problems.append(
-            "settings.gradle.kts: KGP 2.2.20 settings-classpath declaration "
+            "settings.gradle.kts: KGP 2.3.20 settings-classpath declaration "
             "missing (Flutter's dependency checker reads the KGP version "
             "from the settings plugin classpath via AGP's internal "
             "getKotlinAndroidPluginVersion — add "
-            "id(\"org.jetbrains.kotlin.android\") version \"2.2.20\" "
+            "id(\"org.jetbrains.kotlin.android\") version \"2.3.20\" "
             "apply false; the plugin itself is never applied)"
         )
     if 'version "9.2.1"' not in settings_gradle:
@@ -398,11 +398,11 @@ def run():
             "gradle-wrapper.properties: Gradle 9.4.1 missing "
             "(AGP 9.2 requires Gradle >= 9.4.1)"
         )
-    if "kotlin-gradle-plugin:2.2.20" not in root_gradle:
+    if "kotlin-gradle-plugin:2.3.20" not in root_gradle:
         built_in_problems.append(
-            "build.gradle.kts: KGP 2.2.20 buildscript classpath override "
+            "build.gradle.kts: KGP 2.3.20 buildscript classpath override "
             "missing (AGP 9.2 built-in Kotlin resolves KGP 2.2.10, below "
-            "Flutter's 2.2.20 minimum)"
+            "Flutter's supported range)"
         )
     if "gradlePluginPortal()" not in root_gradle:
         built_in_problems.append(

@@ -4,7 +4,7 @@
 //
 // Kotlin ownership: AGP 9.2's built-in Kotlin (android.builtInKotlin=true)
 // is the compiler path — the app does NOT apply the Kotlin Gradle Plugin.
-// KGP 2.2.20 is raised in TWO places, both per official guidance:
+// KGP 2.3.20 is raised in TWO places, both per official guidance:
 //  * settings.gradle.kts plugins block (apply false) — the classpath
 //    Flutter's dependency checker actually reads (AGP's internal
 //    getKotlinAndroidPluginVersion);
@@ -21,7 +21,7 @@ buildscript {
         gradlePluginPortal()
     }
     dependencies {
-        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.2.20")
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.3.20")
     }
 }
 
