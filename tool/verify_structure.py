@@ -16,6 +16,9 @@ can be verified without compiling:
  10. Native channel wiring: every Dart-invoked channel method has a
      matching Kotlin handler case (regression guard for the Phase 4
      usage-access device defect).
+ 11. Usage-access list membership: the main manifest declares
+     PACKAGE_USAGE_STATS directly under <manifest> and no variant
+     manifest removes it (Phase 4 device-QA guard).
 
 Exit code 0 = all checks green.
 Usage:  python3 tool/verify_structure.py
@@ -145,6 +148,25 @@ def run():
         )
         check("main manifest: applicationId package class present",
               'android:name=".MainActivity"' in main_manifest)
+        # Phase 4 device-QA guard: the Usage Access screen lists ONLY apps
+        # that request PACKAGE_USAGE_STATS, so the declaration must sit
+        # directly under <manifest> (not inside <application>) and must
+        # never be removed by a variant manifest.
+        usage_stats_declared = (
+            'android.permission.PACKAGE_USAGE_STATS' in main_manifest
+            and main_manifest.find('PACKAGE_USAGE_STATS')
+            < main_manifest.find('<application')
+        )
+        check("main manifest declares PACKAGE_USAGE_STATS (usage-access "
+              "list membership)", usage_stats_declared)
+        removed_anywhere = []
+        for mf in ("main", "debug", "profile"):
+            p = os.path.join(ROOT, "android/app/src", mf, "AndroidManifest.xml")
+            src = open(p).read()
+            if 'PACKAGE_USAGE_STATS' in src and 'tools:node="remove"' in src:
+                removed_anywhere.append(mf)
+        check("no manifest variant removes PACKAGE_USAGE_STATS",
+              not removed_anywhere, ", ".join(removed_anywhere))
     except Exception as e:  # pragma: no cover
         check("android manifests parse (main/debug/profile)", False, str(e))
 

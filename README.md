@@ -567,7 +567,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.1.0 / 9.3.1 / 2.4.0 |
 | Java | 17 |
-| versionName / versionCode | `0.34.10` / `50` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.34.11` / `51` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM), `local_auth` (biometrics) |
 
 ## Prerequisites (on your machine)
@@ -757,10 +757,12 @@ phase**:
 - **Required (normal):** `POST_NOTIFICATIONS` + `FOREGROUND_SERVICE[_SPECIAL_USE]`
   for the background watcher, plus the existing `<queries>` visibility.
 - **Explicitly rejected:** device admin (deferred — optional hardening,
-  needs a PRD decision), `QUERY_ALL_PACKAGES`, `PACKAGE_USAGE_STATS` in
-  the manifest (the OS ignores it — AppOps grants it via the settings
-  screen), full-screen intents, storage, camera (later intruder-selfie
-  phase only), boot receiver, battery-optimization exemption.
+  needs a PRD decision), `QUERY_ALL_PACKAGES`, full-screen intents,
+  storage, camera (later intruder-selfie phase only), boot receiver,
+  battery-optimization exemption. (`PACKAGE_USAGE_STATS` IS declared for
+  Usage-Access list membership — corrected by Phase 4 device QA: the
+  system screen lists only apps that request it; the grant stays
+  AppOps/settings-only.)
 - A manifest-change table maps each future capability to the phase that
   will land it.
 

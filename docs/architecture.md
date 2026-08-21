@@ -611,10 +611,11 @@ The authoritative document is `docs/capabilities.md`. Summary:
   (with `_SPECIAL_USE` + property) for the watcher; `<queries>` already
   shipped in 3A.
 - **Rejected (with reasons):** device admin deferred as optional
-  hardening (needs a PRD decision), `QUERY_ALL_PACKAGES`,
-  `PACKAGE_USAGE_STATS` manifest noise (AppOps-only), full-screen
+  hardening (needs a PRD decision), `QUERY_ALL_PACKAGES`, full-screen
   intents, storage, boot receiver, camera (intruder-selfie phase only),
-  battery exemption.
+  battery exemption. (`PACKAGE_USAGE_STATS` IS declared — corrected by
+  Phase 4 device QA: the Usage Access screen lists only apps that
+  request it, though the grant itself remains AppOps/settings-only.)
 - A manifest-change table maps each capability to its landing phase; a
   denial matrix defines behavior when the user refuses any grant.
 

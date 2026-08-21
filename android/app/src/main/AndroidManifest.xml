@@ -1,4 +1,5 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!--
       Phase 1A manifest: minimal production surface so the app installs,
@@ -15,6 +16,19 @@
     <!-- Phase 2J: required to use biometric authentication (BiometricPrompt)
          on Android 9 and lower; harmless on newer versions. -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+
+    <!-- Phase 4B (device-QA fix): PACKAGE_USAGE_STATS list membership.
+         The GRANT is still made exclusively through the system Usage Access
+         settings screen (AppOps OPSTR_GET_USAGE_STATS) — this declaration
+         cannot grant anything. But Android's Usage Access screen only lists
+         apps that REQUEST the permission in their manifest (and the
+         UsageStatsManager API docs require the declaration), so without it
+         Smart App Lock never appears in the list and the user cannot grant
+         it. tools:ignore silences the ProtectedPermissions lint for this
+         special appop permission. -->
+    <uses-permission
+        android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
 
     <!-- Phase 4D: lets the lock screen appear over protected apps
          (draw over other apps). The grant is made exclusively through the

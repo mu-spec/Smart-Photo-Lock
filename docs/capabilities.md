@@ -36,7 +36,7 @@ Foreground-app detection ──► Lock decision ──► PIN challenge on top 
 
 | # | Capability | Manifest element | Used for | Can the user deny it? | App behavior when denied |
 | - | ---------- | ---------------- | -------- | --------------------- | ------------------------ |
-| 1 | **Usage Access** | none (special settings) | Foreground-app detection (primary). The system settings app surfaces the grant via `Settings.ACTION_USAGE_ACCESS_SETTINGS`; the app holds **no** `PACKAGE_USAGE_STATS` declaration — that permission is guarded by AppOps and granted by the system UI, not by the manifest. | Yes | Lock engine falls back to accessibility detection; prompts guide re-enabling |
+| 1 | **Usage Access** | `<uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions"/>` (list membership only) | Foreground-app detection (primary). The GRANT is made exclusively through the system Usage Access screen (`Settings.ACTION_USAGE_ACCESS_SETTINGS` → AppOps `OPSTR_GET_USAGE_STATS`). The manifest declaration grants nothing — but Android's Usage Access screen lists ONLY apps that request the permission, so the declaration is what makes Smart App Lock selectable there (corrected by Phase 4 real-device QA). | Yes | Lock engine falls back to accessibility detection; prompts guide re-enabling |
 | 2 | **Draw over other apps** | `SYSTEM_ALERT_WINDOW` | The lock screen must be able to appear **on top of any protected app** — this is the entire enforcement surface. | Yes | Locking cannot show the challenge; prompts guide enabling |
 | 3 | **Accessibility service** | `<service android:permission="BIND_ACCESSIBILITY_SERVICE">` + `accessibilityservice` intent filter + XML config | Fallback foreground detection + the "close app when locked" gesture | Yes | Usage-access path (if granted) covers detection; prompts guide enabling |
 
@@ -61,7 +61,6 @@ Foreground-app detection ──► Lock decision ──► PIN challenge on top 
 | Rejected capability | Reason it stays out |
 | ------------------- | ------------------- |
 | **Device admin** (optional hardening only) | The PRD's protection architecture is *app-level* (detect → overlay → unlock). Device admin is listed as an optional hardening stage, and Phase 4A does not activate it: it is the most user-alarming grant and Play-restricts it to enterprise/lock/wipe uses. Adding it later requires a separate PRD decision. |
-| `PACKAGE_USAGE_STATS` in the manifest | The platform *ignores* the manifest declaration for this permission; the grant comes solely from the Usage Access settings screen (AppOps). Declaring it adds noise and confuses reviewers. |
 | `QUERY_ALL_PACKAGES` | Play-restricted, broad package visibility. The `<queries>` launcher declaration (3A) already provides what the app-list needs. |
 | **Full-screen intent** (`USE_FULL_SCREEN_INTENT`) | The lock surface is an overlay window, not a notification-triggered activity. |
 | `MANAGE_EXTERNAL_STORAGE` / storage permissions | Nothing in the architecture touches shared storage. |
