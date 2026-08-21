@@ -693,3 +693,25 @@ Device QA: unlock WhatsApp, reboot the phone, open WhatsApp first —
 it opens unlocked (Smart App Lock is not running yet; this is the
 "where Android allows" boundary). Now open Smart App Lock — from this
 moment WhatsApp is locked again: returning to it challenges.
+
+---
+
+# Phase 5T — Process Recreation
+
+Automated suites: `test/regression/process_recreation_test.dart`.
+
+| # | Scenario | Expected |
+| - | -------- | -------- |
+| 1 | Sessions + grace deadlines across recreation | Gone; fresh stack challenges (fail-closed) |
+| 2 | Persisted grace setting | Restored; a fresh grace cycle works |
+| 3 | Credentials + active lockout | Both survive; correct PIN still blocked while active |
+| 4 | Widget: kill mid-challenge, recreate | Challenge re-presents; PIN grants + launches exactly once |
+| 5 | Widget: kill after unlock (grace set) | First contact challenges — the dead grace window is never extended |
+| 6 | Widget: queued Maps requirement, kill, recreate | Challenge targets MAPS (re-derived, not replayed) |
+| 7 | Widget: window-flag reset + resume | FLAG_SECURE re-armed while the challenge is up |
+
+Device QA: open WhatsApp so the challenge shows, force-stop Smart App
+Lock from recents (or enable "Don't keep activities" and background
+it), then reopen Smart App Lock — the challenge must be back (or the
+instant WhatsApp is opened again), never an unlocked shell. With a
+challenge up, background + return — the recents thumbnail stays blank.

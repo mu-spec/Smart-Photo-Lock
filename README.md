@@ -73,6 +73,7 @@ implemented yet.
 | 5Q | Rapid switching (ordered transition processing; no stacked challenges; grace-aware re-entry) | ✅ |
 | 5R | Screen off/on (sleep revokes all sessions; wake enforces the re-lock immediately) | ✅ |
 | 5S | Reboot recovery (lazy restore: baseline enforcement + persisted state, where Android allows) | ✅ |
+| 5T | Process recreation (shared-store recovery, secure re-arm on resume, fail-closed fresh states) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -586,7 +587,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.2.1 / 9.4.1 / built-in Kotlin with KGP 2.3.20 (settings classpath `apply false` + buildscript; `android.builtInKotlin=true`; AGP legacy-DSL compat `android.newDsl=false` until the Flutter tool finishes its new-DSL migration) |
 | Java | 17 |
-| versionName / versionCode | `0.35.20` / `85` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.35.21` / `86` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM), `local_auth` (biometrics) |
 
 ## Prerequisites (on your machine)
@@ -1293,6 +1294,28 @@ Smart App Lock runs (Android does not allow boot-time auto-start, and
   restore from the database. Lockouts are wall-clock based: an ACTIVE
   cooldown still blocks even the correct PIN after a reboot; an expired
   one does not.
+
+### Phase 5T ✅ — Process Recreation
+
+Android destroying/recreating Smart App Lock recovers safely:
+
+- **What survives (production: SQLite + Android Keystore)** — the
+  protected-app list, credentials, the persisted lockout timestamp and
+  the grace-period setting all restore from the database.
+- **What dies fail-closed (in-memory)** — unlock sessions, grace
+  deadlines, queued requirements, the screen-off marker: after
+  recreation the first contact with a protected app challenges (the 5S
+  baseline enforcement re-presents it immediately).
+- **Queues are re-derived, never replayed** — a requirement that was
+  queued when the process died is replaced by a fresh evaluation of
+  the CURRENT foreground, so the recreated challenge targets the app
+  that is actually on screen.
+- **Window flags re-arm** — an activity recreation resets window
+  flags; the host re-arms FLAG_SECURE on resume whenever a challenge
+  is on screen (the recents snapshot stays blank).
+- **Test seams** — `AppContainer.inMemory` accepts shared
+  `database`/`secretStore` instances so tests simulate a process death
+  over the persisted state.
 
 ## Next phases
 

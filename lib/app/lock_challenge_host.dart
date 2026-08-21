@@ -185,17 +185,22 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     if (trigger == null || !mounted) {
       return;
     }
+    final bool screenOff = trigger.takeScreenOffPending();
+    if (_challenging) {
+      // Phase 5T (process/activity recreation): window flags do NOT
+      // survive an activity recreation — re-arm FLAG_SECURE whenever a
+      // challenge is on screen, so the recents snapshot is protected
+      // again even when the platform rebuilt the window under us.
+      final AppContainer? container = AppScope.read(context);
+      if (container != null) {
+        await container.overlay.setSecureWindow(true);
+      }
+      return;
+    }
     // Re-lock enforcement only after a screen-off (5K) or an
     // interrupted challenge (5M) — a plain resume must not re-challenge
     // a still-valid session.
-    final bool screenOff = trigger.takeScreenOffPending();
     if (!screenOff && !_interruptedChallenge) {
-      return;
-    }
-    if (_challenging) {
-      // The challenge dismissed by the Home press is still popping;
-      // its finally block re-evaluates (the interrupted flag stays set
-      // until then).
       return;
     }
     _interruptedChallenge = false;

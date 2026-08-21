@@ -1252,3 +1252,31 @@ LockTrigger.start():
 
 - Lockouts are wall-clock based: an active cooldown still denies the
   correct PIN after a reboot; an expired one passes.
+
+## 5T. Process recreation
+
+Android destroying/recreating Smart App Lock recovers safely:
+
+```
+process death / activity recreation:
+  database (SQLite) + Keystore     -> survive: protected list,
+                                      credentials, lockout timestamp,
+                                      grace setting
+  in-memory (sessions, grace
+  deadlines, queues, markers,
+  window flags)                    -> gone, FAIL-CLOSED
+
+reborn (new container over the same persisted stores):
+  LockTrigger.start() -> _enforceBaseline()
+    protected foreground, no session -> challenge NOW
+  host initState -> _applyPersistedGracePeriod()   (5L restore)
+  host resume while _challenging -> setSecureWindow(true)   (5T re-arm)
+
+queued requirements  -> re-derived from the CURRENT foreground
+                        (never replayed from the lost queue)
+```
+
+- `AppContainer.inMemory({database, secretStore})` are the test seams
+  that simulate the persisted stores surviving the process.
+- Window flags reset on activity recreation; the resume re-arm keeps
+  the recents snapshot blank while a challenge is up.

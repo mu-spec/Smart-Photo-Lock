@@ -187,6 +187,12 @@ class AppContainer {
     bool accessibilityEnabled = false,
     bool overlayGranted = false,
     DateTime Function()? accessClock,
+    // Phase 5T (process-recreation test seams): share the SAME database
+    // and secret store across two containers to simulate a process
+    // death/recreation over the persisted state — exactly what SQLite +
+    // the Android Keystore survive in production.
+    LocalDatabase? database,
+    SecretStore? secretStore,
   }) {
     final InstalledAppsService installedAppsService =
         StaticInstalledAppsService(
@@ -205,8 +211,8 @@ class AppContainer {
     final PreferencesStore preferences = PreferencesStoreImpl(keyValueStore);
     return AppContainer._(
       keyValueStore: keyValueStore,
-      database: InMemoryLocalDatabase(),
-      secretStore: InMemorySecretStore(),
+      database: database ?? InMemoryLocalDatabase(),
+      secretStore: secretStore ?? InMemorySecretStore(),
       installedAppsService: installedAppsService,
       accessibilityService: accessibilityService,
       overlayService: overlayService,
