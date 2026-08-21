@@ -1227,3 +1227,28 @@ resume (host):
   protected app is foreground.
 - Rapid off/on storms degrade to exactly one challenge via the 5Q
   synchronous presentation gate.
+
+## 5S. Reboot recovery
+
+Protection restores correctly after reboot, lazily (Android allows no
+boot auto-start; RECEIVE_BOOT_COMPLETED stays rejected):
+
+```
+process death / reboot:
+  in-memory: sessions, grace deadlines, screen-off marker -> GONE
+             (fail-closed: everything locks)
+  database: protected list, credentials, lockout timestamp,
+            grace setting -> RESTORED on next run
+
+LockTrigger.start():
+  monitor.start()            // baseline probe (emits nothing)
+  _enforceBaseline():
+    current == null              -> nothing
+    evaluate(current):
+      challenge/deny             -> LockRequired (cold start with a
+                                    protected foreground challenges NOW)
+      allow (session / open)     -> quiet (warm restart)
+```
+
+- Lockouts are wall-clock based: an active cooldown still denies the
+  correct PIN after a reboot; an expired one passes.

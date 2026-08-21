@@ -91,6 +91,28 @@ class LockTrigger {
     // Phase 5K: watch the device screen state — a screen-off revokes
     // every unlock session immediately.
     _screenSub = _screenState.events.listen(_onScreenEvent);
+    // Phase 5S (reboot recovery): the baseline probe never emits, so a
+    // protected app already in the foreground at cold start would stay
+    // unchallenged. Evaluate the baseline NOW — after a reboot (or any
+    // process kill) the session maps are fresh, so a protected
+    // foreground with no session challenges immediately; a warm
+    // restart with a valid session stays quiet.
+    await _enforceBaseline();
+  }
+
+  /// Phase 5S: evaluates the monitor's baseline foreground exactly once
+  /// per start. Emits a requirement only when the access decision
+  /// demands it — the same fail-closed policy as every transition.
+  Future<void> _enforceBaseline() async {
+    final String? current = _monitor.currentPackage;
+    if (current == null) {
+      return;
+    }
+    final AccessDecision decision = await _controller.evaluate(current);
+    if (decision == AccessDecision.challenge ||
+        decision == AccessDecision.deny) {
+      _lockRequired.add(LockRequired(packageName: current, at: _now()));
+    }
   }
 
   /// Stops the pipeline: unsubscribes and stops the monitor. The lock

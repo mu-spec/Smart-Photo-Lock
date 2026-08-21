@@ -310,12 +310,14 @@ void main() {
     final StaticScreenStateService screen =
         container.screenState as StaticScreenStateService;
 
+    // Grant a session FIRST so the baseline enforcement at start has
+    // nothing to challenge (warm start), then wake without any prior
+    // screen-off: the pending marker is absent, so nothing fires.
+    await container.accessController.grantAccess('com.whatsapp');
     installed.foregroundPackage = 'com.whatsapp';
     await container.foregroundMonitor.probe();
     await trigger.start();
 
-    // Screen-on alone (no screen-off first): no pending re-lock, no
-    // requirement.
     screen.emitScreenOn();
     await Future<void>.delayed(Duration.zero);
     expect(requirements, isEmpty);
@@ -426,5 +428,53 @@ void main() {
 
     await clockedTrigger.stop();
     await clockedTrigger.dispose();
+  });
+  // -- reboot recovery (Phase 5S) --------------------------------------------
+
+  test('cold start with a protected foreground challenges at the baseline '
+      '(reboot recovery)', () async {
+    await protect('com.whatsapp');
+    final StaticInstalledAppsService installed =
+        container.installedAppsService as StaticInstalledAppsService;
+
+    // After a reboot the user lands in WhatsApp first; Smart App Lock
+    // starts cold with NO sessions. The baseline probe reports WhatsApp
+    // without emitting — the trigger must still challenge it.
+    installed.foregroundPackage = 'com.whatsapp';
+    await container.foregroundMonitor.probe();
+    await trigger.start();
+
+    expect(requirements, hasLength(1));
+    expect(requirements.single.packageName, 'com.whatsapp');
+
+    await trigger.stop();
+  });
+
+  test('warm restart with a valid session stays quiet at the baseline',
+      () async {
+    await protect('com.whatsapp');
+    await container.accessController.grantAccess('com.whatsapp');
+    final StaticInstalledAppsService installed =
+        container.installedAppsService as StaticInstalledAppsService;
+    installed.foregroundPackage = 'com.whatsapp';
+    await container.foregroundMonitor.probe();
+
+    await trigger.start();
+    expect(requirements, isEmpty);
+
+    await trigger.stop();
+  });
+
+  test('cold start with an unprotected foreground stays quiet',
+      () async {
+    final StaticInstalledAppsService installed =
+        container.installedAppsService as StaticInstalledAppsService;
+    installed.foregroundPackage = 'com.example.launcher';
+    await container.foregroundMonitor.probe();
+
+    await trigger.start();
+    expect(requirements, isEmpty);
+
+    await trigger.stop();
   });
 }

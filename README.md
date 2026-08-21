@@ -72,6 +72,7 @@ implemented yet.
 | 5P | Gesture navigation hardening (cancelled gestures never dismiss; paused/hidden count as leaves) | ✅ |
 | 5Q | Rapid switching (ordered transition processing; no stacked challenges; grace-aware re-entry) | ✅ |
 | 5R | Screen off/on (sleep revokes all sessions; wake enforces the re-lock immediately) | ✅ |
+| 5S | Reboot recovery (lazy restore: baseline enforcement + persisted state, where Android allows) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -585,7 +586,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.2.1 / 9.4.1 / built-in Kotlin with KGP 2.3.20 (settings classpath `apply false` + buildscript; `android.builtInKotlin=true`; AGP legacy-DSL compat `android.newDsl=false` until the Flutter tool finishes its new-DSL migration) |
 | Java | 17 |
-| versionName / versionCode | `0.35.19` / `84` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.35.20` / `85` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM), `local_auth` (biometrics) |
 
 ## Prerequisites (on your machine)
@@ -1272,6 +1273,26 @@ Protected-app state survives the full sleep/wake cycle:
   the correct credential ends the whole cycle.
 - **Quiet wake** — a screen-on without a pending re-lock (or into an
   unprotected foreground) enforces nothing.
+
+### Phase 5S ✅ — Reboot Recovery
+
+Protection is restored correctly after a reboot — lazily, the moment
+Smart App Lock runs (Android does not allow boot-time auto-start, and
+`RECEIVE_BOOT_COMPLETED` stays rejected per capabilities.md):
+
+- **Everything locks by default** — unlock sessions and grace deadlines
+  are in-memory and die with the process: after a reboot the first
+  contact with a protected app challenges (fail-closed).
+- **Baseline enforcement** — the monitor's baseline probe never emits,
+  so a protected app already in the foreground at cold start used to
+  pass unchallenged. `LockTrigger.start()` now evaluates the baseline
+  foreground: protected + no session → immediate requirement; a valid
+  session (warm restart) stays quiet; unprotected stays quiet.
+- **Persisted state survives** — the protected-app list, credentials,
+  the persisted lockout timestamp and the grace-period setting all
+  restore from the database. Lockouts are wall-clock based: an ACTIVE
+  cooldown still blocks even the correct PIN after a reboot; an expired
+  one does not.
 
 ## Next phases
 

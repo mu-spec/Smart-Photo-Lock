@@ -665,3 +665,31 @@ WhatsApp must NOT appear unlocked: the challenge comes up right away
 (or the instant Smart App Lock is reachable on devices restricting
 background activity launches). Repeat the off/on cycle rapidly — the
 challenge never doubles up.
+
+---
+
+# Phase 5S — Reboot Recovery
+
+Automated suites: `test/regression/reboot_recovery_test.dart`,
+`test/protection/lock_trigger_test.dart` (5S group).
+
+| # | Scenario | Expected |
+| - | -------- | -------- |
+| 1 | Cold start with a protected foreground | Requirement at the baseline (no transition needed) |
+| 2 | Warm restart with a valid session | Baseline stays quiet |
+| 3 | Cold start with an unprotected foreground | Quiet |
+| 4 | Protected list across a fresh stack over the same DB | Protected app challenges; others allow |
+| 5 | Grace period across the same DB | Restored (30s) |
+| 6 | ACTIVE lockout after reboot | Correct PIN still `AuthLockedOut` |
+| 7 | EXPIRED lockout after reboot | Correct PIN authenticates |
+| 8 | Credentials after reboot | Persisted; correct verifies, wrong fails |
+
+NOTE: 5R test 3 ("wake enforcement without a screen-off stays quiet")
+was updated: it now grants a session first (warm start), because the 5S
+baseline enforcement correctly challenges a cold start with a protected
+foreground.
+
+Device QA: unlock WhatsApp, reboot the phone, open WhatsApp first —
+it opens unlocked (Smart App Lock is not running yet; this is the
+"where Android allows" boundary). Now open Smart App Lock — from this
+moment WhatsApp is locked again: returning to it challenges.
