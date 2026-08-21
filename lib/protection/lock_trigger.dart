@@ -96,8 +96,13 @@ class LockTrigger {
     // unchallenged. Evaluate the baseline NOW — after a reboot (or any
     // process kill) the session maps are fresh, so a protected
     // foreground with no session challenges immediately; a warm
-    // restart with a valid session stays quiet.
-    await _enforceBaseline();
+    // restart with a valid session stays quiet. The baseline runs on
+    // the SAME ordered queue as transitions, so a transition arriving
+    // during startup can never interleave with (or duplicate) it.
+    _processing = _processing
+        .then((_) => _enforceBaseline())
+        .catchError((Object _) {});
+    await _processing;
   }
 
   /// Phase 5S: evaluates the monitor's baseline foreground exactly once
@@ -141,7 +146,53 @@ class LockTrigger {
     return pending;
   }
 
-  Future<void> _onScreenEvent(Result<ScreenStateEvent> event) async {
+  /// Phase 5Q: serializes ALL processing (transitions, screen events
+  /// and the startup baseline). Rapid switches must evaluate strictly
+  /// in order — an interleaved departure/evaluation could arm a stale
+  /// grace deadline after a re-entry already happened — and a single
+  /// exception must never wedge the pipeline: every link swallows its
+  /// error so the chain always continues (fail-quiet, fail-closed).
+  Future<void> _processing = Future<void>.value();
+
+  void _onChange(ForegroundAppChange change) {
+    _processing = _processing
+        .then((_) => _processChange(change))
+        .catchError((Object _) {});
+  }
+
+  /// Screen events share the ordered queue with transitions.
+  void _onScreenEvent(Result<ScreenStateEvent> event) {
+    _processing = _processing
+        .then((_) => _processScreenEvent(event))
+        .catchError((Object _) {});
+  }
+
+  Future<void> _processChange(ForegroundAppChange change) async {
+    // Phase 5J/5L: leaving the previous package applies the grace
+    // policy (the controller's revokeAccess arms the deadline when a
+    // grace is configured, or revokes instantly).
+    final String? previous = _previousPackage;
+    _previousPackage = change.packageName;
+    if (previous != null && previous != change.packageName) {
+      await _controller.revokeAccess(previous);
+    }
+
+    final AccessDecision decision =
+        await _controller.evaluate(change.packageName);
+    // Phase 5E: `challenge` requires the PIN; `deny` (authentication in
+    // an active lockout) ALSO emits a requirement — the protected app
+    // stays blocked behind the challenge surface, whose unlock screen
+    // shows the cooldown countdown. Only `allow` passes silently.
+    if (decision != AccessDecision.challenge &&
+        decision != AccessDecision.deny) {
+      return;
+    }
+    _lockRequired.add(
+      LockRequired(packageName: change.packageName, at: _now()),
+    );
+  }
+
+  Future<void> _processScreenEvent(Result<ScreenStateEvent> event) async {
     if (event.isFailure) {
       return; // fail-quiet
     }
@@ -173,51 +224,5 @@ class LockTrigger {
         LockRequired(packageName: current, at: _now()),
       );
     }
-  }
-
-  /// True while the pipeline is running (audit: lets other components —
-  /// e.g. the diagnostics screen — know whether detection is owned by
-  /// the production lock flow).
-  bool get isRunning => _started;
-
-  /// Permanently tears the pipeline down.
-  Future<void> dispose() async {
-    await stop();
-    await _lockRequired.close();
-  }
-
-  /// Phase 5Q: serializes transition processing. Rapid switches
-  /// (protected → unprotected → protected) must evaluate strictly in
-  /// order — an interleaved departure/evaluation could otherwise arm a
-  /// stale grace deadline AFTER a re-entry already happened.
-  Future<void> _processing = Future<void>.value();
-
-  void _onChange(ForegroundAppChange change) {
-    _processing = _processing.then((_) => _processChange(change));
-  }
-
-  Future<void> _processChange(ForegroundAppChange change) async {
-    // Phase 5J/5L: leaving the previous package applies the grace
-    // policy (the controller's revokeAccess arms the deadline when a
-    // grace is configured, or revokes instantly).
-    final String? previous = _previousPackage;
-    _previousPackage = change.packageName;
-    if (previous != null && previous != change.packageName) {
-      await _controller.revokeAccess(previous);
-    }
-
-    final AccessDecision decision =
-        await _controller.evaluate(change.packageName);
-    // Phase 5E: `challenge` requires the PIN; `deny` (authentication in
-    // an active lockout) ALSO emits a requirement — the protected app
-    // stays blocked behind the challenge surface, whose unlock screen
-    // shows the cooldown countdown. Only `allow` passes silently.
-    if (decision != AccessDecision.challenge &&
-        decision != AccessDecision.deny) {
-      return;
-    }
-    _lockRequired.add(
-      LockRequired(packageName: change.packageName, at: _now()),
-    );
   }
 }

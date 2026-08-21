@@ -414,6 +414,7 @@ void main() {
 
     // Rapid leave/return INSIDE the grace: no new requirement.
     a11y.emitForegroundPackage('com.example.launcher');
+    await pumpEventQueue(); // departure processed at 9:00:00
     clock = DateTime(2026, 8, 21, 9, 0, 10);
     a11y.emitForegroundPackage('com.whatsapp');
     await pumpEventQueue();
@@ -421,6 +422,7 @@ void main() {
 
     // Leave again; return AFTER the grace: a new requirement.
     a11y.emitForegroundPackage('com.example.launcher');
+    await pumpEventQueue(); // departure processed at 9:00:10
     clock = DateTime(2026, 8, 21, 9, 1);
     a11y.emitForegroundPackage('com.whatsapp');
     await pumpEventQueue();

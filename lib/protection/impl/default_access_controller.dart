@@ -5,7 +5,7 @@ import '../access_controller.dart';
 import '../lock_session.dart';
 import '../protected_app_matcher.dart';
 
-/// Phase 5D/5E implementation of [AccessController].
+/// Phase 5D/5E/5H/5J/5K/5L implementation of [AccessController].
 ///
 /// Decides how to handle an app becoming active:
 ///
@@ -101,12 +101,20 @@ class DefaultAccessController implements AccessController {
       grantedAt: _now(),
     );
     _sessions[packageName] = session;
+    // A fresh grant supersedes any pending grace deadline for this
+    // package — the new unlock window starts clean.
+    _graceUntil.remove(packageName);
     return Result.success(session);
   }
 
   /// Phase 5H: the session currently open for [packageName], or null
   /// (diagnostics and tests).
   LockSession? sessionFor(String packageName) => _sessions[packageName];
+
+  /// Phase 5L: the grace deadline for [packageName] (departure +
+  /// configured grace), or null when no grace clock is running for it
+  /// (diagnostics and tests).
+  DateTime? departureAtFor(String packageName) => _graceUntil[packageName];
 
   @override
   Future<Result<void>> revokeAccess(String packageName) async {

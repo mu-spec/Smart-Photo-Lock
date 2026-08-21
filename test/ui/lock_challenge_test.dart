@@ -1021,6 +1021,7 @@ void main() {
     // 30-second grace: no challenge may appear.
     for (int i = 0; i < 3; i++) {
       a11y.emitForegroundPackage('com.example.launcher');
+      await tester.pumpAndSettle(); // departure processed at the old clock
       clock = clock.add(const Duration(seconds: 10));
       a11y.emitForegroundPackage('com.whatsapp');
       await tester.pumpAndSettle();
@@ -1031,6 +1032,7 @@ void main() {
     // One more leave, then a return past the grace: the challenge
     // returns — exactly once, never stacked.
     a11y.emitForegroundPackage('com.example.launcher');
+    await tester.pumpAndSettle(); // departure processed at the old clock
     clock = clock.add(const Duration(seconds: 40));
     a11y.emitForegroundPackage('com.whatsapp');
     await tester.pumpAndSettle();

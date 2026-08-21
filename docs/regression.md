@@ -771,3 +771,38 @@ window lands, the challenge appears inside Smart App Lock itself
 launches the challenge presents the instant Smart App Lock becomes
 visible. The watcher foreground service (background detection while
 Smart App Lock is not running) is a later phase.
+
+---
+
+# Phase 5 — Deep Audit (5A–5U)
+
+Full-stack audit of every Phase 5 layer: interfaces, implementers,
+test fakes, the host state machine, the trigger queue, controller
+semantics, Kotlin bridges, and every test's timing assumptions.
+
+## Findings fixed
+
+| # | Severity | Finding | Fix |
+| - | -------- | ------- | --- |
+| 1 | High | **Queue-wedge risk**: the 5Q processing chain (`_processing.then(...)`) had no error handling — one throwing transition would error the chain and silently skip ALL subsequent transitions (fail-open). | Every chain link now swallows its error (`.catchError`), so the pipeline always continues (fail-closed). |
+| 2 | Medium | **Ordering gaps**: screen events (5K/5R) and the startup baseline (5S) ran OUTSIDE the ordered queue, so a departure could interleave with a screen-off or a startup transition. | Screen events and the baseline now flow through the same serialized queue. |
+| 3 | High | **Compile break**: `process_recreation_test.dart` called `departureAtFor(...)`, which did not exist on the adopted controller. | Added the `departureAtFor` diagnostic getter (mirrors `sessionFor`). |
+| 4 | Medium | **Stale grace deadline after grant**: `grantAccess` left a pending grace deadline for the package, which a later evaluation could consume. | A fresh grant now clears the package's grace deadline. |
+| 5 | High | **Test-logic bug (3 suites)**: the "return past the grace" tests emitted the departure and the return in the same tick — the departure re-armed a FRESH grace, so the return was inside it and the challenge assertion could never hold. | Each test now flushes the departure at the earlier clock before advancing time (real semantics). |
+
+## Verified correct (spot-checked layer by layer)
+
+- Interface contracts: all 8 interfaces fully implemented by every
+  production impl AND every test fake (including `launchApp`,
+  `getForegroundPackage`, `setSecureWindow`, `events`).
+- Host state machine: synchronous `_presenting` claim, re-queue vs
+  re-present vs defer branches, double-pop guards, secure-window
+  arming/clearing — traced through all 5M/5N/5O/5P/5Q/5R/5T paths.
+- Trigger: FIFO queue, previous-package seeding, baseline enforcement,
+  screen-off/wake handling, drain-on-stop.
+- Controller: grace arming/consumption/shrink-clamp/zero-revoke,
+  inactivity refresh, pruning, lockout deny, fail-closed unknown.
+- Kotlin: ScreenStateChannel registration flags + unregister guard;
+  OverlayStatusChannel FLAG_SECURE on the UI thread; usage-stats probe
+  total/fail-closed; accessibility sink thread-safe.
+- 5H tests: single controller with a mutable clock (verified).

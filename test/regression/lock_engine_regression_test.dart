@@ -351,6 +351,7 @@ void main() {
 
     // Leave and return 10s later: inside grace, no challenge.
     a11y.emitForegroundPackage('com.example.launcher');
+    await tester.pumpAndSettle(); // departure processed at 9:00:00
     clock = DateTime(2026, 8, 21, 9, 0, 10);
     a11y.emitForegroundPackage('com.whatsapp');
     await tester.pumpAndSettle();
@@ -359,6 +360,7 @@ void main() {
 
     // Leave again; return past the grace: challenge.
     a11y.emitForegroundPackage('com.example.launcher');
+    await tester.pumpAndSettle(); // departure processed at 9:00:10
     clock = DateTime(2026, 8, 21, 9, 1);
     a11y.emitForegroundPackage('com.whatsapp');
     await tester.pumpAndSettle();
