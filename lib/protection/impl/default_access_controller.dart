@@ -134,11 +134,26 @@ class DefaultAccessController implements AccessController {
 
   @override
   void setGracePeriod(Duration period) {
-    _gracePeriod = period.isNegative ? Duration.zero : period;
-    // A shrunk (or zeroed) grace invalidates any pending grace clocks
-    // that now outlive it.
-    if (_gracePeriod == Duration.zero) {
+    final Duration clamped = period.isNegative ? Duration.zero : period;
+    _gracePeriod = clamped;
+    if (clamped == Duration.zero) {
+      // Immediate: every package currently AWAY (pending grace clock)
+      // re-locks NOW — its session dies with its deadline instead of
+      // lingering on the inactivity window.
+      for (final String package in _graceUntil.keys) {
+        _sessions.remove(package);
+      }
       _graceUntil.clear();
+      return;
+    }
+    // Audit fix: a SHRUNKEN grace invalidates the portion of any
+    // pending deadline that now outlives it — clamp each deadline to
+    // now + the new grace, so the new policy takes effect immediately.
+    final DateTime cap = _now().add(clamped);
+    for (final MapEntry<String, DateTime> entry in _graceUntil.entries) {
+      if (entry.value.isAfter(cap)) {
+        _graceUntil[entry.key] = cap;
+      }
     }
   }
 
@@ -146,6 +161,10 @@ class DefaultAccessController implements AccessController {
   Map<String, LockSession> get activeSessions =>
       Map<String, LockSession>.unmodifiable(_sessions);
 
-  /// Clears every active unlock window (manual lock in a later phase).
-  void clearSessions() => _sessions.clear();
+  /// Clears every active unlock window AND grace deadline (manual lock
+  /// in a later phase).
+  void clearSessions() {
+    _sessions.clear();
+    _graceUntil.clear();
+  }
 }

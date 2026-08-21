@@ -426,4 +426,79 @@ class _FailingRepository implements ProtectedAppsRepository {
       AccessDecision.challenge,
     );
   });
+
+  test('shrinking the grace clamps pending deadlines (Phase 5L audit)',
+      () async {
+    await protect('com.whatsapp');
+    DateTime clock = DateTime(2026, 8, 21, 9, 0);
+    final DefaultAccessController controller = DefaultAccessController(
+      matcher: container.protectedAppMatcher,
+      auth: container.auth,
+      now: () => clock,
+    );
+    controller.setGracePeriod(const Duration(minutes: 5));
+    await controller.grantAccess('com.whatsapp');
+    await controller.revokeAccess('com.whatsapp'); // deadline: 9:05:00
+
+    // One minute later the user shrinks the grace to 30 seconds: the
+    // pending deadline clamps to 9:01:30.
+    clock = DateTime(2026, 8, 21, 9, 1);
+    controller.setGracePeriod(const Duration(seconds: 30));
+
+    // 20 seconds after the shrink: still inside the clamped grace.
+    clock = DateTime(2026, 8, 21, 9, 1, 20);
+    expect(
+      await controller.evaluate('com.whatsapp'),
+      AccessDecision.allow,
+    );
+
+    // A fresh departure under the new grace, then a return past it.
+    await controller.revokeAccess('com.whatsapp');
+    clock = DateTime(2026, 8, 21, 9, 2);
+    expect(
+      await controller.evaluate('com.whatsapp'),
+      AccessDecision.challenge,
+    );
+  });
+
+  test('shrinking the grace to zero kills pending deadlines '
+      '(Phase 5L audit)', () async {
+    await protect('com.whatsapp');
+    DateTime clock = DateTime(2026, 8, 21, 9, 0);
+    final DefaultAccessController controller = DefaultAccessController(
+      matcher: container.protectedAppMatcher,
+      auth: container.auth,
+      now: () => clock,
+    );
+    controller.setGracePeriod(const Duration(minutes: 5));
+    await controller.grantAccess('com.whatsapp');
+    await controller.revokeAccess('com.whatsapp');
+
+    controller.setGracePeriod(Duration.zero); // immediate
+    expect(
+      await controller.evaluate('com.whatsapp'),
+      AccessDecision.challenge,
+    );
+  });
+
+  test('clearSessions clears grace deadlines too (Phase 5L audit)',
+      () async {
+    await protect('com.whatsapp');
+    DateTime clock = DateTime(2026, 8, 21, 9, 0);
+    final DefaultAccessController controller = DefaultAccessController(
+      matcher: container.protectedAppMatcher,
+      auth: container.auth,
+      now: () => clock,
+    );
+    controller.setGracePeriod(const Duration(minutes: 5));
+    await controller.grantAccess('com.whatsapp');
+    await controller.revokeAccess('com.whatsapp');
+
+    controller.clearSessions();
+    expect(controller.sessionFor('com.whatsapp'), isNull);
+    expect(
+      await controller.evaluate('com.whatsapp'),
+      AccessDecision.challenge,
+    );
+  });
 }

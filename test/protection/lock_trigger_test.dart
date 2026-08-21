@@ -243,4 +243,40 @@ void main() {
 
     await trigger.stop();
   });
+
+  // -- grace periods (Phase 5L) ----------------------------------------------
+
+  test('with a grace period, leaving keeps the session instead of '
+      'revoking it', () async {
+    await protect('com.whatsapp');
+    final DefaultAccessController controller =
+        container.accessController as DefaultAccessController;
+    controller.setGracePeriod(const Duration(seconds: 30));
+
+    await trigger.start();
+    final StaticInstalledAppsService installed =
+        container.installedAppsService as StaticInstalledAppsService;
+
+    // First activation: no session -> challenge requirement.
+    installed.foregroundPackage = 'com.whatsapp';
+    await container.foregroundMonitor.probe();
+    await Future<void>.delayed(Duration.zero);
+    expect(requirements, hasLength(1));
+
+    // Unlock, then LEAVE: the grace policy keeps the session alive.
+    await controller.grantAccess('com.whatsapp');
+    installed.foregroundPackage = 'com.example.launcher';
+    await container.foregroundMonitor.probe();
+    await Future<void>.delayed(Duration.zero);
+    expect(controller.sessionFor('com.whatsapp'), isNotNull);
+
+    // Return within grace: allowed, no new requirement.
+    installed.foregroundPackage = 'com.whatsapp';
+    await container.foregroundMonitor.probe();
+    await Future<void>.delayed(Duration.zero);
+    expect(requirements, hasLength(1));
+    expect(controller.sessionFor('com.whatsapp'), isNotNull);
+
+    await trigger.stop();
+  });
 }

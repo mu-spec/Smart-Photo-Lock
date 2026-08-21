@@ -504,3 +504,30 @@ NOTE (5H audit fix): the 5H controller tests previously time-travelled
 across FRESH controller instances whose session maps were empty — the
 refresh and expiry assertions now use ONE controller with a mutable
 clock, testing what they claim.
+
+---
+
+# Phase 5L — Audit Hardening
+
+Reconciliation audit after both implementations of 5L converged on
+`origin/main` (the pushed implementation was adopted; these fixes close
+the gaps found in review).
+
+| # | Scenario | Expected |
+| - | -------- | -------- |
+| 1 | Shrink grace while a deadline is pending (5m → 30s) | Deadline clamps to now+30s; return past it challenges |
+| 2 | Shrink grace to zero while away | The away session re-locks immediately (no lingering on the inactivity window) |
+| 3 | clearSessions with a pending grace | Session AND deadline cleared; evaluate challenges |
+| 4 | Trigger layer with grace | Leaving keeps the session; returning within grace emits no new requirement |
+
+Notes:
+
+- `setGracePeriod` previously only cleared pending deadlines when
+  zeroed — a shrunk grace left stale deadlines alive. Now shrunk
+  deadlines clamp, and zeroing also revokes the sessions that were
+  "away" under those deadlines.
+- `clearSessions` (manual lock) now clears grace deadlines as well —
+  previously a stale deadline could survive it.
+- A trigger-layer grace test was added (the full-app widget test covers
+  the same path end to end; this one pins the controller assertions at
+  the trigger layer).
