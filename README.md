@@ -565,9 +565,9 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | ------- | ----- |
 | Application ID | `com.smartapplock.app` (debug builds: `com.smartapplock.app.debug`) |
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
-| AGP / Gradle / Kotlin | 9.1.0 / 9.3.1 / built-in (Flutter-managed, `android.builtInKotlin=true`; AGP legacy-DSL compat `android.newDsl=false` until the Flutter tool finishes its new-DSL migration) |
+| AGP / Gradle / Kotlin | 9.1.0 / 9.3.1 / built-in Kotlin with KGP 2.2.20 runtime override (`android.builtInKotlin=true`; AGP legacy-DSL compat `android.newDsl=false` until the Flutter tool finishes its new-DSL migration) |
 | Java | 17 |
-| versionName / versionCode | `0.34.18` / `58` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.34.19` / `59` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM), `local_auth` (biometrics) |
 
 ## Prerequisites (on your machine)

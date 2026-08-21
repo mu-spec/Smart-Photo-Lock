@@ -20,9 +20,11 @@ can be verified without compiling:
      PACKAGE_USAGE_STATS directly under <manifest> and no variant
      manifest removes it (Phase 4 device-QA guard).
  12. Built-in Kotlin migration: android.builtInKotlin=true (Kotlin via
-     Flutter's embedded toolchain — no KGP application/pin) and
-     android.newDsl=false (Flutter 3.47 compatibility: the Flutter
-     Gradle Plugin still requires the legacy AGP DSL surface).
+     AGP's built-in support — no KGP application/pin) with a buildscript
+     classpath override raising the runtime KGP to 2.2.20 (AGP 9.1
+     bundles 2.2.10, below Flutter's minimum), and android.newDsl=false
+     (Flutter 3.47 compatibility: the Flutter Gradle Plugin still
+     requires the legacy AGP DSL surface).
 
 Exit code 0 = all checks green.
 Usage:  python3 tool/verify_structure.py
@@ -343,7 +345,11 @@ def run():
 
     # 12. Built-in Kotlin migration (Flutter 3.47): the app must not apply
     # or pin the Kotlin Gradle Plugin — future Flutter versions will fail
-    # builds that do — and the built-in Kotlin flag must be enabled.
+    # builds that do — and the built-in Kotlin flags must be enabled. AGP
+    # 9.1 bundles KGP 2.2.10 as its built-in-Kotlin runtime, below
+    # Flutter's minimum of 2.2.20: the top-level build file must override
+    # the runtime KGP via the buildscript classpath (the documented AGP
+    # mechanism) WITHOUT applying the plugin.
     gradle_props = open(
         os.path.join(ROOT, "android/gradle.properties")
     ).read()
@@ -352,6 +358,9 @@ def run():
     ).read()
     settings_gradle = open(
         os.path.join(ROOT, "android/settings.gradle.kts")
+    ).read()
+    root_gradle = open(
+        os.path.join(ROOT, "android/build.gradle.kts")
     ).read()
     built_in_problems = []
     if "android.builtInKotlin=true" not in gradle_props:
@@ -366,6 +375,13 @@ def run():
         built_in_problems.append("app/build.gradle.kts: kotlin-android plugin still applied")
     if "org.jetbrains.kotlin.android" in settings_gradle:
         built_in_problems.append("settings.gradle.kts: Kotlin Gradle Plugin still pinned")
+    if "kotlin-gradle-plugin:2.2.20" not in root_gradle:
+        built_in_problems.append(
+            "build.gradle.kts: KGP runtime override missing "
+            "(AGP 9.1 built-in Kotlin bundles KGP 2.2.10, below Flutter's "
+            "2.2.20 minimum — add classpath(\"org.jetbrains.kotlin:"
+            "kotlin-gradle-plugin:2.2.20\") to the buildscript block)"
+        )
     check("built-in Kotlin migration applied (no KGP application/pin)",
           not built_in_problems, "; ".join(built_in_problems))
 
