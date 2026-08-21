@@ -194,14 +194,17 @@ void main() {
         (WidgetTester tester) async {
       installed.foregroundPackage = 'com.example.chat';
       await monitor.start();
-      await tester.pump(); // baseline probe already ran
-      await pumpEventQueue();
+      // Zero-duration pump: flushes the microtasks that deliver the
+      // baseline probe's event WITHOUT advancing the periodic timer
+      // (pumpEventQueue would hang here — its Future.delayed awaits a
+      // real timer that the fake-async test zone never fires).
+      await tester.pump();
       expect(changes, hasLength(1));
       expect(installed.getForegroundPackageCalls, 1);
 
       installed.foregroundPackage = 'com.example.maps';
-      await tester.pump(monitor.pollInterval); // next poll tick
-      await pumpEventQueue();
+      await tester.pump(monitor.pollInterval); // next poll tick fires
+      await tester.pump(); // flush the tick's event delivery
       expect(changes, hasLength(2));
       expect(installed.getForegroundPackageCalls, 2);
 
@@ -252,8 +255,7 @@ void main() {
         (WidgetTester tester) async {
       installed.foregroundPackage = 'com.example.chat';
       await monitor.start();
-      await tester.pump();
-      await pumpEventQueue();
+      await tester.pump(); // flush the baseline event (fake-async safe)
       expect(changes, hasLength(1));
 
       // Dispose directly from the running state: the periodic timer must

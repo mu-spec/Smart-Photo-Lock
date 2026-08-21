@@ -868,3 +868,24 @@ Fixes:
   working; double dispose is safe; start-after-dispose throws; and a
   testWidgets proof that disposing from the running state cancels the
   periodic timer (framework pending-timer check) with no further polls.
+
+---
+
+# Phase 5 — Fix #2B (foreground monitor hang)
+
+Exact cause of the hang, finally pinned:
+
+`pumpEventQueue()` in this file resolves to **test_api's** helper
+(flutter_test re-exports it from `package:test_api/scaffolding.dart`),
+whose loop awaits `Future<void>.delayed(Duration.zero)` — a REAL
+timer-based await. Inside `testWidgets` the test body runs in the
+FakeAsync zone, where real timers only fire when the fake clock is
+advanced by the test framework. Nothing advanced it during that await,
+so the lifecycle `testWidgets` hung until the test timeout (and the
+aborted pump left the follow-on "Guarded function conflict").
+
+Fix: inside the two `testWidgets` bodies the flush is now
+`await tester.pump()` (zero-duration) — it flushes the microtasks that
+deliver broadcast-stream events WITHOUT advancing the periodic poll
+timer, keeping the probe-count assertions exact. The plain `test()`
+bodies keep `pumpEventQueue()` (real event loop — safe there).
