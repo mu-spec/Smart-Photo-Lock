@@ -9,6 +9,13 @@
 // runtime WITHOUT applying the kotlin-android plugin: built-in Kotlin
 // stays the compiler path, and the effective Kotlin becomes 2.2.20.
 buildscript {
+    // The buildscript classpath resolves BEFORE the allprojects block
+    // below, so it needs its own repositories.
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
     dependencies {
         classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.2.20")
     }

@@ -382,6 +382,13 @@ def run():
             "2.2.20 minimum — add classpath(\"org.jetbrains.kotlin:"
             "kotlin-gradle-plugin:2.2.20\") to the buildscript block)"
         )
+    if "gradlePluginPortal()" not in root_gradle:
+        built_in_problems.append(
+            "build.gradle.kts: buildscript repositories missing "
+            "(the KGP classpath resolves before allprojects, so the "
+            "buildscript block needs google()/mavenCentral()/"
+            "gradlePluginPortal())"
+        )
     check("built-in Kotlin migration applied (no KGP application/pin)",
           not built_in_problems, "; ".join(built_in_problems))
 
