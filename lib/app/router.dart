@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../ui/screens/diagnostics/detection_diagnostics_screen.dart';
 import '../ui/screens/pattern/pattern_change_screen.dart';
 import '../ui/screens/pattern/pattern_setup_screen.dart';
 import '../ui/screens/pattern/pattern_unlock_screen.dart';
@@ -51,6 +52,10 @@ abstract final class RouteNames {
   /// Centralized permission setup (Phase 4E): Enabled / Action Required
   /// for every required capability.
   static const String permissionSetup = '/permissions';
+
+  /// Detection diagnostics (Phase 5B): temporary developer screen that
+  /// verifies foreground detection on a device.
+  static const String detectionDiagnostics = '/diagnostics/detection';
 }
 
 /// Typed route generator consumed by `MaterialApp.onGenerateRoute`.
@@ -119,6 +124,12 @@ abstract final class AppRouter {
         return MaterialPageRoute<bool>(
           settings: settings,
           builder: (BuildContext context) => const PermissionSetupScreen(),
+        );
+      case RouteNames.detectionDiagnostics:
+        return MaterialPageRoute<dynamic>(
+          settings: settings,
+          builder: (BuildContext context) =>
+              const DetectionDiagnosticsScreen(),
         );
       default:
         return null;

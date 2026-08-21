@@ -1,9 +1,13 @@
+import 'dart:typed_data';
+
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:smart_app_lock/data/models/app_entry.dart';
 import 'package:smart_app_lock/protection/foreground_app_monitor.dart';
 import 'package:smart_app_lock/services/impl/static_accessibility_lock_service.dart';
 import 'package:smart_app_lock/services/impl/static_installed_apps_service.dart';
+import 'package:smart_app_lock/services/installed_apps_service.dart';
+import 'package:smart_app_lock/utilities/result.dart';
 
 /// Phase 5A: foreground detection merges the usage-stats primary path
 /// (polled) with the accessibility fallback (events), emits ONLY real
@@ -127,6 +131,46 @@ void main() {
     });
   });
 
+  group('diagnostic counters', () {
+    test('probes, nulls, accessibility events and failures are counted',
+        () async {
+      installed.foregroundPackage = null;
+      await monitor.probe();
+      expect(monitor.probeCount, 1);
+      expect(monitor.nullProbeCount, 1);
+
+      installed.foregroundPackage = 'com.example.chat';
+      await monitor.probe();
+      expect(monitor.probeCount, 2);
+      expect(monitor.nullProbeCount, 1);
+
+      accessibility.emitForegroundPackage('com.example.maps');
+      await Future<void>.delayed(Duration.zero);
+      expect(monitor.accessibilityEventCount, 1);
+      expect(monitor.failureCount, 0);
+    });
+
+    test('failed probes increment the failure counter, not detection',
+        () async {
+      final _FailingInstalledAppsService failing =
+          _FailingInstalledAppsService();
+      final ForegroundAppMonitor failingMonitor = ForegroundAppMonitor(
+        installedApps: failing,
+        accessibility: accessibility,
+        now: () => DateTime(2026, 8, 21, 9, 0),
+      );
+      final List<ForegroundAppChange> changes = <ForegroundAppChange>[];
+      failingMonitor.changes.listen(changes.add);
+
+      await failingMonitor.probe();
+      expect(failingMonitor.probeCount, 1);
+      expect(failingMonitor.failureCount, 1);
+      expect(changes, isEmpty);
+
+      await failingMonitor.dispose();
+    });
+  });
+
   group('lifecycle', () {
     testWidgets('start polls periodically; stop cancels the timer',
         (WidgetTester tester) async {
@@ -155,4 +199,32 @@ void main() {
       await monitor.stop();
     });
   });
+}
+
+/// [InstalledAppsService] whose foreground probe always fails — used to
+/// prove the monitor's fail-quiet behavior and failure counter.
+class _FailingInstalledAppsService implements InstalledAppsService {
+  @override
+  Future<Result<List<AppEntry>>> getInstalledApps({
+    bool includeSystemApps = false,
+  }) async =>
+      Result.success(const <AppEntry>[]);
+
+  @override
+  Future<Result<Uint8List?>> getAppIcon(String packageName) async =>
+      Result.success(null);
+
+  @override
+  Future<Result<List<AppEntry>>> getRecentlyUsedApps({int limit = 10}) async =>
+      Result.success(const <AppEntry>[]);
+
+  @override
+  Future<Result<bool>> hasUsageAccess() async => Result.success(true);
+
+  @override
+  Future<Result<void>> requestUsageAccess() async => Result.success(null);
+
+  @override
+  Future<Result<String?>> getForegroundPackage() async =>
+      Result.failure(StateError('backend unavailable'));
 }

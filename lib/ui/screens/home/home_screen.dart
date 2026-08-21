@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../app/router.dart';
 import '../../../design_system/design_system.dart';
 
 /// Home tab — welcome header, protection status, and quick access to the
@@ -63,6 +64,39 @@ class HomeScreen extends StatelessWidget {
                 onTap: () => onNavigate?.call(4),
               ),
             ],
+          ),
+          const SizedBox(height: DsSpacing.xl),
+          const DsSectionTitle('Developer'),
+          const SizedBox(height: DsSpacing.md),
+          // Phase 5B: temporary diagnostics entry — verifies foreground
+          // detection on a device. Removed once the lock engine lands.
+          DsCard(
+            key: const Key('quick_access_diagnostics'),
+            onTap: () => Navigator.of(context)
+                .pushNamed(RouteNames.detectionDiagnostics),
+            child: Row(
+              children: <Widget>[
+                Icon(Icons.terminal, color: Theme.of(context).dsColors.primary),
+                const SizedBox(width: DsSpacing.md),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(
+                        'Detection diagnostics',
+                        style: TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                      SizedBox(height: DsSpacing.xxs),
+                      Text('Verify foreground app detection'),
+                    ],
+                  ),
+                ),
+                Icon(
+                  Icons.chevron_right,
+                  color: Theme.of(context).dsColors.textSecondary,
+                ),
+              ],
+            ),
           ),
           const SizedBox(height: DsSpacing.xl),
           const DsSectionTitle('Next up'),

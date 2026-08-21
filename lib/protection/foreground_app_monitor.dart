@@ -86,8 +86,26 @@ class ForegroundAppMonitor {
   /// Foreground transitions (deduplicated per package across sources).
   Stream<ForegroundAppChange> get changes => _controller.stream;
 
+  /// True while detection is running (polling + fallback subscribed).
+  bool get isRunning => _started;
+
   /// The last known foreground package, or null while unknown.
   String? get currentPackage => _current;
+
+  /// Phase 5B diagnostic counters — exposed for the diagnostics screen
+  /// and tests. Read-only for consumers.
+  /// How many usage-stats probes have executed.
+  int probeCount = 0;
+
+  /// How many probes returned null (Usage Access missing or the backend
+  /// reported nothing) — i.e. the primary path currently detects nothing.
+  int nullProbeCount = 0;
+
+  /// How many accessibility window-state events were received.
+  int accessibilityEventCount = 0;
+
+  /// How many probes or events failed (fail-quiet — never fabricated).
+  int failureCount = 0;
 
   /// Starts detection: an immediate probe, periodic usage-stats polls,
   /// and the accessibility fallback subscription.
@@ -106,20 +124,25 @@ class ForegroundAppMonitor {
 
   /// One immediate usage-stats pass (also used on app resume).
   Future<void> probe() async {
+    probeCount++;
     final Result<String?> result =
         await _installedApps.getForegroundPackage();
     if (result.isFailure) {
+      failureCount++;
       return; // fail-quiet
     }
     final String? package = result.valueOrNull;
     if (package == null || package.isEmpty) {
+      nullProbeCount++;
       return; // no usage access / backend unknown — no detection
     }
     _report(package, ForegroundDetectionSource.usageStats);
   }
 
   void _onAccessibilityEvent(Result<String> event) {
+    accessibilityEventCount++;
     if (event.isFailure) {
+      failureCount++;
       return; // fail-quiet
     }
     final String? package = event.valueOrNull;

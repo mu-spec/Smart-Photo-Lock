@@ -845,3 +845,22 @@ ForegroundAppMonitor (protection)
   service (that lands with the watcher phase per capabilities.md).
 - Native code stays total: no `!!`, no throwing checks; the usage-stats
   probe is one defensive loop over the platform list.
+
+## 5B. Detection diagnostics (temporary developer tool)
+
+Verifies 5A on a device before the lock screen is built:
+
+```
+DetectionDiagnosticsScreen (ui/diagnostics)
+  ├─ starts the shared ForegroundAppMonitor on open, stops on close
+  ├─ current foreground package + running/stopped state
+  ├─ path counters (probes / null probes / a11y events / failures)
+  └─ transition log, newest first, source-tagged (usage | a11y)
+```
+
+- Home → Developer → Detection diagnostics (`quick_access_diagnostics`).
+- `ForegroundAppMonitor` gained read-only diagnostic counters and
+  `isRunning` (Phase 5B). The screen is temporary: it is removed or
+  tucked behind developer settings once the lock engine lands.
+- Test loop on the device: open many other apps, return — each
+  foreground switch is logged with its detection source.

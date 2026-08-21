@@ -55,6 +55,7 @@ implemented yet.
 | 4F | Capability revocation detection (granted → revoked monitoring) | ✅ |
 | 4G | Permission regression (grant / deny / revoke paths) | ✅ |
 | 5A | Foreground app detection (usage-stats primary + accessibility fallback) | ✅ |
+| 5B | Detection diagnostics (on-device verification of foreground transitions) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -568,7 +569,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.2.1 / 9.4.1 / built-in Kotlin with KGP 2.3.20 (settings classpath `apply false` + buildscript; `android.builtInKotlin=true`; AGP legacy-DSL compat `android.newDsl=false` until the Flutter tool finishes its new-DSL migration) |
 | Java | 17 |
-| versionName / versionCode | `0.35.0` / `65` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.35.1` / `66` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM), `local_auth` (biometrics) |
 
 ## Prerequisites (on your machine)
@@ -895,6 +896,29 @@ using the selected Play-compliant architecture. **No lock screen yet.**
   grants and channel errors are ignored; nothing is fabricated.
 - **Shared instance** — `AppContainer.foregroundMonitor` wires the same
   services the UI reads; the lock engine (5B+) owns start/stop.
+
+### Phase 5B ✅ — Detection Diagnostics
+
+Temporary developer tool to verify foreground transitions on a real
+device ("test many applications"):
+
+- **`DetectionDiagnosticsScreen`** (`lib/ui/screens/diagnostics/`) —
+  reachable from Home → Developer → Detection diagnostics. Starts the
+  shared monitor on open, stops it on close.
+- **Live readout** — current foreground package, running/stopped pill,
+  Start/Stop toggle, and path counters: usage-stats probes, null probes
+  (no usage access?), accessibility events, failures (fail-quiet), and
+  the accessibility-service state.
+- **Transition log** — every `ForegroundAppChange` newest-first (capped
+  at 200) with the timestamp and detection source (`usage` / `a11y`).
+- **Monitor diagnostics** — `ForegroundAppMonitor` exposes `isRunning`,
+  `probeCount`, `nullProbeCount`, `accessibilityEventCount`,
+  `failureCount` (Phase 5B).
+- **How to test on the phone:** open other apps (WhatsApp, Maps,
+  Chrome, …), return to Smart App Lock — each app appears as the
+  current foreground package and a log entry. (Detection runs while
+  Smart App Lock is open; background detection arrives with the
+  watcher phase.)
 
 ## Next phases
 

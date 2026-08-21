@@ -236,3 +236,32 @@ Automated suites: `test/protection/foreground_app_monitor_test.dart`,
 How to run: `flutter test`, then `flutter build apk --debug --target-platform=android-arm64`
 for on-device checks (5A has no UI surface yet — detection is exercised
 through the next phase's lock engine).
+
+---
+
+# Phase 5B — Detection Diagnostics
+
+Automated suites: `test/ui/detection_diagnostics_test.dart`,
+`test/protection/foreground_app_monitor_test.dart` (diagnostic-counter
+group).
+
+| # | Scenario | Expected |
+| - | -------- | -------- |
+| 1 | Usage-stats detection while the screen is open | Package shown as current + one log entry per switch |
+| 2 | Accessibility events | Package logged with the `a11y` source pill |
+| 3 | Many apps in sequence | Log accumulates newest-first; header count matches |
+| 4 | Clear action | Log empties and shows the empty state |
+| 5 | Stop/Start toggle | Status pill flips; monitor `isRunning` follows |
+| 6 | Counter readout | Probe/null/event/failure counters reflect the monitor |
+| 7 | No container in scope | Graceful degradation message |
+| 8 | Monitor counters | Probes, nulls, a11y events, failures counted; failed probes never detect |
+| 9 | Timer hygiene | Screen dispose stops the monitor — no pending timers |
+
+Device QA (Phase 5B is explicitly a device exercise):
+
+| # | Test | Steps | Expected |
+| - | ---- | ----- | -------- |
+| 1 | Primary path | Grant Usage Access → open diagnostics → open 5+ different apps, returning each time | Each app logged as `usage` |
+| 2 | Null-probe state | Revoke Usage Access → watch the counters | Null-probe counter climbs; nothing fabricated |
+| 3 | Fallback path | Enable Accessibility → repeat the app-hopping | Events logged as `a11y` |
+| 4 | Both paths | Both capabilities on | Transitions from either path, deduplicated |
