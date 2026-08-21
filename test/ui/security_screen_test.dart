@@ -508,7 +508,12 @@ void main() {
     final AppContainer container = AppContainer.inMemory();
     await pumpWithScope(tester, container: container);
 
-    final Finder setUp = find.text('Set up');
+    // The setup banner also carries a 'Set up' action; scope to the
+    // section title row.
+    final Finder setUp = find.descendant(
+      of: find.byType(DsSectionTitle),
+      matching: find.text('Set up'),
+    );
     await tester.ensureVisible(setUp);
     await tester.pumpAndSettle();
     await tester.tap(setUp);

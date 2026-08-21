@@ -56,8 +56,14 @@ void main() {
   /// Security tab → "Set up" action on the App lock permissions section.
   Future<void> openPermissionSetup(WidgetTester tester) async {
     await openSecurity(tester);
-    await tester.ensureVisible(find.text('Set up'));
-    await tester.tap(find.text('Set up'));
+    // The setup banner also carries a "Set up" action, so scope to the
+    // section title row.
+    final Finder setUp = find.descendant(
+      of: find.byType(DsSectionTitle),
+      matching: find.text('Set up'),
+    );
+    await tester.ensureVisible(setUp);
+    await tester.tap(setUp);
     await tester.pumpAndSettle();
   }
 
@@ -244,8 +250,12 @@ void main() {
 
       // Round-trip through the setup screen: the Security rows refresh
       // when the setup flow returns.
-      await tester.ensureVisible(find.text('Set up'));
-      await tester.tap(find.text('Set up'));
+      final Finder setUp = find.descendant(
+        of: find.byType(DsSectionTitle),
+        matching: find.text('Set up'),
+      );
+      await tester.ensureVisible(setUp);
+      await tester.tap(setUp);
       await tester.pumpAndSettle();
       expect(
         find.text(PermissionSetupScreen.readyCount(3)),
@@ -464,8 +474,12 @@ void main() {
       await container.capabilityMonitor.probe();
       await tester.pumpAndSettle();
 
-      await tester.ensureVisible(find.text('Set up'));
-      await tester.tap(find.text('Set up'));
+      final Finder setUp = find.descendant(
+        of: find.byType(DsSectionTitle),
+        matching: find.text('Set up'),
+      );
+      await tester.ensureVisible(setUp);
+      await tester.tap(setUp);
       await tester.pumpAndSettle();
       expect(
         find.text(PermissionSetupScreen.readyCount(2)),
@@ -504,8 +518,12 @@ void main() {
       expect(find.text(SecurityScreen.revokedTitle), findsOneWidget);
 
       // The setup screen proves the recovered state.
-      await tester.ensureVisible(find.text('Set up'));
-      await tester.tap(find.text('Set up'));
+      final Finder setUp = find.descendant(
+        of: find.byType(DsSectionTitle),
+        matching: find.text('Set up'),
+      );
+      await tester.ensureVisible(setUp);
+      await tester.tap(setUp);
       await tester.pumpAndSettle();
       expect(
         find.text(PermissionSetupScreen.readyCount(3)),

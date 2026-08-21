@@ -60,6 +60,7 @@ class AppContainer {
     required OverlayLockService overlayService,
     required this.capabilityMonitor,
     BiometricService? biometricsOverride,
+    PreferencesStore? preferencesOverride,
   })  : _keyValueStore = keyValueStore,
         _database = database,
         secretStore = secretStore,
@@ -67,7 +68,7 @@ class AppContainer {
         accessibility = accessibilityService,
         overlay = overlayService {
     settingsCipher = AesGcmSettingsCipher(secretStore);
-    preferences = PreferencesStoreImpl(_keyValueStore);
+    preferences = preferencesOverride ?? PreferencesStoreImpl(_keyValueStore);
     protectedApps = ProtectedAppsRepositoryImpl(_database);
     securitySettings = SecuritySettingsRepositoryImpl(
       _database,
@@ -111,6 +112,10 @@ class AppContainer {
         MethodChannelAccessibilityLockService();
     final OverlayLockService overlayService =
         MethodChannelOverlayLockService();
+    // The monitor records grant history through the SAME preferences
+    // store the UI reads — built first so both share one instance.
+    final PreferencesStore preferences =
+        PreferencesStoreImpl(SharedPreferencesKeyValueStore(prefs));
     return AppContainer._(
       keyValueStore: SharedPreferencesKeyValueStore(prefs),
       database: database,
@@ -122,7 +127,10 @@ class AppContainer {
         hasUsageAccess: installedAppsService.hasUsageAccess,
         isAccessibilityEnabled: accessibilityService.isServiceEnabled,
         canDrawOverlays: overlayService.canDrawOverlays,
+        markEverGranted: (CapabilityKind kind) =>
+            preferences.markCapabilityEverGranted(kind.name),
       ),
+      preferencesOverride: preferences,
     );
   }
 
@@ -152,8 +160,10 @@ class AppContainer {
     final OverlayLockService overlayService = StaticOverlayLockService(
       overlayGranted: overlayGranted,
     );
+    final KeyValueStore keyValueStore = InMemoryKeyValueStore();
+    final PreferencesStore preferences = PreferencesStoreImpl(keyValueStore);
     return AppContainer._(
-      keyValueStore: InMemoryKeyValueStore(),
+      keyValueStore: keyValueStore,
       database: InMemoryLocalDatabase(),
       secretStore: InMemorySecretStore(),
       installedAppsService: installedAppsService,
@@ -163,8 +173,11 @@ class AppContainer {
         hasUsageAccess: installedAppsService.hasUsageAccess,
         isAccessibilityEnabled: accessibilityService.isServiceEnabled,
         canDrawOverlays: overlayService.canDrawOverlays,
+        markEverGranted: (CapabilityKind kind) =>
+            preferences.markCapabilityEverGranted(kind.name),
       ),
       biometricsOverride: biometrics,
+      preferencesOverride: preferences,
     );
   }
 

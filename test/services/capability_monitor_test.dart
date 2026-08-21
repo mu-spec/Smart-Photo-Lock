@@ -250,6 +250,72 @@ void main() {
     });
   });
 
+  group('CapabilityMonitor grant history', () {
+    test('granted observations record history via the mark callback',
+        () async {
+      final List<CapabilityKind> marked = <CapabilityKind>[];
+      final CapabilityMonitor m = CapabilityMonitor(
+        hasUsageAccess: () async => Result.success(true),
+        isAccessibilityEnabled: () async => Result.success(true),
+        canDrawOverlays: () async => Result.success(false),
+        markEverGranted: (CapabilityKind kind) async => marked.add(kind),
+        now: fakeNow,
+      );
+
+      await m.probe();
+      expect(
+        marked,
+        containsAll(<CapabilityKind>[
+          CapabilityKind.usageAccess,
+          CapabilityKind.accessibility,
+        ]),
+      );
+      // A not-granted capability is never marked as ever-granted.
+      expect(marked, isNot(contains(CapabilityKind.overlay)));
+
+      await m.probe(); // idempotent: granted kinds marked again
+      expect(
+        marked
+            .where((CapabilityKind k) => k == CapabilityKind.usageAccess),
+        hasLength(2),
+      );
+
+      await m.dispose();
+    });
+
+    test('a failing history recorder never disturbs detection',
+        () async {
+      bool failRecorder = false;
+      final Map<CapabilityKind, bool> state = <CapabilityKind, bool>{
+        CapabilityKind.overlay: true,
+      };
+      final CapabilityMonitor m = CapabilityMonitor(
+        hasUsageAccess: () async => Result.success(true),
+        isAccessibilityEnabled: () async => Result.success(true),
+        canDrawOverlays: () async =>
+            Result.success(state[CapabilityKind.overlay]!),
+        markEverGranted: (CapabilityKind kind) async {
+          if (failRecorder) {
+            throw StateError('history store unavailable');
+          }
+        },
+        now: fakeNow,
+      );
+      final List<CapabilityChange> changes = <CapabilityChange>[];
+      m.changes.listen(changes.add);
+
+      failRecorder = true;
+      await m.probe(); // recorder throws — detection must be unaffected
+      state[CapabilityKind.overlay] = false;
+      await m.probe();
+      await pumpEventQueue();
+      expect(changes, hasLength(1));
+      expect(changes.single.kind, CapabilityKind.overlay);
+
+      await m.dispose();
+    });
+  });
+
   group('CapabilityMonitor lifecycle', () {
     CapabilityMonitor monitor() => CapabilityMonitor(
           hasUsageAccess: () async => Result.success(true),

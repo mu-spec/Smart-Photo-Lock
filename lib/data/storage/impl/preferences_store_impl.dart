@@ -47,5 +47,14 @@ class PreferencesStoreImpl implements PreferencesStore {
       _store.setString(AppPrefKeys.lastActiveProfileId, profileId);
 
   @override
+  Future<bool> wasCapabilityEverGranted(String kindName) async =>
+      await _store.getBool(AppPrefKeys.capabilityEverGranted(kindName)) ??
+      false;
+
+  @override
+  Future<void> markCapabilityEverGranted(String kindName) =>
+      _store.setBool(AppPrefKeys.capabilityEverGranted(kindName), true);
+
+  @override
   Future<void> clearAll() => _store.clear();
 }

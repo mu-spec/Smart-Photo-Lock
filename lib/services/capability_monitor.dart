@@ -45,11 +45,19 @@ class CapabilityMonitor {
     required this.canDrawOverlays,
     this.interval = const Duration(minutes: 2),
     DateTime Function()? now,
-  }) : _now = now ?? DateTime.now;
+    Future<void> Function(CapabilityKind)? markEverGranted,
+  })  : _now = now ?? DateTime.now,
+        _markEverGranted = markEverGranted;
 
   final Future<Result<bool>> Function() hasUsageAccess;
   final Future<Result<bool>> Function() isAccessibilityEnabled;
   final Future<Result<bool>> Function() canDrawOverlays;
+
+  /// Optional grant-history recorder (Phase 4 UX): invoked the moment a
+  /// capability is observed granted, so the persisted history knows the
+  /// capability "has ever been granted" — the basis for distinguishing
+  /// first-install setup from a post-grant revocation.
+  final Future<void> Function(CapabilityKind)? _markEverGranted;
 
   /// Poll period between proactive probes.
   final Duration interval;
@@ -157,6 +165,17 @@ class CapabilityMonitor {
       return; // fail-quiet: no fabricated transitions
     }
     final bool current = result.valueOrNull == true;
+
+    // Record the grant history the moment a capability is observed
+    // granted (idempotent, fail-quiet: history is a UX hint — a
+    // recording failure must never disturb detection).
+    if (current && _markEverGranted != null) {
+      try {
+        await _markEverGranted!(kind);
+      } catch (_) {
+        // fail-quiet by design
+      }
+    }
     final bool? previous = _previousGranted[kind];
 
     if (previous == null) {

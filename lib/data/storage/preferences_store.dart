@@ -5,6 +5,14 @@ abstract final class AppPrefKeys {
   static const String languageCode = 'pref.language.code';
   static const String notificationsEnabled = 'pref.notifications.enabled';
   static const String lastActiveProfileId = 'pref.profile.last_active_id';
+
+  /// Prefix for the capability grant-history keys (Phase 4 UX: setup vs
+  /// revocation distinction). One boolean per capability kind name.
+  static const String capabilityEverGrantedPrefix =
+      'pref.capability.ever_granted.';
+
+  static String capabilityEverGranted(String kindName) =>
+      '$capabilityEverGrantedPrefix$kindName';
 }
 
 /// Typed, app-level preferences facade.
@@ -33,6 +41,13 @@ abstract interface class PreferencesStore {
   // Profiles (last used — the canonical active profile lives in the DB)
   Future<String?> getLastActiveProfileId();
   Future<void> setLastActiveProfileId(String profileId);
+
+  // Capability grant history (Phase 4 UX). Records whether a required
+  // capability was granted AT LEAST ONCE, so a currently-missing
+  // capability can be classified as either first-install setup or a
+  // post-grant revocation. Not sensitive — just a boolean per kind.
+  Future<bool> wasCapabilityEverGranted(String kindName);
+  Future<void> markCapabilityEverGranted(String kindName);
 
   Future<void> clearAll();
 }

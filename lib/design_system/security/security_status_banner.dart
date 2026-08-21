@@ -18,6 +18,7 @@ class SecurityStatusBanner extends StatelessWidget {
     required this.message,
     this.actionLabel,
     this.onAction,
+    this.footer,
   });
 
   final SecurityLevel level;
@@ -25,6 +26,10 @@ class SecurityStatusBanner extends StatelessWidget {
   final String message;
   final String? actionLabel;
   final VoidCallback? onAction;
+
+  /// Optional extra line rendered under the message (e.g. a readiness
+  /// count such as "2 of 3 ready").
+  final Widget? footer;
 
   @override
   Widget build(BuildContext context) {
@@ -69,6 +74,10 @@ class SecurityStatusBanner extends StatelessWidget {
                     color: palette.textSecondary,
                   ),
                 ),
+                if (footer != null) ...<Widget>[
+                  const SizedBox(height: DsSpacing.sm),
+                  footer!,
+                ],
                 if (actionLabel != null) ...<Widget>[
                   const SizedBox(height: DsSpacing.md),
                   DsButton(

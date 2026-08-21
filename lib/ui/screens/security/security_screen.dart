@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../app/app_container.dart';
 import '../../../app/app_scope.dart';
 import '../../../app/router.dart';
+import '../../../data/storage/preferences_store.dart';
 import '../../../design_system/design_system.dart';
 import '../../../security/credentials/auth_type.dart';
 import '../../../security/credentials/biometric_options.dart';
@@ -34,6 +35,18 @@ class SecurityScreen extends StatefulWidget {
   static const String revokedMessage =
       'A capability Smart App Lock needs was turned off in system '
       'settings. Re-enable it to keep protection working.';
+
+  /// Phase 4 UX: first-install / never-granted state banner.
+  static const String setupRequiredTitle = 'Protection setup required';
+  static const String setupRequiredMessage =
+      'Smart App Lock needs a few Android permissions before app '
+      'protection can work correctly.';
+  static String readyCount(int n) => '$n of 3 ready';
+
+  /// Phase 4 UX: healthy state banner (all three capabilities granted).
+  static const String protectionReadyTitle = 'Protection ready';
+  static const String protectionReadyMessage =
+      'All required app-lock permissions are granted.';
 
   static const String randomizedTitle = 'Randomized keypad';
   static const String randomizedSubtitle =
@@ -74,13 +87,35 @@ class _SecurityScreenState extends State<SecurityScreen>
   /// loaded).
   bool _overlayGranted = false;
 
-  /// Phase 4F: capabilities detected as revoked this session (drives the
-  /// alert banner). Reconciled against the LIVE capability snapshot on
-  /// every status load — a restored capability leaves the set, and when
-  /// it empties the banner and dot clear immediately (no restart).
-  final Set<CapabilityKind> _revokedKinds = <CapabilityKind>{};
+  /// Phase 4 UX: persisted grant history per capability (false until the
+  /// capability has been observed granted at least once). Combined with
+  /// the LIVE state this distinguishes first-install setup (never
+  /// granted) from revocation (previously granted, now missing).
+  bool _usageAccessEverGranted = false;
+  bool _accessibilityEverGranted = false;
+  bool _overlayEverGranted = false;
 
-  bool get _hasRevokedCapability => _revokedKinds.isNotEmpty;
+  /// A capability that was granted before and is now missing.
+  bool get _hasRevokedCapability =>
+      (!_usageAccessGranted && _usageAccessEverGranted) ||
+      (!_accessibilityEnabled && _accessibilityEverGranted) ||
+      (!_overlayGranted && _overlayEverGranted);
+
+  /// At least one capability has NEVER been granted (fresh install or
+  /// incomplete first-time setup).
+  bool get _setupIncomplete =>
+      (!_usageAccessGranted && !_usageAccessEverGranted) ||
+      (!_accessibilityEnabled && !_accessibilityEverGranted) ||
+      (!_overlayGranted && !_overlayEverGranted);
+
+  /// All three required capabilities are currently granted.
+  bool get _protectionReady =>
+      _usageAccessGranted && _accessibilityEnabled && _overlayGranted;
+
+  int get _readyCount =>
+      (_usageAccessGranted ? 1 : 0) +
+      (_accessibilityEnabled ? 1 : 0) +
+      (_overlayGranted ? 1 : 0);
 
   @override
   void initState() {
@@ -94,7 +129,8 @@ class _SecurityScreenState extends State<SecurityScreen>
         if (!mounted || change.state != CapabilityState.revoked) {
           return;
         }
-        _revokedKinds.add(change.kind);
+        // Re-classify from the live snapshot: the derived banner state
+        // (setup vs revoked vs ready) is recomputed on every load.
         _loadStatus();
       },
     );
@@ -129,6 +165,7 @@ class _SecurityScreenState extends State<SecurityScreen>
     final InstalledAppsService installedApps = container.installedAppsService;
     final AccessibilityLockService accessibility = container.accessibility;
     final OverlayLockService overlay = container.overlay;
+    final PreferencesStore preferences = container.preferences;
 
     final state = (await auth.status()).valueOrNull;
     if (!mounted || state == null) {
@@ -149,6 +186,31 @@ class _SecurityScreenState extends State<SecurityScreen>
     bool overlayGranted = false;
     final Result<bool> overlayState = await overlay.canDrawOverlays();
     overlayGranted = overlayState.isSuccess && overlayState.valueOrNull == true;
+
+    // Phase 4 UX: grant history — a capability observed granted is
+    // recorded (idempotent) and counted as ever-granted; a missing
+    // capability reads its persisted history to classify setup vs
+    // revocation.
+    bool usageEver = usageAccessGranted;
+    if (usageAccessGranted) {
+      await preferences.markCapabilityEverGranted('usageAccess');
+    } else {
+      usageEver = await preferences.wasCapabilityEverGranted('usageAccess');
+    }
+    bool accessibilityEver = accessibilityEnabled;
+    if (accessibilityEnabled) {
+      await preferences.markCapabilityEverGranted('accessibility');
+    } else {
+      accessibilityEver =
+          await preferences.wasCapabilityEverGranted('accessibility');
+    }
+    bool overlayEver = overlayGranted;
+    if (overlayGranted) {
+      await preferences.markCapabilityEverGranted('overlay');
+    } else {
+      overlayEver = await preferences.wasCapabilityEverGranted('overlay');
+    }
+
     if (!mounted) {
       return;
     }
@@ -161,20 +223,9 @@ class _SecurityScreenState extends State<SecurityScreen>
       _usageAccessGranted = usageAccessGranted;
       _accessibilityEnabled = accessibilityEnabled;
       _overlayGranted = overlayGranted;
-      // Phase 4 device-QA fix: reconcile the session revocation set with
-      // the LIVE capability snapshot. A capability that now probes
-      // granted is no longer revoked — drop its marker. The banner and
-      // attention dot clear the moment ALL required capabilities are
-      // healthy again, and a capability that stays revoked keeps the
-      // warning in place. Fail-closed: a probe failure leaves the
-      // boolean false, so the marker is retained.
-      _revokedKinds.removeWhere(
-        (CapabilityKind kind) => switch (kind) {
-          CapabilityKind.usageAccess => usageAccessGranted,
-          CapabilityKind.accessibility => accessibilityEnabled,
-          CapabilityKind.overlay => overlayGranted,
-        },
-      );
+      _usageAccessEverGranted = usageEver;
+      _accessibilityEverGranted = accessibilityEver;
+      _overlayEverGranted = overlayEver;
     });
   }
 
@@ -393,6 +444,7 @@ class _SecurityScreenState extends State<SecurityScreen>
 
   @override
   Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
     return SafeArea(
       child: ListView(
         padding: DsInsets.screen,
@@ -406,6 +458,35 @@ class _SecurityScreenState extends State<SecurityScreen>
               message: SecurityScreen.revokedMessage,
               actionLabel: 'Review permissions',
               onAction: _onPermissionSetupTap,
+            ),
+            const SizedBox(height: DsSpacing.md),
+          ],
+          // Phase 4 UX: first-install / incomplete setup — capabilities
+          // that have NEVER been granted. Distinct from the revocation
+          // banner above (previously granted, now missing).
+          if (!_hasRevokedCapability && _setupIncomplete) ...<Widget>[
+            SecurityStatusBanner(
+              level: SecurityLevel.atRisk,
+              title: SecurityScreen.setupRequiredTitle,
+              message: SecurityScreen.setupRequiredMessage,
+              actionLabel: 'Set up',
+              onAction: _onPermissionSetupTap,
+              footer: Text(
+                SecurityScreen.readyCount(_readyCount),
+                style: theme.textTheme.labelLarge?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            const SizedBox(height: DsSpacing.md),
+          ],
+          // Phase 4 UX: healthy state — all three required capabilities
+          // granted.
+          if (!_hasRevokedCapability && _protectionReady) ...<Widget>[
+            SecurityStatusBanner(
+              level: SecurityLevel.secured,
+              title: SecurityScreen.protectionReadyTitle,
+              message: SecurityScreen.protectionReadyMessage,
             ),
             const SizedBox(height: DsSpacing.md),
           ],
