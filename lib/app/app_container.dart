@@ -44,10 +44,13 @@ import '../services/impl/static_accessibility_lock_service.dart';
 import '../services/impl/static_installed_apps_service.dart';
 import '../services/impl/static_overlay_lock_service.dart';
 import '../services/impl/static_screen_state_service.dart';
+import '../services/impl/static_watcher_service.dart';
 import '../services/capability_monitor.dart';
 import '../services/installed_apps_service.dart';
 import '../services/overlay_lock_service.dart';
 import '../services/screen_state_service.dart';
+import '../services/watcher_service.dart';
+import '../services/impl/method_channel_watcher_service.dart';
 
 /// Application dependency container — the single wiring point for all
 /// persistence and security storage.
@@ -67,6 +70,7 @@ class AppContainer {
     required AccessibilityLockService accessibilityService,
     required OverlayLockService overlayService,
     required ScreenStateService screenStateService,
+    required WatcherService watcherService,
     required this.capabilityMonitor,
     BiometricService? biometricsOverride,
     PreferencesStore? preferencesOverride,
@@ -78,6 +82,7 @@ class AppContainer {
         accessibility = accessibilityService,
         overlay = overlayService,
         screenState = screenStateService,
+        watcher = watcherService,
         _accessClock = accessClock {
     settingsCipher = AesGcmSettingsCipher(secretStore);
     preferences = preferencesOverride ?? PreferencesStoreImpl(_keyValueStore);
@@ -165,6 +170,7 @@ class AppContainer {
       accessibilityService: accessibilityService,
       overlayService: overlayService,
       screenStateService: MethodChannelScreenStateService(),
+      watcherService: MethodChannelWatcherService(),
       capabilityMonitor: CapabilityMonitor(
         hasUsageAccess: installedAppsService.hasUsageAccess,
         isAccessibilityEnabled: accessibilityService.isServiceEnabled,
@@ -219,6 +225,7 @@ class AppContainer {
       accessibilityService: accessibilityService,
       overlayService: overlayService,
       screenStateService: StaticScreenStateService(),
+      watcherService: StaticWatcherService(),
       capabilityMonitor: CapabilityMonitor(
         hasUsageAccess: installedAppsService.hasUsageAccess,
         isAccessibilityEnabled: accessibilityService.isServiceEnabled,
@@ -305,6 +312,11 @@ class AppContainer {
   /// broadcasts) — the lock trigger revokes all unlock sessions when
   /// the screen turns off.
   final ScreenStateService screenState;
+
+  /// Phase 5 mobile-QA fix: the watcher foreground-service bridge —
+  /// keeps the lock engine's process alive in the background so
+  /// protected apps are challenged the moment they open.
+  final WatcherService watcher;
 
   /// Revocation watcher (Phase 4F): probes the same services and emits
   /// granted→revoked changes. Started by the app root.

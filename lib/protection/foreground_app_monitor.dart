@@ -163,6 +163,13 @@ class ForegroundAppMonitor {
       return; // same package from either source is not a transition
     }
     _current = package;
+    // Mobile-QA diagnostics (asserts are stripped in release builds):
+    // trace the real-device pipeline in logcat.
+    assert(() {
+      // ignore: avoid_print
+      print('🔍 ForegroundAppMonitor: ${source.name} -> $package');
+      return true;
+    }());
     _controller.add(
       ForegroundAppChange(packageName: package, source: source, at: _now()),
     );

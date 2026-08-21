@@ -191,6 +191,13 @@ class LockTrigger {
 
     final AccessDecision decision =
         await _controller.evaluate(change.packageName);
+    // Mobile-QA diagnostics (asserts are stripped in release builds):
+    // trace the real-device pipeline in logcat.
+    assert(() {
+      // ignore: avoid_print
+      print('🔒 LockTrigger: ${change.packageName} -> ${decision.name}');
+      return true;
+    }());
     // Phase 5E: `challenge` requires the PIN; `deny` (authentication in
     // an active lockout) ALSO emits a requirement — the protected app
     // stays blocked behind the challenge surface, whose unlock screen

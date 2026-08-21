@@ -1,6 +1,7 @@
 package com.smartapplock.app
 
 import android.accessibilityservice.AccessibilityService
+import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import io.flutter.plugin.common.EventChannel
 
@@ -35,6 +36,8 @@ class AccessibilityLockService : AccessibilityService() {
             return // never report our own app
         }
         val sink = eventSink ?: return
+        // Mobile-QA diagnostics: trace the real-device pipeline.
+        Log.d("SmartAppLock", "a11y foreground -> $packageName")
         try {
             sink.success(packageName)
         } catch (e: Exception) {

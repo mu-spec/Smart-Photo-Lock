@@ -12,6 +12,7 @@ import android.graphics.Canvas
 import android.os.Build
 import android.provider.Settings
 import android.util.Base64
+import android.util.Log
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.io.ByteArrayOutputStream
@@ -277,6 +278,8 @@ object InstalledAppsChannel {
                     bestPackage = stat.packageName
                 }
             }
+            // Mobile-QA diagnostics: trace the real-device pipeline.
+            Log.d("SmartAppLock", "usage stats foreground -> $bestPackage")
             bestPackage
         } catch (e: Exception) {
             null

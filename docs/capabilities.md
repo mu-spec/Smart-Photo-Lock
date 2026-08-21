@@ -44,9 +44,9 @@ Foreground-app detection ──► Lock decision ──► PIN challenge on top 
 
 | # | Capability | Purpose |
 | - | ---------- | ------- |
-| 4 | `POST_NOTIFICATIONS` (API 33+) | Required to *start* the foreground-service watcher |
-| 5 | `FOREGROUND_SERVICE` | Permission class for the watcher service |
-| 6 | `FOREGROUND_SERVICE_SPECIAL_USE` | The watcher has no camera/mic/data/media type — the special-use type applies, with the required `<property>` declaration (Play policy) |
+| 4 | `POST_NOTIFICATIONS` (API 33+) ✅ landed | Required to *start* the foreground-service watcher |
+| 5 | `FOREGROUND_SERVICE` ✅ landed | Permission class for the watcher service |
+| 6 | `FOREGROUND_SERVICE_SPECIAL_USE` ✅ landed | The watcher has no camera/mic/data/media type — the special-use type applies, with the required `<property>` declaration (Play policy) |
 | 7 | `<queries>` MAIN/LAUNCHER (already present, 3A) | Installed-app visibility — no permission |
 
 ### Already present (carried from earlier phases — NOT re-added)

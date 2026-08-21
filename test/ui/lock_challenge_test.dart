@@ -12,6 +12,7 @@ import 'package:smart_app_lock/services/impl/static_accessibility_lock_service.d
 import 'package:smart_app_lock/services/impl/static_installed_apps_service.dart';
 import 'package:smart_app_lock/services/impl/static_overlay_lock_service.dart';
 import 'package:smart_app_lock/services/impl/static_screen_state_service.dart';
+import 'package:smart_app_lock/services/impl/static_watcher_service.dart';
 import 'package:smart_app_lock/ui/screens/pattern/pattern_unlock_screen.dart';
 import 'package:smart_app_lock/ui/screens/pin/pin_unlock_screen.dart';
 import 'package:smart_app_lock/utilities/result.dart';
@@ -68,6 +69,26 @@ void main() {
   Object? sessionFor(AppContainer container, String package) =>
       (container.accessController as DefaultAccessController)
           .sessionFor(package);
+
+  testWidgets(
+      'the lock host starts the watcher foreground service with the '
+      'trigger and stops it on teardown (Phase 5 mobile-QA fix)',
+      (WidgetTester tester) async {
+    final AppContainer container = await pumpApp(tester);
+    final StaticWatcherService watcher =
+        container.watcher as StaticWatcherService;
+
+    // The watcher anchors the process in the background: it must start
+    // together with the lock engine.
+    expect(watcher.startCalls, 1);
+    expect(watcher.running, isTrue);
+
+    // Tearing the app root down stops it (the host owns the lifecycle).
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpAndSettle();
+    expect(watcher.stopCalls, 1);
+    expect(watcher.running, isFalse);
+  });
   /// Draws [nodes] on the unlock screen's pattern grid: bounds-derived
   /// node centers, a small horizontal arena-winning move first, then
   /// micro-stepped device-like strokes (mirrors the pattern-suite

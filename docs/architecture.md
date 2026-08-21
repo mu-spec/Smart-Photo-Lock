@@ -1303,3 +1303,32 @@ no-credential fail-safe
 - Remaining later-phase work (documented, not defects): the overlay
   lock window (TYPE_APPLICATION_OVERLAY) and the watcher foreground
   service.
+
+## Phase 5 mobile-QA fix — the watcher foreground service
+
+Why the device failed: the whole lock pipeline (usage-stats polling,
+the accessibility event listener, the lock trigger, the challenge host)
+lives in the Flutter isolate. Backgrounding the app lets Android freeze
+or kill that isolate — detection stops and protected apps open with no
+challenge.
+
+```
+WatcherChannel (smart_app_lock/watcher)
+  ├─ start  -> POST_NOTIFICATIONS request (API 33+) + startForegroundService
+  ├─ stop   -> stopService
+  └─ isRunning
+WatcherService (native, specialUse)
+  └─ lifecycle anchor only: keeps the process alive so the Dart timers
+     keep polling, the accessibility EventChannel listener stays
+     attached, and presenting the challenge is exempt from Android 10+
+     background-activity-launch restrictions (SYSTEM_ALERT_WINDOW
+     granted).
+LockChallengeHost owns it: start with the trigger, stop on dispose.
+```
+
+- Diagnostics (logcat): `SmartAppLock` tag on the native usage-stats
+  probe and accessibility events; Dart-side assert-based prints in
+  ForegroundAppMonitor/LockTrigger (stripped in release) and
+  kDebugMode prints in the challenge host.
+- The in-memory container wires a static watcher so tests assert the
+  host lifecycle without any platform.

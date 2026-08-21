@@ -16,6 +16,9 @@ can be verified without compiling:
  10. Native channel wiring: every Dart-invoked channel method has a
      matching Kotlin handler case (regression guard for the Phase 4
      usage-access device defect).
+ 10b. Watcher foreground service: specialUse type + special-use property
+     + FOREGROUND_SERVICE[_SPECIAL_USE] + POST_NOTIFICATIONS declared
+     (Phase 5 mobile-QA guard).
  11. Usage-access list membership: the main manifest declares
      PACKAGE_USAGE_STATS directly under <manifest> and no variant
      manifest removes it (Phase 4 device-QA guard).
@@ -174,6 +177,21 @@ def run():
                 removed_anywhere.append(mf)
         check("no manifest variant removes PACKAGE_USAGE_STATS",
               not removed_anywhere, ", ".join(removed_anywhere))
+        # Phase 5 mobile-QA guard: the watcher foreground service must be
+        # declared with the specialUse type + its Play special-use
+        # property, and the three watcher permissions must be present —
+        # without the watcher the background lock pipeline dies.
+        watcher_declared = (
+            'android.permission.FOREGROUND_SERVICE' in main_manifest
+            and 'android.permission.FOREGROUND_SERVICE_SPECIAL_USE'
+            in main_manifest
+            and 'android.permission.POST_NOTIFICATIONS' in main_manifest
+            and 'android:name=".WatcherService"' in main_manifest
+            and 'android:foregroundServiceType="specialUse"' in main_manifest
+            and 'PROPERTY_SPECIAL_USE_FGS_SUBTYPE' in main_manifest
+        )
+        check("watcher foreground service declared (specialUse + "
+              "permissions + special-use property)", watcher_declared)
     except Exception as e:  # pragma: no cover
         check("android manifests parse (main/debug/profile)", False, str(e))
 
@@ -319,6 +337,10 @@ def run():
         (
             "lib/services/impl/method_channel_overlay_lock_service.dart",
             "OverlayStatusChannel.kt",
+        ),
+        (
+            "lib/services/impl/method_channel_watcher_service.dart",
+            "WatcherChannel.kt",
         ),
     ]
     missing_wiring = []

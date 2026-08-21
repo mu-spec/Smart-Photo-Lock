@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../protection/access_controller.dart';
@@ -99,7 +100,25 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     _trigger = AppScope.read(context)?.lockTrigger;
     _subscription = _trigger?.lockRequired.listen(_onLockRequired);
     _trigger?.start();
+    _startWatcher();
     _applyPersistedGracePeriod();
+  }
+
+  /// Phase 5 mobile-QA fix: the watcher foreground service anchors the
+  /// process in the background — without it, Android freezes/kills the
+  /// isolate when the app is backgrounded and protected apps open with
+  /// no challenge. Started and stopped with the lock engine itself.
+  Future<void> _startWatcher() async {
+    final AppContainer? container = AppScope.read(context);
+    if (container == null) {
+      return;
+    }
+    final Result<bool> started = await container.watcher.start();
+    if (kDebugMode) {
+      debugPrint(
+        '🔒 LockChallengeHost: watcher start -> ${started.isSuccess}',
+      );
+    }
   }
 
   /// Phase 5L: applies the persisted re-lock grace on startup, so the
@@ -118,11 +137,16 @@ class _LockChallengeHostState extends State<LockChallengeHost>
 
   @override
   void dispose() {
-    // Stop exactly what this host started: the subscription and the
-    // trigger (which stops the monitor's polling timer).
+    // Stop exactly what this host started: the subscription, the
+    // trigger (which stops the monitor's polling timer) and the watcher
+    // foreground service.
     WidgetsBinding.instance.removeObserver(this);
     _subscription?.cancel();
     _trigger?.stop();
+    final AppContainer? container = AppScope.read(context);
+    if (container != null) {
+      unawaited(container.watcher.stop());
+    }
     super.dispose();
   }
 
@@ -244,7 +268,19 @@ class _LockChallengeHostState extends State<LockChallengeHost>
       // Bring Smart App Lock to the front (basic challenge presentation;
       // the overlay window lands in the lock-screen phase).
       final shown = await container.overlay.showLockChallenge(packageName);
+      if (kDebugMode) {
+        debugPrint(
+          '🔒 LockChallengeHost: showLockChallenge($packageName) -> '
+          '${shown.isSuccess}',
+        );
+      }
       if (!mounted || shown.isFailure) {
+        if (kDebugMode && shown.isFailure) {
+          debugPrint(
+            '🔒 LockChallengeHost: presentation failed: '
+            '${shown.errorOrNull}',
+          );
+        }
         return;
       }
 

@@ -889,3 +889,39 @@ Fix: inside the two `testWidgets` bodies the flush is now
 deliver broadcast-stream events WITHOUT advancing the periodic poll
 timer, keeping the probe-count assertions exact. The plain `test()`
 bodies keep `pumpEventQueue()` (real event loop — safe there).
+
+---
+
+# Phase 5 — Mobile QA Fix #1 (protected apps opened unlocked)
+
+Root cause: the entire detection/challenge pipeline runs in the Flutter
+isolate; when Smart App Lock was backgrounded, Android froze or killed
+the isolate — usage-stats polling stopped, the accessibility
+EventChannel listener detached, and nothing presented a challenge.
+
+Fix: the watcher foreground service (specialUse, per capabilities.md)
+now anchors the process for the whole time the lock engine runs:
+
+- Native `WatcherService` (START_STICKY, low-importance notification,
+  API-gated startForeground) + `WatcherChannel` (start/stop/isRunning,
+  POST_NOTIFICATIONS request on API 33+).
+- Manifest: FOREGROUND_SERVICE + FOREGROUND_SERVICE_SPECIAL_USE +
+  POST_NOTIFICATIONS, `<service android:foregroundServiceType=
+  "specialUse">` with the Play special-use property.
+- `LockChallengeHost` starts the watcher with the trigger and stops it
+  on teardown; `AppContainer.watcher` wires MethodChannel in production
+  and static in memory.
+- Diagnostics: logcat tag `SmartAppLock` (native probes + a11y events);
+  assert-based Dart prints (monitor/trigger) and kDebugMode prints
+  (challenge host) — stripped in release.
+- Verifier: watcher channel-wiring + manifest declarations guarded
+  (25 checks).
+
+Device verification (logcat):
+  adb logcat -s SmartAppLock SmartAppLockWatcher flutter
+Then: open Smart App Lock (watcher notification appears) -> Home ->
+open a protected app -> expect `a11y foreground -> <pkg>` or
+`usage stats foreground -> <pkg>` then `LockTrigger: <pkg> ->
+challenge` and the challenge screen. If the process is force-stopped
+or swiped away, protection resumes the moment Smart App Lock is opened
+again (documented boundary until nothing else can run).
