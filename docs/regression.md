@@ -806,3 +806,18 @@ semantics, Kotlin bridges, and every test's timing assumptions.
   OverlayStatusChannel FLAG_SECURE on the UI thread; usage-stats probe
   total/fail-closed; accessibility sink thread-safe.
 - 5H tests: single controller with a mutable clock (verified).
+
+---
+
+# Phase 5 — Compile Repair #1
+
+Fifty analyzer issues traced to six root causes, all repaired:
+
+| # | Root cause | Fix |
+| - | ---------- | --- |
+| 1 | `AppContainer._` referenced `accessClock` (an `inMemory`-only parameter) from the private constructor body | The clock seam is now threaded through `AppContainer._({DateTime Function()? accessClock})` + a `_accessClock` field; production passes null (wall clock), tests inject the fake |
+| 2 | The audit's queue-tail rewrite accidentally dropped `LockTrigger.isRunning` and `LockTrigger.dispose` | Both restored (real lifecycle: `dispose = stop + close stream`; `isRunning = _started`) |
+| 3 | Automated test edits inserted `test(...)` blocks inside the `_FailingRepository` class in `default_access_controller_test.dart` | The 5L/5Q/audit tests moved back inside `main()`; the class stands alone after it |
+| 4 | `MockStreamHandlerEventSink.error` is a NAMED-parameter API (`code:` required) in Flutter 3.47; two tests passed 3 positional args | Both call sites migrated to `events.error(code: ..., message: ...)` |
+| 5 | `drawPattern` was declared after its call sites inside `main()` (Dart local functions are not hoisted) | The helper now sits at the top of `main()` in `lock_engine_regression_test.dart` and `lock_challenge_test.dart`; the scrambled test/class layout in the latter was rebuilt cleanly (37 tests in main, `_FakeBiometricService` after it) |
+| 6 | Minor dead code | Removed the unused `access_controller.dart` import in `lock_trigger_test.dart`, the unused `returnToApp` helper in `lock_engine_regression_test.dart`, and the write-only `_tick` field in `detection_diagnostics_screen.dart` |

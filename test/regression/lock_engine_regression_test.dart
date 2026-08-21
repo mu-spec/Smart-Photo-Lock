@@ -26,6 +26,48 @@ import 'package:smart_app_lock/ui/screens/pin/pin_unlock_screen.dart';
 /// wiring — monitor → matcher → controller → trigger → host → router →
 /// unlock screens.
 void main() {
+
+  /// Draws [nodes] on the unlock screen's pattern grid (bounds-derived
+  /// centers, arena-winning horizontal move, micro-stepped strokes).
+  Future<void> drawPattern(WidgetTester tester, List<int> nodes) async {
+    await tester.pump(const Duration(milliseconds: 450));
+    final Finder gridFinder = find.byType(DsPatternGrid);
+    expect(gridFinder, findsOneWidget);
+    final Rect bounds = tester.getRect(gridFinder);
+
+    final double pad = bounds.width * 0.10;
+    final double step = (bounds.width - 2 * pad) / 2;
+    Offset center(int node) {
+      final int i = node - 1;
+      return Offset(
+        bounds.left + pad + (i % 3) * step,
+        bounds.top + pad + (i ~/ 3) * step,
+      );
+    }
+
+    final TestGesture gesture =
+        await tester.startGesture(center(nodes.first));
+    await tester.pump();
+    await gesture.moveBy(const Offset(20, 0));
+    await tester.pump();
+
+    Offset current = center(nodes.first).translate(20, 0);
+    for (final int node in nodes.skip(1)) {
+      final Offset target = center(node);
+      const int steps = 6;
+      for (int s = 1; s <= steps; s++) {
+        final Offset next = Offset(
+          current.dx + (target.dx - current.dx) * s / steps,
+          current.dy + (target.dy - current.dy) * s / steps,
+        );
+        await gesture.moveTo(next);
+        await tester.pump();
+      }
+      current = target;
+    }
+    await gesture.up();
+    await tester.pump();
+  }
   /// The persisted stores shared across simulated process deaths.
   late InMemoryLocalDatabase database;
   late InMemorySecretStore secretStore;
@@ -112,10 +154,6 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  Future<void> returnToApp(WidgetTester tester) async {
-    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
-    await tester.pumpAndSettle();
-  }
 
   Future<void> sleepWake(WidgetTester tester, AppContainer container) async {
     screenOf(container).emitScreenOff();
@@ -460,45 +498,4 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  /// Draws [nodes] on the unlock screen's pattern grid (bounds-derived
-  /// centers, arena-winning horizontal move, micro-stepped strokes).
-  Future<void> drawPattern(WidgetTester tester, List<int> nodes) async {
-    await tester.pump(const Duration(milliseconds: 450));
-    final Finder gridFinder = find.byType(DsPatternGrid);
-    expect(gridFinder, findsOneWidget);
-    final Rect bounds = tester.getRect(gridFinder);
-
-    final double pad = bounds.width * 0.10;
-    final double step = (bounds.width - 2 * pad) / 2;
-    Offset center(int node) {
-      final int i = node - 1;
-      return Offset(
-        bounds.left + pad + (i % 3) * step,
-        bounds.top + pad + (i ~/ 3) * step,
-      );
-    }
-
-    final TestGesture gesture =
-        await tester.startGesture(center(nodes.first));
-    await tester.pump();
-    await gesture.moveBy(const Offset(20, 0));
-    await tester.pump();
-
-    Offset current = center(nodes.first).translate(20, 0);
-    for (final int node in nodes.skip(1)) {
-      final Offset target = center(node);
-      const int steps = 6;
-      for (int s = 1; s <= steps; s++) {
-        final Offset next = Offset(
-          current.dx + (target.dx - current.dx) * s / steps,
-          current.dy + (target.dy - current.dy) * s / steps,
-        );
-        await gesture.moveTo(next);
-        await tester.pump();
-      }
-      current = target;
-    }
-    await gesture.up();
-    await tester.pump();
-  }
 }

@@ -63,8 +63,6 @@ class _DetectionDiagnosticsScreenState
   /// (null while nothing is known yet).
   ProtectedMatchDecision? _matchDecision;
 
-  int _tick = 0;
-
   @override
   void initState() {
     super.initState();
@@ -160,7 +158,6 @@ class _DetectionDiagnosticsScreenState
       return;
     }
     setState(() {
-      _tick++; // rebuild the status pill
       if (_monitor!.isRunning) {
         // Audit fix: never stop the shared monitor while the production
         // lock trigger owns detection (the toggle is a standalone

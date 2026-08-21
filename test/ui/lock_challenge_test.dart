@@ -21,52 +21,55 @@ import 'package:smart_app_lock/utilities/result.dart';
 /// challenge through the production app wiring (monitor -> matcher ->
 /// access controller -> challenge host -> router -> unlock screen).
 void main() {
-  Future<AppContainer> pumpApp(
-    WidgetTester tester, {
-    AppContainer? container,
-    BiometricService? biometrics,
-    DateTime Function()? accessClock,
-  }) async {
-    tester.view.physicalSize = const Size(800, 1600);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
-    final AppContainer c = container ??
-        AppContainer.inMemory(
-          biometrics: biometrics,
-          accessClock: accessClock,
-        );
-    await tester.pumpWidget(SmartAppLockApp(container: c));
-    await tester.pumpAndSettle();
-    return c;
-  }
+  /// Draws [nodes] on the unlock screen's pattern grid: bounds-derived
+  /// node centers, a small horizontal arena-winning move first, then
+  /// micro-stepped device-like strokes (mirrors the pattern-suite
+  /// helper — the challenge flow uses the same production grid).
+  Future<void> drawPattern(WidgetTester tester, List<int> nodes) async {
+    // Settle ALL pending animations before reading bounds (shake
+    // feedback runs 420ms and the view switcher fades 200ms).
+    await tester.pump(const Duration(milliseconds: 450));
+    final Finder gridFinder = find.byType(DsPatternGrid);
+    expect(gridFinder, findsOneWidget);
+    final Rect bounds = tester.getRect(gridFinder);
 
-  /// The user opens another app: the detection-only accessibility
-  /// service reports a window-state change (production fallback path).
-  Future<void> openApp(
-    WidgetTester tester,
-    AppContainer container,
-    String package,
-  ) async {
-    (container.accessibility as StaticAccessibilityLockService)
-        .emitForegroundPackage(package);
-    await tester.pumpAndSettle();
-  }
-
-  Future<void> protect(AppContainer container, String package) =>
-      container.protectedApps.add(
-        ProtectedApp(
-          packageName: package,
-          label: package,
-          addedAt: DateTime(2026, 8, 21),
-        ),
+    final double pad = bounds.width * 0.10;
+    final double step = (bounds.width - 2 * pad) / 2;
+    Offset center(int node) {
+      final int i = node - 1;
+      return Offset(
+        bounds.left + pad + (i % 3) * step,
+        bounds.top + pad + (i ~/ 3) * step,
       );
+    }
 
-  /// Phase 5I: the unlock session currently open for [package] (null =
-  /// no session was granted — failed authentication must never create
-  /// one).
-  Object? sessionFor(AppContainer container, String package) =>
-      (container.accessController as DefaultAccessController)
-          .sessionFor(package);
+    final TestGesture gesture =
+        await tester.startGesture(center(nodes.first));
+    await tester.pump();
+    // Win the gesture arena from the enclosing scrollable with a small
+    // HORIZONTAL movement before any vertical leg is drawn.
+    await gesture.moveBy(const Offset(20, 0));
+    await tester.pump();
+
+    Offset current = center(nodes.first).translate(20, 0);
+    for (final int node in nodes.skip(1)) {
+      final Offset target = center(node);
+      const int steps = 6;
+      for (int s = 1; s <= steps; s++) {
+        final Offset next = Offset(
+          current.dx + (target.dx - current.dx) * s / steps,
+          current.dy + (target.dy - current.dy) * s / steps,
+        );
+        await gesture.moveTo(next);
+        await tester.pump();
+      }
+      current = target;
+    }
+    await gesture.up();
+    await tester.pump();
+  }
+
+
 
   testWidgets(
       'leaving a protected app re-locks it immediately (Phase 5J)',
@@ -1154,54 +1157,6 @@ void main() {
     expect(find.byType(PinUnlockScreen), findsNothing);
     expect(sessionFor(container, 'com.whatsapp'), isNotNull);
   });
-
-  /// Draws [nodes] on the unlock screen's pattern grid: bounds-derived
-  /// node centers, a small horizontal arena-winning move first, then
-  /// micro-stepped device-like strokes (mirrors the pattern-suite
-  /// helper — the challenge flow uses the same production grid).
-  Future<void> drawPattern(WidgetTester tester, List<int> nodes) async {
-    // Settle ALL pending animations before reading bounds (shake
-    // feedback runs 420ms and the view switcher fades 200ms).
-    await tester.pump(const Duration(milliseconds: 450));
-    final Finder gridFinder = find.byType(DsPatternGrid);
-    expect(gridFinder, findsOneWidget);
-    final Rect bounds = tester.getRect(gridFinder);
-
-    final double pad = bounds.width * 0.10;
-    final double step = (bounds.width - 2 * pad) / 2;
-    Offset center(int node) {
-      final int i = node - 1;
-      return Offset(
-        bounds.left + pad + (i % 3) * step,
-        bounds.top + pad + (i ~/ 3) * step,
-      );
-    }
-
-    final TestGesture gesture =
-        await tester.startGesture(center(nodes.first));
-    await tester.pump();
-    // Win the gesture arena from the enclosing scrollable with a small
-    // HORIZONTAL movement before any vertical leg is drawn.
-    await gesture.moveBy(const Offset(20, 0));
-    await tester.pump();
-
-    Offset current = center(nodes.first).translate(20, 0);
-    for (final int node in nodes.skip(1)) {
-      final Offset target = center(node);
-      const int steps = 6;
-      for (int s = 1; s <= steps; s++) {
-        final Offset next = Offset(
-          current.dx + (target.dx - current.dx) * s / steps,
-          current.dy + (target.dy - current.dy) * s / steps,
-        );
-        await gesture.moveTo(next);
-        await tester.pump();
-      }
-      current = target;
-    }
-    await gesture.up();
-    await tester.pump();
-  }
 }
 
 /// Deterministic biometric fake for the challenge-flow tests (Phase 5G).
@@ -1224,4 +1179,50 @@ class _FakeBiometricService implements BiometricService {
     BiometricOptions? options,
   }) async =>
       Result.success(passes);
+  Future<AppContainer> pumpApp(
+    WidgetTester tester, {
+    AppContainer? container,
+    BiometricService? biometrics,
+    DateTime Function()? accessClock,
+  }) async {
+    tester.view.physicalSize = const Size(800, 1600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final AppContainer c = container ??
+        AppContainer.inMemory(
+          biometrics: biometrics,
+          accessClock: accessClock,
+        );
+    await tester.pumpWidget(SmartAppLockApp(container: c));
+    await tester.pumpAndSettle();
+    return c;
+  }
+
+  /// The user opens another app: the detection-only accessibility
+  /// service reports a window-state change (production fallback path).
+  Future<void> openApp(
+    WidgetTester tester,
+    AppContainer container,
+    String package,
+  ) async {
+    (container.accessibility as StaticAccessibilityLockService)
+        .emitForegroundPackage(package);
+    await tester.pumpAndSettle();
+  }
+
+  Future<void> protect(AppContainer container, String package) =>
+      container.protectedApps.add(
+        ProtectedApp(
+          packageName: package,
+          label: package,
+          addedAt: DateTime(2026, 8, 21),
+        ),
+      );
+
+  /// Phase 5I: the unlock session currently open for [package] (null =
+  /// no session was granted — failed authentication must never create
+  /// one).
+  Object? sessionFor(AppContainer container, String package) =>
+      (container.accessController as DefaultAccessController)
+          .sessionFor(package);
 }

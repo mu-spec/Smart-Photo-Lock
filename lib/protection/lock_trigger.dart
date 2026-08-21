@@ -137,6 +137,18 @@ class LockTrigger {
     await _monitor.stop();
   }
 
+  /// True while the pipeline is running (audit: lets other components —
+  /// e.g. the diagnostics screen — know whether detection is owned by
+  /// the production lock flow).
+  bool get isRunning => _started;
+
+  /// Permanently tears the pipeline down: stops the pipeline and closes
+  /// the lock stream. Not recoverable.
+  Future<void> dispose() async {
+    await stop();
+    await _lockRequired.close();
+  }
+
   /// Phase 5K: consumes and clears the screen-off marker — the app
   /// layer calls this on resume to decide whether re-lock enforcement
   /// must re-evaluate the current foreground.

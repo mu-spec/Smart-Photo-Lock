@@ -331,30 +331,7 @@ void main() {
       AccessDecision.challenge,
     );
   });
-}
 
-/// [ProtectedAppsRepository] whose reads always fail — proves the
-/// controller fails closed (unknown -> challenge).
-class _FailingRepository implements ProtectedAppsRepository {
-  @override
-  Future<Result<List<ProtectedApp>>> getProtectedApps() async =>
-      Result.failure(StateError('database unavailable'));
-
-  @override
-  Future<Result<void>> add(ProtectedApp app) async =>
-      Result.failure(StateError('database unavailable'));
-
-  @override
-  Future<Result<void>> remove(String packageName) async =>
-      Result.failure(StateError('database unavailable'));
-
-  @override
-  Future<Result<bool>> isProtected(String packageName) async =>
-      Result.failure(StateError('database unavailable'));
-
-  @override
-  Future<Result<int>> count() async =>
-      Result.failure(StateError('database unavailable'));
   // -- re-lock grace (Phase 5L) ---------------------------------------------
 
   test('a grace period delays re-lock after leaving (Phase 5L)', () async {
@@ -576,4 +553,29 @@ class _FailingRepository implements ProtectedAppsRepository {
       AccessDecision.challenge,
     );
   });
+
+
 }
+
+/// [ProtectedAppsRepository] whose reads always fail — proves the
+/// controller fails closed (unknown -> challenge).
+class _FailingRepository implements ProtectedAppsRepository {
+  @override
+  Future<Result<List<ProtectedApp>>> getProtectedApps() async =>
+      Result.failure(StateError('database unavailable'));
+
+  @override
+  Future<Result<void>> add(ProtectedApp app) async =>
+      Result.failure(StateError('database unavailable'));
+
+  @override
+  Future<Result<void>> remove(String packageName) async =>
+      Result.failure(StateError('database unavailable'));
+
+  @override
+  Future<Result<bool>> isProtected(String packageName) async =>
+      Result.failure(StateError('database unavailable'));
+
+  @override
+  Future<Result<int>> count() async =>
+      Result.failure(StateError('database unavailable'));}

@@ -70,13 +70,15 @@ class AppContainer {
     required this.capabilityMonitor,
     BiometricService? biometricsOverride,
     PreferencesStore? preferencesOverride,
+    DateTime Function()? accessClock,
   })  : _keyValueStore = keyValueStore,
         _database = database,
         secretStore = secretStore,
         installedAppsService = installedAppsService,
         accessibility = accessibilityService,
         overlay = overlayService,
-        screenState = screenStateService {
+        screenState = screenStateService,
+        _accessClock = accessClock {
     settingsCipher = AesGcmSettingsCipher(secretStore);
     preferences = preferencesOverride ?? PreferencesStoreImpl(_keyValueStore);
     protectedApps = ProtectedAppsRepositoryImpl(_database);
@@ -126,7 +128,7 @@ class AppContainer {
     accessController = DefaultAccessController(
       matcher: protectedAppMatcher,
       auth: auth,
-      now: accessClock,
+      now: _accessClock,
     );
     lockTrigger = LockTrigger(
       monitor: foregroundMonitor,
@@ -226,11 +228,16 @@ class AppContainer {
       ),
       biometricsOverride: biometrics,
       preferencesOverride: preferences,
+      accessClock: accessClock,
     );
   }
 
   final KeyValueStore _keyValueStore;
   final LocalDatabase _database;
+
+  /// The access-controller clock seam (Phase 5H/5L/5Q tests): injected
+  /// in memory, real wall-clock in production (null).
+  final DateTime Function()? _accessClock;
 
   /// Sensitive values (master key, future tokens) — Keystore-backed in
   /// production. Nothing sensitive is ever written elsewhere.

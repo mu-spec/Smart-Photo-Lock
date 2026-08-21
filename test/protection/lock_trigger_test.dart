@@ -2,7 +2,6 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:smart_app_lock/app/app_container.dart';
 import 'package:smart_app_lock/data/models/protected_app.dart';
-import 'package:smart_app_lock/protection/access_controller.dart';
 import 'package:smart_app_lock/protection/impl/default_access_controller.dart';
 import 'package:smart_app_lock/protection/lock_trigger.dart';
 import 'package:smart_app_lock/services/impl/static_accessibility_lock_service.dart';

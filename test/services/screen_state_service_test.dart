@@ -64,7 +64,7 @@ void main() {
         channel,
         MockStreamHandler.inline(
           onListen: (Object? arguments, MockStreamHandlerEventSink events) {
-            events.error('screen_error', 'boom', null);
+            events.error(code: 'screen_error', message: 'boom');
           },
         ),
       );

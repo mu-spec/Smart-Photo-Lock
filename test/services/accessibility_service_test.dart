@@ -100,7 +100,7 @@ void main() {
         eventsChannel,
         MockStreamHandler.inline(
           onListen: (Object? arguments, MockStreamHandlerEventSink events) {
-            events.error('accessibility_error', 'boom', null);
+            events.error(code: 'accessibility_error', message: 'boom');
           },
         ),
       );
