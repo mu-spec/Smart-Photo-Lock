@@ -3,8 +3,23 @@
 // their dependencies.
 //
 // Kotlin ownership: AGP 9.2's built-in Kotlin (android.builtInKotlin=true)
-// carries a KGP runtime >= 2.2.20 — Flutter's minimum — so there is NO
-// manual Kotlin classpath/plugin declaration anywhere.
+// is the compiler path — the app does NOT apply the Kotlin Gradle Plugin.
+// However, AGP's built-in Kotlin still resolves KGP 2.2.10 as its runtime
+// (below Flutter's 2.2.20 minimum). Per the AGP 9 release notes ("Upgrade
+// to a higher KGP version"), declaring the KGP on the buildscript
+// classpath raises the runtime without applying any plugin. The
+// buildscript classpath resolves BEFORE allprojects, so it carries its
+// own repositories.
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+    dependencies {
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.2.20")
+    }
+}
 
 allprojects {
     repositories {

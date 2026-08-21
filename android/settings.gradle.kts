@@ -1,7 +1,8 @@
 // Root Gradle settings for the Android build.
-// AGP 9.2.1: built-in Kotlin at a KGP runtime >= 2.2.20 (Flutter's
-// minimum). Kotlin is provided by AGP's built-in Kotlin support
-// (android.builtInKotlin=true) — no KGP version is declared here.
+// AGP 9.2.1 with built-in Kotlin (android.builtInKotlin=true) — no KGP
+// version is declared here. AGP's built-in Kotlin resolves KGP 2.2.10,
+// below Flutter's 2.2.20 minimum; the documented "upgrade to a higher
+// KGP version" classpath override lives in android/build.gradle.kts.
 
 pluginManagement {
     val flutterSdkPath =
