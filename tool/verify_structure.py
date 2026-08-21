@@ -19,9 +19,10 @@ can be verified without compiling:
  11. Usage-access list membership: the main manifest declares
      PACKAGE_USAGE_STATS directly under <manifest> and no variant
      manifest removes it (Phase 4 device-QA guard).
- 12. Built-in Kotlin migration: android.builtInKotlin=true and
-     android.newDsl=true in gradle.properties, and the app/settings
-     Gradle files no longer apply or pin the Kotlin Gradle Plugin.
+ 12. Built-in Kotlin migration: android.builtInKotlin=true (Kotlin via
+     Flutter's embedded toolchain — no KGP application/pin) and
+     android.newDsl=false (Flutter 3.47 compatibility: the Flutter
+     Gradle Plugin still requires the legacy AGP DSL surface).
 
 Exit code 0 = all checks green.
 Usage:  python3 tool/verify_structure.py
@@ -355,8 +356,12 @@ def run():
     built_in_problems = []
     if "android.builtInKotlin=true" not in gradle_props:
         built_in_problems.append("gradle.properties: android.builtInKotlin=true missing")
-    if "android.newDsl=true" not in gradle_props:
-        built_in_problems.append("gradle.properties: android.newDsl=true missing")
+    if "android.newDsl=false" not in gradle_props:
+        built_in_problems.append(
+            "gradle.properties: android.newDsl=false missing "
+            "(Flutter 3.47 compatibility: the Flutter Gradle Plugin still "
+            "requires the legacy AGP DSL)"
+        )
     if 'id("kotlin-android")' in app_gradle:
         built_in_problems.append("app/build.gradle.kts: kotlin-android plugin still applied")
     if "org.jetbrains.kotlin.android" in settings_gradle:

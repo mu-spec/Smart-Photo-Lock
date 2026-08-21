@@ -5,7 +5,7 @@ publish_to: "none"
 
 # App version. versionCode (left of '+') and versionName (right of '+')
 # are consumed by the Android Gradle config (see android/app/build.gradle.kts).
-version: 0.34.17+57
+version: 0.34.18+58
 
 environment:
   sdk: ">=3.5.0 <4.0.0"
