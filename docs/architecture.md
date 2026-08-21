@@ -816,3 +816,32 @@ implementation is deferred.
 | Security settings | `ui` (PIN flows on the Security tab), `security` (encryption-at-rest ready in 1F) |
 | Lock screen & enforcement | `ui` (challenge screen), `protection` (engine + controller impls), `services` (overlay/accessibility impls) |
 | Hardening | `services/device_admin_service` impl, Keystore-backed secrets, R8 keep-rules |
+
+## 5A. Foreground app detection (no lock screen)
+
+The first lock-engine milestone: detect which app becomes foreground
+using the selected Play-compliant architecture.
+
+```
+ForegroundAppMonitor (protection)
+  ├─ UsageStatsManager backend (PRIMARY, polled every 1 s)
+  │     └─ InstalledAppsChannel.getForegroundPackage
+  │           ├─ hasUsageAccess? no  -> null (fail-closed, no detection)
+  │           ├─ queryUsageStats(INTERVAL_DAILY, now-60s, now)
+  │           └─ most-recently-used launchable package (own app excluded)
+  └─ Accessibility fallback (EVENTS, subscribed while running)
+        └─ AccessibilityLockService reports TYPE_WINDOW_STATE_CHANGED
+              package names via EventChannel
+              smart_app_lock/accessibility_events
+```
+
+- `ForegroundAppMonitor` merges both paths and emits `ForegroundAppChange`
+  only on REAL transitions — the same package from either source is not
+  re-emitted. Fail-closed: probe failures, null results (missing Usage
+  Access) and channel errors are ignored; nothing is fabricated.
+- `AppContainer.foregroundMonitor` is the shared instance (same service
+  objects the UI reads); the lock engine (5B+) owns start/stop. 5A
+  delivers detection only — no lock screen, no watcher foreground
+  service (that lands with the watcher phase per capabilities.md).
+- Native code stays total: no `!!`, no throwing checks; the usage-stats
+  probe is one defensive loop over the platform list.

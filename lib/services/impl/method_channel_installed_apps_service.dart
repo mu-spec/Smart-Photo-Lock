@@ -120,6 +120,22 @@ class MethodChannelInstalledAppsService implements InstalledAppsService {
     }
   }
 
+  @override
+  Future<Result<String?>> getForegroundPackage() async {
+    try {
+      final String? package =
+          await _channel.invokeMethod<String>('getForegroundPackage');
+      // null = unknown (no usage access or backend failure) — the native
+      // check is total, so a null result is a legitimate answer, not an
+      // error.
+      return Result.success(package);
+    } on PlatformException catch (e) {
+      return Result.failure(e);
+    } on MissingPluginException catch (e) {
+      return Result.failure(e);
+    }
+  }
+
   /// The channel name, exported for tests.
   static String get channelName => _channelName;
 }

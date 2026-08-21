@@ -19,6 +19,7 @@ import '../data/storage/impl/sqflite_local_database.dart';
 import '../data/storage/key_value_store.dart';
 import '../data/storage/local_database.dart';
 import '../data/storage/preferences_store.dart';
+import '../protection/foreground_app_monitor.dart';
 import '../security/encryption/settings_cipher.dart';
 import '../security/encryption/settings_cipher_impl.dart';
 import '../security/credentials/credential_manager.dart';
@@ -79,6 +80,13 @@ class AppContainer {
     // service. The service instance is shared — no screen ever creates
     // its own.
     installedApps = InstalledAppsRepositoryImpl(installedAppsService);
+    // Phase 5A: merged foreground detection (usage-stats primary +
+    // accessibility fallback). One shared instance; NOT auto-started —
+    // the lock engine (later phase) owns the start/stop lifecycle.
+    foregroundMonitor = ForegroundAppMonitor(
+      installedApps: installedAppsService,
+      accessibility: accessibilityService,
+    );
     // Biometric foundation (Phase 2J): platform BiometricPrompt bridge.
     // Tests may override it with a fake for deterministic availability
     // states; production always uses the real local_auth service.
@@ -219,6 +227,11 @@ class AppContainer {
   /// UI reads usage-access capability state from here — one instance,
   /// never recreated per screen).
   final InstalledAppsService installedAppsService;
+
+  /// Phase 5A: foreground-app detection (usage-stats polls +
+  /// accessibility fallback), shared app-wide. Started/stopped by the
+  /// lock engine phase — 5A delivers detection only.
+  late final ForegroundAppMonitor foregroundMonitor;
 
   /// The shared accessibility capability bridge (Phase 4C) — detection
   /// fallback state + settings routing. One instance for UI and, later,

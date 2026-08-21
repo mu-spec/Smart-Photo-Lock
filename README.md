@@ -54,6 +54,7 @@ implemented yet.
 | 4E | Permission setup screen (centralized Enabled / Action Required) | ✅ |
 | 4F | Capability revocation detection (granted → revoked monitoring) | ✅ |
 | 4G | Permission regression (grant / deny / revoke paths) | ✅ |
+| 5A | Foreground app detection (usage-stats primary + accessibility fallback) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -567,7 +568,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.2.1 / 9.4.1 / built-in Kotlin with KGP 2.3.20 (settings classpath `apply false` + buildscript; `android.builtInKotlin=true`; AGP legacy-DSL compat `android.newDsl=false` until the Flutter tool finishes its new-DSL migration) |
 | Java | 17 |
-| versionName / versionCode | `0.34.24` / `64` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.35.0` / `65` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM), `local_auth` (biometrics) |
 
 ## Prerequisites (on your machine)
@@ -872,8 +873,31 @@ capability monitor + real screens):
   flips the row back to `Needed`, and the setup screen reflects `2 of 3
   ready`; re-granting recovers to fully ready without duplicate alerts.
 
+### Phase 5A ✅ — Foreground App Detection
+
+The first lock-engine milestone: detect which app becomes foreground
+using the selected Play-compliant architecture. **No lock screen yet.**
+
+- **`ForegroundAppMonitor`** (`lib/protection/foreground_app_monitor.dart`)
+  merges the two detection paths: the UsageStatsManager backend (primary,
+  polled every second) and the accessibility window-state events
+  (fallback). Emits `ForegroundAppChange` only on real transitions —
+  deduplicated across sources.
+- **Native usage-stats probe** — `InstalledAppsChannel.getForegroundPackage`
+  resolves the most recently used launchable app over a 60 s lookback.
+  Total and fail-closed: no Usage Access grant or a backend failure
+  yields `null` (never an error, never a fabricated app).
+- **Accessibility reporting wired** — the detection-only service now
+  reports `TYPE_WINDOW_STATE_CHANGED` package names (no content, as
+  configured in 4C) through the `smart_app_lock/accessibility_events`
+  EventChannel into `AccessibilityLockService.foregroundPackages`.
+- **Detection is fail-closed end to end** — probe failures, missing
+  grants and channel errors are ignored; nothing is fabricated.
+- **Shared instance** — `AppContainer.foregroundMonitor` wires the same
+  services the UI reads; the lock engine (5B+) owns start/stop.
+
 ## Next phases
 
-Phase 5: the lock engine — overlay lock challenge, foreground app
-detection (usage access + accessibility fallback) and the watcher
-service. Each capability is pre-defined in `docs/capabilities.md`.
+Phase 5 continues: the lock engine — the overlay lock challenge (5B+),
+the watcher foreground service, and wiring `ForegroundAppMonitor` into
+enforcement. Each capability is pre-defined in `docs/capabilities.md`.

@@ -95,6 +95,35 @@ void main() {
       expect(result.errorOrNull, isA<PlatformException>());
     });
 
+    test('getForegroundPackage decodes the native package (Phase 5A)',
+        () async {
+      messenger.setMockMethodCallHandler(channel, (MethodCall call) async {
+        expect(call.method, 'getForegroundPackage');
+        return 'com.example.chat';
+      });
+      final InstalledAppsService service = MethodChannelInstalledAppsService();
+      final result = await service.getForegroundPackage();
+      expect(result.isSuccess, isTrue);
+      expect(result.valueOrNull, 'com.example.chat');
+    });
+
+    test('getForegroundPackage treats a null native result as unknown '
+        '(fail-closed)', () async {
+      messenger.setMockMethodCallHandler(channel, (MethodCall call) async => null);
+      final InstalledAppsService service = MethodChannelInstalledAppsService();
+      final result = await service.getForegroundPackage();
+      expect(result.isSuccess, isTrue);
+      expect(result.valueOrNull, isNull);
+    });
+
+    test('getForegroundPackage platform errors fail closed', () async {
+      messenger.setMockMethodCallHandler(channel, (MethodCall call) async {
+        throw PlatformException(code: 'usage_stats_error', message: 'boom');
+      });
+      final InstalledAppsService service = MethodChannelInstalledAppsService();
+      expect((await service.getForegroundPackage()).isFailure, isTrue);
+    });
+
     test('hasUsageAccess decodes the native grant state', () async {
       messenger.setMockMethodCallHandler(channel, (MethodCall call) async {
         expect(call.method, 'hasUsageAccess');
@@ -237,6 +266,16 @@ void main() {
           hasLength(1));
       expect((await service.hasUsageAccess()).valueOrNull, isTrue);
       expect((await service.requestUsageAccess()).isSuccess, isTrue);
+    });
+
+    test('foreground package is mutable and counted (Phase 5A)',
+        () async {
+      final StaticInstalledAppsService service = StaticInstalledAppsService(apps);
+
+      expect((await service.getForegroundPackage()).valueOrNull, isNull);
+      service.foregroundPackage = 'com.whatsapp';
+      expect((await service.getForegroundPackage()).valueOrNull, 'com.whatsapp');
+      expect(service.getForegroundPackageCalls, 2);
     });
 
     test('getAppIcon returns seeded bytes or null', () async {

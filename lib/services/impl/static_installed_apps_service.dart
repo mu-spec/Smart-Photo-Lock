@@ -29,6 +29,13 @@ class StaticInstalledAppsService implements InstalledAppsService {
   /// the "send user to settings" step actually fired).
   int requestUsageAccessCalls = 0;
 
+  /// Phase 5A: the foreground package the usage-stats backend reports,
+  /// mutable so tests can simulate foreground switches.
+  String? foregroundPackage;
+
+  /// Tracks calls so tests can assert polling behavior of consumers.
+  int getForegroundPackageCalls = 0;
+
   /// Tracks calls so tests can assert caching behavior of consumers.
   int getInstalledAppsCalls = 0;
 
@@ -61,5 +68,11 @@ class StaticInstalledAppsService implements InstalledAppsService {
   Future<Result<void>> requestUsageAccess() async {
     requestUsageAccessCalls++;
     return Result.success(null);
+  }
+
+  @override
+  Future<Result<String?>> getForegroundPackage() async {
+    getForegroundPackageCalls++;
+    return Result.success(foregroundPackage);
   }
 }

@@ -29,4 +29,11 @@ abstract interface class InstalledAppsService {
 
   /// Opens the system Usage Access settings screen.
   Future<Result<void>> requestUsageAccess();
+
+  /// Phase 5A: the currently-foreground app resolved from the
+  /// usage-stats backend, or null when unknown. Fail-closed: a missing
+  /// Usage Access grant or a backend failure yields null (never an
+  /// error, never a fabricated app) — callers treat null as
+  /// "no detection available".
+  Future<Result<String?>> getForegroundPackage();
 }

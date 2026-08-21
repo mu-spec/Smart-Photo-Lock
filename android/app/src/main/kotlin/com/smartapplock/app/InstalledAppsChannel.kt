@@ -1,6 +1,7 @@
 package com.smartapplock.app
 
 import android.app.AppOpsManager
+import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
@@ -38,6 +39,14 @@ object InstalledAppsChannel {
 
     /** Must match the Dart side of the bridge. */
     const val CHANNEL = "smart_app_lock/apps"
+
+    /**
+     * Phase 5A: how far back the usage-stats probe looks for the most
+     * recently used app. Generous enough to survive polling gaps and OEM
+     * throttling, short enough that stale entries cannot outlive a real
+     * foreground switch.
+     */
+    const val FOREGROUND_LOOKBACK_WINDOW_MS = 60_000L
 
     fun register(engine: FlutterEngine, activity: MainActivity) {
         val channel = MethodChannel(engine.dartExecutor.binaryMessenger, CHANNEL)
@@ -92,6 +101,17 @@ object InstalledAppsChannel {
                     // already resolves to false when the intent cannot be
                     // started, so the Dart side never sees a crash here.
                     result.success(openUsageAccessSettings(activity))
+                }
+                "getForegroundPackage" -> {
+                    // Phase 5A: the currently-foreground app resolved from
+                    // the usage-stats backend. Total: returns null (unknown)
+                    // when usage access is missing or the backend fails —
+                    // detection is fail-closed, never fabricated.
+                    try {
+                        result.success(getForegroundPackage(activity))
+                    } catch (e: Exception) {
+                        result.success(null)
+                    }
                 }
                 else -> result.notImplemented()
             }
@@ -198,6 +218,56 @@ object InstalledAppsChannel {
             mode == AppOpsManager.MODE_ALLOWED
         } catch (e: Exception) {
             false // fail-safe: treat as not granted; never crash the bridge
+        }
+    }
+
+    /**
+     * Phase 5A: the currently-foreground app, resolved from the
+     * usage-stats backend (UsageStatsManager).
+     *
+     * The selected Play-compliant architecture polls the most recently
+     * used launchable app over a short lookback window. The method is
+     * TOTAL and fail-closed:
+     *  * no Usage Access grant      -> null (the caller simply detects
+     *    nothing; it must never fabricate a foreground app);
+     *  * backend failure / empty    -> null;
+     *  * this app's own package is never reported.
+     *
+     * The platform types queryUsageStats as a non-null list, but the
+     * loop still guards defensively so OEM variants cannot crash it.
+     */
+    fun getForegroundPackage(context: Context): String? {
+        if (!hasUsageAccess(context)) {
+            return null
+        }
+        return try {
+            val usageStats =
+                context.getSystemService(Context.USAGE_STATS_SERVICE)
+                    as UsageStatsManager
+            val end = System.currentTimeMillis()
+            val begin = end - FOREGROUND_LOOKBACK_WINDOW_MS
+            val stats = usageStats.queryUsageStats(
+                UsageStatsManager.INTERVAL_DAILY,
+                begin,
+                end,
+            )
+            var bestPackage: String? = null
+            var bestTime = 0L
+            for (stat in stats) {
+                if (stat.packageName == context.packageName) {
+                    continue
+                }
+                if (stat.lastTimeUsed <= 0L) {
+                    continue
+                }
+                if (stat.lastTimeUsed > bestTime) {
+                    bestTime = stat.lastTimeUsed
+                    bestPackage = stat.packageName
+                }
+            }
+            bestPackage
+        } catch (e: Exception) {
+            null
         }
     }
 

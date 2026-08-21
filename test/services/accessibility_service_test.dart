@@ -13,11 +13,14 @@ void main() {
 
   const MethodChannel channel =
       MethodChannel('smart_app_lock/accessibility');
+  const EventChannel eventsChannel =
+      EventChannel('smart_app_lock/accessibility_events');
   final TestDefaultBinaryMessenger messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
 
   tearDown(() {
     messenger.setMockMethodCallHandler(channel, null);
+    messenger.setMockStreamHandler(eventsChannel, null);
   });
 
   group('MethodChannelAccessibilityLockService', () {
@@ -68,14 +71,59 @@ void main() {
       expect((await service.requestServiceEnable()).isFailure, isTrue);
     });
 
-    test('the foreground stream is empty until the lock engine wires it',
+    test('foregroundPackages relays native window-state events (Phase 5A)',
+        () async {
+      messenger.setMockStreamHandler(
+        eventsChannel,
+        MockStreamHandler.inline(
+          onListen: (Object? arguments, MockStreamHandlerEventSink events) {
+            events.success('com.example.chat');
+            events.success('com.example.maps');
+          },
+        ),
+      );
+      final AccessibilityLockService service =
+          MethodChannelAccessibilityLockService();
+      final List<Result<String>> events = <Result<String>>[];
+      service.foregroundPackages.listen(events.add);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(events, hasLength(2));
+      expect(events[0].isSuccess, isTrue);
+      expect(events[0].valueOrNull, 'com.example.chat');
+      expect(events[1].valueOrNull, 'com.example.maps');
+    });
+
+    test('foreground channel errors surface as failures (fail-quiet '
+        'surface)', () async {
+      messenger.setMockStreamHandler(
+        eventsChannel,
+        MockStreamHandler.inline(
+          onListen: (Object? arguments, MockStreamHandlerEventSink events) {
+            events.error('accessibility_error', 'boom', null);
+          },
+        ),
+      );
+      final AccessibilityLockService service =
+          MethodChannelAccessibilityLockService();
+      final List<Result<String>> events = <Result<String>>[];
+      service.foregroundPackages.listen(events.add);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(events, hasLength(1));
+      expect(events.single.isFailure, isTrue);
+    });
+
+    test('no native handler: the stream emits a failure, never data',
         () async {
       final AccessibilityLockService service =
           MethodChannelAccessibilityLockService();
       final List<Result<String>> events = <Result<String>>[];
       service.foregroundPackages.listen(events.add);
-      await Future<void>.delayed(Duration.zero);
-      expect(events, isEmpty);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(events, isNotEmpty);
+      expect(events.every((Result<String> e) => e.isFailure), isTrue);
     });
   });
 

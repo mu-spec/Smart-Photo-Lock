@@ -209,3 +209,30 @@ After installing the APK on a real device:
 | # | Defect | Severity | Status |
 | - | ------ | -------- | ------ |
 | — | None found at handoff | — | — |
+
+---
+
+# Phase 5A — Foreground App Detection
+
+Automated suites: `test/protection/foreground_app_monitor_test.dart`,
+`test/services/installed_apps_service_test.dart`,
+`test/services/accessibility_service_test.dart`.
+
+| # | Path | Scenario | Expected |
+| - | ---- | -------- | -------- |
+| 1 | Usage stats | Foreground package resolved by the backend | One `ForegroundAppChange` (source: usageStats); `currentPackage` updated |
+| 2 | Usage stats | Same package polled repeatedly | No duplicate transitions |
+| 3 | Usage stats | Switch chat -> maps -> chat | Three transitions in order |
+| 4 | Usage stats | Probe returns null (usage access missing) | No transition, fail-closed |
+| 5 | Accessibility | Window-state events relayed via EventChannel | Results carry the reported package names |
+| 6 | Accessibility | Same package reported twice | Deduplicated to one transition |
+| 7 | Accessibility | Channel errors / no native handler | `Result.failure` events; monitor ignores them |
+| 8 | Merged | usage-stats then accessibility then usage-stats | One chain, sources attributed per transition |
+| 9 | Merged | Same package via the OTHER source | Not a new transition |
+| 10 | Lifecycle | start() polls periodically | Baseline probe + one probe per interval tick |
+| 11 | Lifecycle | start() twice | Idempotent — no second poll cycle |
+| 12 | Lifecycle | stop() cancels the timer | No further polls; no pending-timer failure |
+
+How to run: `flutter test`, then `flutter build apk --debug --target-platform=android-arm64`
+for on-device checks (5A has no UI surface yet — detection is exercised
+through the next phase's lock engine).
