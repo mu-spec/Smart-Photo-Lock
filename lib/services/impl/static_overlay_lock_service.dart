@@ -6,12 +6,25 @@ import '../overlay_lock_service.dart';
 ///
 /// [overlayGranted] is mutable so tests can simulate the system settings
 /// screen granting the capability between checks; [requestCalls] counts
-/// how often the settings screen was requested.
+/// how often the settings screen was requested. Phase 5D: the challenge
+/// methods are wired — [showLockChallengeSucceeds] controls the result,
+/// [showLockChallengeCalls]/[hideLockChallengeCalls] count invocations
+/// and [lastLockPackage] records the challenged package.
 class StaticOverlayLockService implements OverlayLockService {
   StaticOverlayLockService({this.overlayGranted = false});
 
   bool overlayGranted;
   int requestCalls = 0;
+
+  /// Whether [showLockChallenge] reports success (tests may simulate a
+  /// failed bring-to-front).
+  bool showLockChallengeSucceeds = true;
+
+  int showLockChallengeCalls = 0;
+  int hideLockChallengeCalls = 0;
+
+  /// The most recently challenged package, or null.
+  String? lastLockPackage;
 
   @override
   Future<Result<bool>> canDrawOverlays() async =>
@@ -24,10 +37,17 @@ class StaticOverlayLockService implements OverlayLockService {
   }
 
   @override
-  Future<Result<void>> showLockChallenge(String packageName) async =>
-      Result.failure(StateError('Lock challenge not implemented yet.'));
+  Future<Result<void>> showLockChallenge(String packageName) async {
+    showLockChallengeCalls++;
+    lastLockPackage = packageName;
+    return showLockChallengeSucceeds
+        ? Result.success(null)
+        : Result.failure(StateError('Could not show the lock challenge.'));
+  }
 
   @override
-  Future<Result<void>> hideLockChallenge() async =>
-      Result.failure(StateError('Lock challenge not implemented yet.'));
+  Future<Result<void>> hideLockChallenge() async {
+    hideLockChallengeCalls++;
+    return Result.success(null);
+  }
 }

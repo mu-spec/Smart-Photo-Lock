@@ -4,12 +4,14 @@ import '../../utilities/result.dart';
 import '../overlay_lock_service.dart';
 
 /// Production [OverlayLockService] over the native
-/// `smart_app_lock/overlay` channel (Phase 4D).
+/// `smart_app_lock/overlay` channel (Phase 4D capability state; 5D
+/// challenge methods).
 ///
 /// Capability state comes from `Settings.canDrawOverlays`; the grant is
-/// made exclusively through the system overlay-permission screen. The
-/// challenge-window methods fail closed until the lock-screen phase —
-/// never fabricate a lock screen.
+/// made exclusively through the system overlay-permission screen. Phase
+/// 5D: `showLockChallenge` presents the challenge by bringing Smart App
+/// Lock's own activity to the foreground (the TYPE_APPLICATION_OVERLAY
+/// lock window lands in a later lock-screen phase).
 class MethodChannelOverlayLockService implements OverlayLockService {
   MethodChannelOverlayLockService({MethodChannel? channel})
       : _channel = channel ?? const MethodChannel('smart_app_lock/overlay');
@@ -49,12 +51,37 @@ class MethodChannelOverlayLockService implements OverlayLockService {
 
   @override
   Future<Result<void>> showLockChallenge(String packageName) async {
-    // The overlay lock window lands with the lock-screen phase.
-    return Result.failure(StateError('Lock challenge not implemented yet.'));
+    try {
+      final bool? shown =
+          await _channel.invokeMethod<bool>('showLockChallenge');
+      if (shown == true) {
+        return Result.success(null);
+      }
+      return Result.failure(
+        StateError('Could not show the lock challenge.'),
+      );
+    } on PlatformException catch (e) {
+      return Result.failure(e);
+    } on MissingPluginException catch (e) {
+      return Result.failure(e);
+    }
   }
 
   @override
   Future<Result<void>> hideLockChallenge() async {
-    return Result.failure(StateError('Lock challenge not implemented yet.'));
+    try {
+      final bool? hidden =
+          await _channel.invokeMethod<bool>('hideLockChallenge');
+      if (hidden == true) {
+        return Result.success(null);
+      }
+      return Result.failure(
+        StateError('Could not dismiss the lock challenge.'),
+      );
+    } on PlatformException catch (e) {
+      return Result.failure(e);
+    } on MissingPluginException catch (e) {
+      return Result.failure(e);
+    }
   }
 }

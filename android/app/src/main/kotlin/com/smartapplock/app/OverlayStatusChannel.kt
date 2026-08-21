@@ -53,6 +53,29 @@ object OverlayStatusChannel {
                         )
                     }
                 }
+                "showLockChallenge" -> {
+                    // Phase 5D (basic lock trigger): presents the lock
+                    // challenge by bringing Smart App Lock's own activity
+                    // to the foreground. The TYPE_APPLICATION_OVERLAY
+                    // lock window renders in a later lock-screen phase —
+                    // this is the honest basic form: the user is
+                    // challenged inside the app itself.
+                    try {
+                        result.success(launchLockChallenge(activity))
+                    } catch (e: Exception) {
+                        result.error(
+                            "overlay_error",
+                            "Failed to show the lock challenge: ${e.message}",
+                            null,
+                        )
+                    }
+                }
+                "hideLockChallenge" -> {
+                    // Phase 5D: the basic challenge IS our own activity,
+                    // so dismissal is handled by Flutter navigation; the
+                    // native side has nothing to tear down.
+                    result.success(true)
+                }
                 else -> result.notImplemented()
             }
         }
@@ -65,6 +88,24 @@ object OverlayStatusChannel {
                 intent.data = Uri.parse("package:${context.packageName}")
             }
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(intent)
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /**
+     * Phase 5D: brings Smart App Lock's activity to the foreground so the
+     * Flutter side can present the unlock challenge. Total: returns false
+     * when the launch cannot be performed (never crashes the bridge).
+     */
+    fun launchLockChallenge(context: Context): Boolean {
+        return try {
+            val intent = Intent(context, MainActivity::class.java)
+            intent.addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT,
+            )
             context.startActivity(intent)
             true
         } catch (e: Exception) {

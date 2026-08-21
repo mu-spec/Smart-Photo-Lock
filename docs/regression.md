@@ -287,3 +287,37 @@ Automated suites: `test/protection/protected_app_matcher_test.dart`,
 Device QA: on the diagnostics screen, protect an app on the Apps tab,
 then switch to it and back — the pill must read `Protected`; switch to
 an unprotected app — `Not protected`.
+
+---
+
+# Phase 5D — Basic Lock Trigger
+
+Automated suites: `test/protection/default_access_controller_test.dart`,
+`test/protection/lock_trigger_test.dart`, `test/ui/lock_challenge_test.dart`,
+`test/services/overlay_service_test.dart` (updated).
+
+| # | Scenario | Expected |
+| - | -------- | -------- |
+| 1 | Unprotected app evaluated | `allow` |
+| 2 | Protected app, no session | `challenge` |
+| 3 | `grantAccess` then re-evaluate | `allow` for that package only |
+| 4 | Session expiry (2 min window) | `challenge` again |
+| 5 | `clearSessions` | Every window revoked |
+| 6 | Repository failure | `challenge` (fail-closed) |
+| 7 | Protected app becomes active (monitor) | One `LockRequired` |
+| 8 | Unprotected app becomes active | Nothing emitted |
+| 9 | Session open | Requirement suppressed |
+| 10 | Accessibility path | Also drives the trigger |
+| 11 | Switch away + back | New requirement per transition |
+| 12 | start/stop/idempotence | Pipeline halts on stop |
+| 13 | Full app: protected app active | PIN unlock challenge presented |
+| 14 | Correct PIN | Screen pops; session granted; no immediate re-lock |
+| 15 | Wrong PIN | Challenge stays; error shown |
+| 16 | Pattern-only user | Pattern unlock screen |
+| 17 | No credential enrolled | No challenge (fail-safe) |
+| 18 | Failed bring-to-front | No challenge presented |
+| 19 | Overlay bridge | show/hide report native results; static counters |
+
+Device QA: protect WhatsApp on the Apps tab, enroll a PIN, then open
+WhatsApp — Smart App Lock must come to the front and ask for the PIN.
+A correct PIN lets WhatsApp open without re-prompting for 2 minutes.

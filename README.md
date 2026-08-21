@@ -57,6 +57,7 @@ implemented yet.
 | 5A | Foreground app detection (usage-stats primary + accessibility fallback) | ✅ |
 | 5B | Detection diagnostics (on-device verification of foreground transitions) | ✅ |
 | 5C | Protected-app matching (foreground package ↔ protected list) | ✅ |
+| 5D | Basic lock trigger (protected app active → authentication challenge) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -570,7 +571,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.2.1 / 9.4.1 / built-in Kotlin with KGP 2.3.20 (settings classpath `apply false` + buildscript; `android.builtInKotlin=true`; AGP legacy-DSL compat `android.newDsl=false` until the Flutter tool finishes its new-DSL migration) |
 | Java | 17 |
-| versionName / versionCode | `0.35.2` / `67` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.35.3` / `68` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM), `local_auth` (biometrics) |
 
 ## Prerequisites (on your machine)
@@ -941,6 +942,37 @@ enforcement (5D+):
 - **Diagnostics integration** — the 5B screen now shows a
   Protected / Not protected / Unknown pill (`diag_match`) for the
   current foreground package, so matching is verifiable on-device.
+
+### Phase 5D ✅ — Basic Lock Trigger
+
+When a protected application becomes active, Smart App Lock triggers
+authentication:
+
+- **`DefaultAccessController`** (`lib/protection/impl/`) — implements the
+  Phase 1B `AccessController` contract: unprotected → `allow`; protected
+  with an open 2-minute `LockSession` → `allow`; protected without a
+  session → `challenge`; unknown protection state (repository failure)
+  → `challenge` (fail-closed). `grantAccess` opens the post-unlock
+  window.
+- **`LockTrigger`** (`lib/protection/lock_trigger.dart`) — subscribes to
+  the 5A monitor, evaluates every transition through the controller,
+  and emits `LockRequired` for challenge decisions. Pure pipeline — no
+  UI, no platform calls.
+- **`LockChallengeHost`** (`lib/app/lock_challenge_host.dart`) — the
+  production owner of the trigger lifecycle: brings Smart App Lock to
+  the front via the overlay bridge (`showLockChallenge`, basic form —
+  the TYPE_APPLICATION_OVERLAY window lands in the lock-screen phase),
+  pushes the unlock screen matching the enrolled credential (PIN
+  preferred, pattern fallback), and on success grants the session +
+  hides the challenge. Fail-safe: no enrolled credential → no
+  challenge (setup lives on the Security tab); re-entrant requirements
+  while a challenge shows are ignored.
+- **Native bridge** — `OverlayStatusChannel` gains `showLockChallenge`
+  (brings MainActivity to the front with NEW_TASK + REORDER_TO_FRONT)
+  and `hideLockChallenge`; the Dart overlay impl and the static test
+  service are wired accordingly (4D's fail-closed stubs retired).
+- `AppContainer` wires `accessController` + `lockTrigger`; the app root
+  hosts the challenge presenter.
 
 ## Next phases
 

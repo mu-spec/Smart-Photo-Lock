@@ -885,3 +885,30 @@ ProtectedAppMatcher (protection)
   truth).
 - The diagnostics screen (5B) exposes the live decision as a pill so
   5C can be verified on-device before enforcement exists.
+
+## 5D. Basic lock trigger
+
+When a protected application becomes active, Smart App Lock triggers
+authentication:
+
+```
+ForegroundAppMonitor change
+  -> LockTrigger evaluates through DefaultAccessController
+       ├─ not protected            -> allow (nothing happens)
+       ├─ session active (2 min)   -> allow
+       ├─ protected / no session   -> LockRequired
+       └─ protection state unknown -> LockRequired (fail-closed)
+  -> LockChallengeHost
+       ├─ no credential enrolled   -> ignore (fail-safe)
+       ├─ overlay.showLockChallenge(package)  [bring app to front]
+       ├─ push PIN (preferred) or pattern unlock route
+       └─ success -> grantAccess (session) + hideLockChallenge
+```
+
+- `AccessController` (Phase 1B contract) is now implemented; `deny` is
+  reserved for the cooldown policy in a later phase.
+- The basic challenge is presented inside Smart App Lock's own activity;
+  the TYPE_APPLICATION_OVERLAY lock window renders in the lock-screen
+  phase (capabilities.md).
+- Sessions are in memory (2-minute windows); persistence/policies land
+  with the lock-screen phase.
