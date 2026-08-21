@@ -1181,3 +1181,24 @@ didChangeAppLifecycleState:
   a needless re-presentation race). Now only a real leave dismisses.
 - Edge-back / predictive-back on the challenge pops the route exactly
   like the Back button — 5N re-presents it with FLAG_SECURE armed.
+
+## 5Q. Rapid switching
+
+Protected -> unprotected -> protected storms:
+
+```
+LockTrigger._onChange -> _processing = _processing.then(process)
+                         (strict FIFO: departure then evaluate per
+                          transition, never interleaved)
+LockChallengeHost._presentChallenge
+  -> _presenting claimed SYNCHRONOUSLY (before any await)
+       concurrent requirements -> _pendingPackage (single slot)
+  -> queued requirements re-evaluate via _presentIfRequired
+       allow  -> skip + _clearSecure (stale requirement; grant landed)
+       challenge/deny -> present
+```
+
+- Rapid emissions with no frames between them yield exactly one
+  challenge screen at any moment; the launcher passes silently.
+- Grace windows: each leave re-arms the deadline; returns inside grace
+  consume it; the first return past grace challenges once.

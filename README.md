@@ -70,6 +70,7 @@ implemented yet.
 | 5N | Back-navigation hardening (Back cannot dismiss a challenge; re-presents in the foreground) | ✅ |
 | 5O | Recents hardening (FLAG_SECURE challenge snapshots; task-switch re-challenge) | ✅ |
 | 5P | Gesture navigation hardening (cancelled gestures never dismiss; paused/hidden count as leaves) | ✅ |
+| 5Q | Rapid switching (ordered transition processing; no stacked challenges; grace-aware re-entry) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -583,7 +584,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.2.1 / 9.4.1 / built-in Kotlin with KGP 2.3.20 (settings classpath `apply false` + buildscript; `android.builtInKotlin=true`; AGP legacy-DSL compat `android.newDsl=false` until the Flutter tool finishes its new-DSL migration) |
 | Java | 17 |
-| versionName / versionCode | `0.35.17` / `82` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.35.18` / `83` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM), `local_auth` (biometrics) |
 
 ## Prerequisites (on your machine)
@@ -1231,6 +1232,28 @@ Modern gesture navigation is handled precisely:
 - **Rapid sequences stay secure** — cancel-then-complete gesture
   sequences end with the challenge re-presented and only the correct
   credential ending the loop.
+
+### Phase 5Q ✅ — Rapid Switching
+
+Protected → unprotected → protected storms are handled correctly:
+
+- **Ordered transition processing** — `LockTrigger` serializes every
+  transition through a processing queue: departures and evaluations
+  can never interleave out of order (a stale grace deadline can never
+  be armed after a re-entry already happened), and `stop()` drains the
+  queue before resolving.
+- **No stacked challenges** — `LockChallengeHost` claims the
+  presentation slot SYNCHRONOUSLY before any await, so two rapid
+  requirements can never push two unlock screens on top of each other;
+  extras re-queue into the single pending slot (5M).
+- **Stale-requirement re-evaluation** — queued requirements
+  re-evaluate before presenting: if a grant landed in between (rapid
+  switch while a challenge was up), the stale requirement resolves to
+  `allow` and no double challenge appears — and the secure window
+  clears.
+- **Grace-aware cycles** — rapid leave/return inside a grace window
+  never re-challenges; leaving re-arms the deadline each time; the
+  first return past the grace challenges exactly once.
 
 ## Next phases
 

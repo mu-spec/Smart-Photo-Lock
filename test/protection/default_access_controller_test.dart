@@ -501,4 +501,79 @@ class _FailingRepository implements ProtectedAppsRepository {
       AccessDecision.challenge,
     );
   });
+  // -- rapid switching (Phase 5Q) --------------------------------------------
+
+  test('rapid protected -> unprotected -> protected cycles (immediate '
+      'grace)', () async {
+    await protect('com.whatsapp');
+    final DefaultAccessController controller = DefaultAccessController(
+      matcher: container.protectedAppMatcher,
+      auth: container.auth,
+      now: () => DateTime(2026, 8, 21, 9, 0),
+    );
+
+    // Entry 1: no session -> challenge.
+    expect(
+      await controller.evaluate('com.whatsapp'),
+      AccessDecision.challenge,
+    );
+
+    // Three rapid leave/re-enter cycles: every departure revokes the
+    // fresh session immediately, so every re-entry challenges again.
+    for (int i = 0; i < 3; i++) {
+      await controller.grantAccess('com.whatsapp');
+      await controller.revokeAccess('com.whatsapp'); // leave
+      expect(
+        await controller.evaluate('com.example.launcher'),
+        AccessDecision.allow,
+      );
+      expect(
+        await controller.evaluate('com.whatsapp'),
+        AccessDecision.challenge,
+        reason: 'cycle ${i + 1} must re-lock on re-entry',
+      );
+    }
+  });
+
+  test('rapid switching inside a grace window allows each re-entry and '
+      're-arms on each leave', () async {
+    await protect('com.whatsapp');
+    DateTime clock = DateTime(2026, 8, 21, 9, 0);
+    final DefaultAccessController controller = DefaultAccessController(
+      matcher: container.protectedAppMatcher,
+      auth: container.auth,
+      now: () => clock,
+      gracePeriod: const Duration(seconds: 30),
+    );
+
+    // Entry 1 challenges; unlock, then three rapid cycles of
+    // leave + quick return (10s each) stay inside the grace.
+    expect(
+      await controller.evaluate('com.whatsapp'),
+      AccessDecision.challenge,
+    );
+    await controller.grantAccess('com.whatsapp');
+
+    for (int i = 0; i < 3; i++) {
+      await controller.revokeAccess('com.whatsapp'); // leave
+      expect(
+        await controller.evaluate('com.example.launcher'),
+        AccessDecision.allow,
+      );
+      clock = clock.add(const Duration(seconds: 10));
+      expect(
+        await controller.evaluate('com.whatsapp'),
+        AccessDecision.allow,
+        reason: 'cycle ${i + 1} within grace must not re-challenge',
+      );
+    }
+
+    // A leave followed by a return AFTER the grace re-locks.
+    await controller.revokeAccess('com.whatsapp');
+    clock = clock.add(const Duration(seconds: 40));
+    expect(
+      await controller.evaluate('com.whatsapp'),
+      AccessDecision.challenge,
+    );
+  });
 }

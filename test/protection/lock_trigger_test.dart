@@ -279,4 +279,73 @@ void main() {
 
     await trigger.stop();
   });
+  // -- rapid switching (Phase 5Q) --------------------------------------------
+
+  test('rapid protected -> unprotected -> protected evaluates strictly in '
+      'order', () async {
+    await protect('com.whatsapp');
+    await trigger.start();
+    final StaticAccessibilityLockService a11y =
+        container.accessibility as StaticAccessibilityLockService;
+
+    // Five transitions fired back-to-back with no processing gaps:
+    // protected entry, launcher, protected entry, launcher, protected.
+    a11y.emitForegroundPackage('com.whatsapp');
+    a11y.emitForegroundPackage('com.example.launcher');
+    a11y.emitForegroundPackage('com.whatsapp');
+    a11y.emitForegroundPackage('com.example.launcher');
+    a11y.emitForegroundPackage('com.whatsapp');
+    await pumpEventQueue();
+
+    // Exactly one requirement per protected ENTRY, in order — the
+    // launcher passes silently and never disturbs the pipeline.
+    expect(requirements, hasLength(3));
+    expect(
+      requirements.map((LockRequired r) => r.packageName).toList(),
+      <String>['com.whatsapp', 'com.whatsapp', 'com.whatsapp'],
+    );
+    await trigger.stop();
+  });
+
+  test('rapid switching respects the grace window on every cycle',
+      () async {
+    await protect('com.whatsapp');
+    DateTime clock = DateTime(2026, 8, 21, 9, 0);
+    final AppContainer clocked = AppContainer.inMemory(
+      accessClock: () => clock,
+    );
+    final LockTrigger clockedTrigger = clocked.lockTrigger;
+    final DefaultAccessController controller =
+        clocked.accessController as DefaultAccessController;
+    controller.setGracePeriod(const Duration(seconds: 30));
+    final List<LockRequired> clockedRequirements = <LockRequired>[];
+    clockedTrigger.lockRequired.listen(clockedRequirements.add);
+
+    await clockedTrigger.start();
+    final StaticAccessibilityLockService a11y =
+        clocked.accessibility as StaticAccessibilityLockService;
+
+    // Entry 1 challenges; unlock it.
+    a11y.emitForegroundPackage('com.whatsapp');
+    await pumpEventQueue();
+    expect(clockedRequirements, hasLength(1));
+    await controller.grantAccess('com.whatsapp');
+
+    // Rapid leave/return INSIDE the grace: no new requirement.
+    a11y.emitForegroundPackage('com.example.launcher');
+    clock = DateTime(2026, 8, 21, 9, 0, 10);
+    a11y.emitForegroundPackage('com.whatsapp');
+    await pumpEventQueue();
+    expect(clockedRequirements, hasLength(1));
+
+    // Leave again; return AFTER the grace: a new requirement.
+    a11y.emitForegroundPackage('com.example.launcher');
+    clock = DateTime(2026, 8, 21, 9, 1);
+    a11y.emitForegroundPackage('com.whatsapp');
+    await pumpEventQueue();
+    expect(clockedRequirements, hasLength(2));
+
+    await clockedTrigger.stop();
+    await clockedTrigger.dispose();
+  });
 }

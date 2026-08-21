@@ -948,6 +948,95 @@ void main() {
     expect(apps.launchAppCalls, 1);
   });
 
+  // -- rapid switching (Phase 5Q) --------------------------------------------
+
+  testWidgets(
+      'rapid protected->unprotected->protected never stacks challenges '
+      '(Phase 5Q)', (WidgetTester tester) async {
+    final AppContainer container = await pumpApp(tester);
+    await container.auth.enrollPin('1234');
+    await protect(container, 'com.whatsapp');
+    final StaticOverlayLockService overlay =
+        container.overlay as StaticOverlayLockService;
+    final StaticAccessibilityLockService a11y =
+        container.accessibility as StaticAccessibilityLockService;
+
+    await openApp(tester, container, 'com.whatsapp');
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+    final int shows = overlay.showLockChallengeCalls;
+
+    // Fire the whole protected -> unprotected -> protected -> ... storm
+    // with no frames in between: nothing may stack a second challenge.
+    a11y.emitForegroundPackage('com.example.launcher');
+    a11y.emitForegroundPackage('com.whatsapp');
+    a11y.emitForegroundPackage('com.example.launcher');
+    a11y.emitForegroundPackage('com.whatsapp');
+    await tester.pumpAndSettle();
+
+    // Exactly ONE challenge at any moment; no extra bring-to-fronts
+    // while the current challenge is still up.
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+    expect(overlay.showLockChallengeCalls, shows);
+
+    // Completing the challenge ends the loop: the queued WhatsApp
+    // requirement re-evaluates against the fresh grant (allow), so no
+    // double challenge — and the secure window clears.
+    for (final String digit in <String>['1', '2', '3', '4']) {
+      await tester.tap(find.byKey(Key('pin_key_$digit')));
+      await tester.pumpAndSettle();
+    }
+    expect(find.byType(PinUnlockScreen), findsNothing);
+    expect(overlay.secureWindow, isFalse);
+    expect(sessionFor(container, 'com.whatsapp'), isNotNull);
+    final StaticInstalledAppsService apps =
+        container.installedAppsService as StaticInstalledAppsService;
+    expect(apps.launchAppCalls, 1);
+    expect(apps.launchedPackages, <String>['com.whatsapp']);
+  });
+
+  testWidgets(
+      'rapid switching with a grace period never re-challenges inside '
+      'the window (Phase 5Q)', (WidgetTester tester) async {
+    DateTime clock = DateTime(2026, 8, 21, 9, 0);
+    final AppContainer container = await pumpApp(
+      tester,
+      accessClock: () => clock,
+    );
+    await container.auth.enrollPin('1234');
+    await protect(container, 'com.whatsapp');
+    container.accessController.setGracePeriod(const Duration(seconds: 30));
+    final StaticAccessibilityLockService a11y =
+        container.accessibility as StaticAccessibilityLockService;
+
+    // Unlock once.
+    await openApp(tester, container, 'com.whatsapp');
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+    for (final String digit in <String>['1', '2', '3', '4']) {
+      await tester.tap(find.byKey(Key('pin_key_$digit')));
+      await tester.pumpAndSettle();
+    }
+    expect(find.byType(PinUnlockScreen), findsNothing);
+
+    // Three rapid leave/return cycles, each 10s apart — all inside the
+    // 30-second grace: no challenge may appear.
+    for (int i = 0; i < 3; i++) {
+      a11y.emitForegroundPackage('com.example.launcher');
+      clock = clock.add(const Duration(seconds: 10));
+      a11y.emitForegroundPackage('com.whatsapp');
+      await tester.pumpAndSettle();
+      expect(find.byType(PinUnlockScreen), findsNothing,
+          reason: 'cycle ${i + 1} must stay inside the grace window');
+    }
+
+    // One more leave, then a return past the grace: the challenge
+    // returns — exactly once, never stacked.
+    a11y.emitForegroundPackage('com.example.launcher');
+    clock = clock.add(const Duration(seconds: 40));
+    a11y.emitForegroundPackage('com.whatsapp');
+    await tester.pumpAndSettle();
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+  });
+
   /// Draws [nodes] on the unlock screen's pattern grid: bounds-derived
   /// node centers, a small horizontal arena-winning move first, then
   /// micro-stepped device-like strokes (mirrors the pattern-suite

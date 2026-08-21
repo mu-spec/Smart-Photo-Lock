@@ -66,6 +66,12 @@ class _LockChallengeHostState extends State<LockChallengeHost>
   /// True while an unlock challenge is on screen (blocks re-entrancy).
   bool _challenging = false;
 
+  /// Phase 5Q: claims the presentation slot SYNCHRONOUSLY, before any
+  /// await. Without this, two rapid requirements would both pass the
+  /// `_challenging` check (it is only set after several awaits) and
+  /// stack two challenge screens on top of each other.
+  bool _presenting = false;
+
   /// Phase 5M: a lock requirement that arrived while a challenge was
   /// already showing — re-presented once the current challenge closes
   /// (never silently dropped).
@@ -200,91 +206,99 @@ class _LockChallengeHostState extends State<LockChallengeHost>
       _presentChallenge(requirement.packageName);
 
   Future<void> _presentChallenge(String packageName) async {
-    if (_challenging || !mounted) {
-      // Phase 5M: never silently drop a requirement — remember the
+    if (_presenting || _challenging || !mounted) {
+      // Phase 5M/5Q: never silently drop a requirement — remember the
       // latest one and re-present it when the current challenge closes.
       if (mounted) {
         _pendingPackage = packageName;
       }
       return;
     }
-    // A fresh presentation supersedes any stale pending requirement
-    // (this call IS the newest requirement, or the re-presentation of
-    // the pending one — either way the pending slot must not linger).
-    _pendingPackage = null;
-    final AppContainer? container = AppScope.read(context);
-    if (container == null) {
-      return;
-    }
-
-    // Fail-safe: without an enrolled credential there is no challenge
-    // to present — never lock the user out of their own phone.
-    final CredentialState? status =
-        (await container.auth.status()).valueOrNull;
-    if (status == null || !status.hasAnyCredential) {
-      return;
-    }
-
-    // Bring Smart App Lock to the front (basic challenge presentation;
-    // the overlay window lands in the lock-screen phase).
-    final shown = await container.overlay.showLockChallenge(packageName);
-    if (!mounted || shown.isFailure) {
-      return;
-    }
-
-    // Phase 5O (recents hardening): FLAG_SECURE keeps the recents
-    // snapshot blank while the challenge is on screen — the PIN dots,
-    // pattern trail or protected-app state never leak through task
-    // switching. Failures are tolerated (hardening, not enforcement).
-    await container.overlay.setSecureWindow(true);
-
-    _challenging = true;
-    // A fresh challenge supersedes the interrupted state (Home-press
-    // dismissal) — nothing is pending to re-evaluate anymore.
-    _interruptedChallenge = false;
-    // Phase 5N: remember what this challenge guards, so a Back-press
-    // dismissal can be re-presented instead of exposing the app UI.
-    _lastPresentedPackage = packageName;
-    bool passed = false;
+    // Phase 5Q: claim the slot NOW — everything below may await, and
+    // concurrent requirements must re-queue instead of double-stacking
+    // challenge screens.
+    _presenting = true;
     try {
-      // Phase 5F: route by the user's PRIMARY credential (the one they
-      // enrolled last), not a hardcoded PIN preference. Both PIN and
-      // pattern are first-class gates in the protected-app flow.
-      final AuthType? primary = status.primary;
-      final String route;
-      if (primary == AuthType.pattern &&
-          status.hasEnrolled(AuthType.pattern)) {
-        route = RouteNames.patternUnlock;
-      } else if (primary == AuthType.pin &&
-          status.hasEnrolled(AuthType.pin)) {
-        route = RouteNames.pinUnlock;
-      } else if (status.hasEnrolled(AuthType.pin)) {
-        route = RouteNames.pinUnlock; // legacy/absent primary: PIN first
-      } else {
-        route = RouteNames.patternUnlock; // pattern-only user
+      // A fresh presentation supersedes any stale pending requirement
+      // (this call IS the newest requirement, or the re-presentation of
+      // the pending one — either way the pending slot must not linger).
+      _pendingPackage = null;
+      final AppContainer? container = AppScope.read(context);
+      if (container == null) {
+        return;
       }
-      final bool? unlocked =
-          await widget.navigatorKey.currentState?.pushNamed<bool>(route);
-      // Phase 5I: the unlock session is granted ONLY on an explicit
-      // authentication success. The unlock screens pop `true` exclusively
-      // from their `AuthSuccess` branches (wrong credential, lockout,
-      // cancellation and service failures all resolve false/null) — and
-      // the host re-checks `mounted` after the await so a torn-down tree
-      // can never grant.
-      passed = unlocked == true;
-      if (passed) {
-        if (!mounted) {
-          return;
+
+      // Fail-safe: without an enrolled credential there is no challenge
+      // to present — never lock the user out of their own phone.
+      final CredentialState? status =
+          (await container.auth.status()).valueOrNull;
+      if (status == null || !status.hasAnyCredential) {
+        return;
+      }
+
+      // Bring Smart App Lock to the front (basic challenge presentation;
+      // the overlay window lands in the lock-screen phase).
+      final shown = await container.overlay.showLockChallenge(packageName);
+      if (!mounted || shown.isFailure) {
+        return;
+      }
+
+      // Phase 5O (recents hardening): FLAG_SECURE keeps the recents
+      // snapshot blank while the challenge is on screen — the PIN dots,
+      // pattern trail or protected-app state never leak through task
+      // switching. Failures are tolerated (hardening, not enforcement).
+      await container.overlay.setSecureWindow(true);
+
+      _challenging = true;
+      // A fresh challenge supersedes the interrupted state (Home-press
+      // dismissal) — nothing is pending to re-evaluate anymore.
+      _interruptedChallenge = false;
+      // Phase 5N: remember what this challenge guards, so a Back-press
+      // dismissal can be re-presented instead of exposing the app UI.
+      _lastPresentedPackage = packageName;
+      bool passed = false;
+      try {
+        // Phase 5F: route by the user's PRIMARY credential (the one they
+        // enrolled last), not a hardcoded PIN preference. Both PIN and
+        // pattern are first-class gates in the protected-app flow.
+        final AuthType? primary = status.primary;
+        final String route;
+        if (primary == AuthType.pattern &&
+            status.hasEnrolled(AuthType.pattern)) {
+          route = RouteNames.patternUnlock;
+        } else if (primary == AuthType.pin &&
+            status.hasEnrolled(AuthType.pin)) {
+          route = RouteNames.pinUnlock;
+        } else if (status.hasEnrolled(AuthType.pin)) {
+          route = RouteNames.pinUnlock; // legacy/absent primary: PIN first
+        } else {
+          route = RouteNames.patternUnlock; // pattern-only user
         }
-        // Phase 5E/5F: the credential passed — open the session,
-        // dismiss the challenge, then LAUNCH the protected app so the
-        // user proceeds straight into it.
-        await container.accessController.grantAccess(packageName);
-        await container.overlay.hideLockChallenge();
-        await container.installedAppsService.launchApp(packageName);
+        final bool? unlocked =
+            await widget.navigatorKey.currentState?.pushNamed<bool>(route);
+        // Phase 5I: the unlock session is granted ONLY on an explicit
+        // authentication success. The unlock screens pop `true` exclusively
+        // from their `AuthSuccess` branches (wrong credential, lockout,
+        // cancellation and service failures all resolve false/null) — and
+        // the host re-checks `mounted` after the await so a torn-down tree
+        // can never grant.
+        passed = unlocked == true;
+        if (passed) {
+          if (!mounted) {
+            return;
+          }
+          // Phase 5E/5F: the credential passed — open the session,
+          // dismiss the challenge, then LAUNCH the protected app so the
+          // user proceeds straight into it.
+          await container.accessController.grantAccess(packageName);
+          await container.overlay.hideLockChallenge();
+          await container.installedAppsService.launchApp(packageName);
+        }
+      } finally {
+        _afterChallengeClosed(passed);
       }
     } finally {
-      _afterChallengeClosed(passed);
+      _presenting = false;
     }
   }
 
@@ -350,10 +364,35 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     }
     _pendingPackage = null;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && !_challenging && _pendingPackage == null) {
-        _presentChallenge(target);
+      if (mounted && !_presenting && !_challenging && _pendingPackage == null) {
+        _presentIfRequired(target);
       }
     });
+  }
+
+  /// Phase 5Q: re-evaluates [packageName] before presenting — rapid
+  /// switching can make a queued requirement stale (a grant that landed
+  /// between the requirement and its re-presentation must NOT produce a
+  /// double challenge). Presents only when the decision still demands
+  /// it; the fresh evaluation is a real re-entry decision.
+  Future<void> _presentIfRequired(String packageName) async {
+    final AppContainer? container = AppScope.read(context);
+    if (container == null || !mounted) {
+      return;
+    }
+    final AccessDecision decision =
+        await container.accessController.evaluate(packageName);
+    if (!mounted) {
+      return;
+    }
+    if (decision == AccessDecision.challenge ||
+        decision == AccessDecision.deny) {
+      await _presentChallenge(packageName);
+      return;
+    }
+    // The lock loop truly ended (a grant landed while the requirement
+    // was queued) — make sure the secure window does not linger armed.
+    _clearSecure();
   }
 
   /// Phase 5M: re-probes detection and challenges the current
@@ -398,8 +437,10 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       // Skip when a NEWER requirement already took over (it either
       // presents directly or fills the pending slot for its own cycle).
-      if (mounted && !_challenging && _pendingPackage == null) {
-        _presentChallenge(pending);
+      if (mounted && !_presenting && !_challenging && _pendingPackage == null) {
+        // Phase 5Q: re-evaluate first — a grant that landed since the
+        // requirement queued must not double-challenge.
+        _presentIfRequired(pending);
       }
     });
   }

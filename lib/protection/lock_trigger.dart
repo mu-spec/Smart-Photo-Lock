@@ -102,6 +102,9 @@ class LockTrigger {
     _subscription = null;
     await _screenSub?.cancel();
     _screenSub = null;
+    // Phase 5Q: drain the processing queue so no transition evaluates
+    // (or emits) after stop() resolves.
+    await _processing;
     await _monitor.stop();
   }
 
@@ -139,11 +142,20 @@ class LockTrigger {
     await _lockRequired.close();
   }
 
-  Future<void> _onChange(ForegroundAppChange change) async {
-    // Phase 5J: IMMEDIATE RE-LOCK — leaving the previous package ends
-    // its unlock session right now, so returning to the protected app
-    // always requires authentication again. (The inactivity window
-    // remains as a fallback for transitions detection might miss.)
+  /// Phase 5Q: serializes transition processing. Rapid switches
+  /// (protected → unprotected → protected) must evaluate strictly in
+  /// order — an interleaved departure/evaluation could otherwise arm a
+  /// stale grace deadline AFTER a re-entry already happened.
+  Future<void> _processing = Future<void>.value();
+
+  void _onChange(ForegroundAppChange change) {
+    _processing = _processing.then((_) => _processChange(change));
+  }
+
+  Future<void> _processChange(ForegroundAppChange change) async {
+    // Phase 5J/5L: leaving the previous package applies the grace
+    // policy (the controller's revokeAccess arms the deadline when a
+    // grace is configured, or revokes instantly).
     final String? previous = _previousPackage;
     _previousPackage = change.packageName;
     if (previous != null && previous != change.packageName) {

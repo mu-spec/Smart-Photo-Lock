@@ -620,3 +620,26 @@ LEAVING: the challenge must stay, no flash. Pull the notification shade:
 no change. Complete the home-swipe: the challenge dismisses; return and
 it re-presents. Edge-swipe from the left on the challenge: it bounces
 back to the challenge, never exposing the app.
+
+---
+
+# Phase 5Q — Rapid Switching
+
+Automated suites: `test/protection/default_access_controller_test.dart`
+(5Q group), `test/protection/lock_trigger_test.dart` (5Q group),
+`test/ui/lock_challenge_test.dart` (5Q group).
+
+| # | Scenario | Expected |
+| - | -------- | -------- |
+| 1 | Controller: 3 rapid leave/re-enter cycles (immediate grace) | Every re-entry challenges |
+| 2 | Controller: 3 rapid cycles inside grace (10s apart) | Every re-entry allowed; post-grace return challenges |
+| 3 | Trigger: 5 rapid emissions (P→U→P→U→P) | Exactly 3 ordered requirements, launcher silent |
+| 4 | Trigger: grace-window rapid cycles (clocked) | No new requirement inside grace; one after expiry |
+| 5 | Widget: rapid storm while challenge up | One challenge screen at all times; no extra bring-to-fronts; unlock ends loop without double challenge; secure clears |
+| 6 | Widget: 3 grace cycles + post-grace return | No challenges inside grace; exactly one after |
+
+Device QA: with WhatsApp protected and a challenge up, spam the
+recents/home gestures between WhatsApp and the launcher — the challenge
+never doubles up. With a 30-second grace, hop WhatsApp → launcher →
+WhatsApp repeatedly — no prompts within the window; the first return
+past 30 seconds prompts once.
