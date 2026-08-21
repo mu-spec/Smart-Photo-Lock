@@ -554,9 +554,25 @@ void main() {
   });
   // -- Home-button hardening (Phase 5M) --------------------------------------
 
-  /// Simulates the Home button: Smart App Lock leaves the foreground.
+  /// Simulates the Home button / a COMPLETED home-swipe gesture:
+  /// Android fires `inactive` when the swipe starts and `paused` once
+  /// the task is actually covered. Only the `paused` counts as a leave
+  /// (Phase 5P).
   Future<void> pressHome(WidgetTester tester) async {
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    await tester.pump();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pumpAndSettle();
+  }
+
+  /// Simulates a CANCELLED gesture (or the notification shade, a
+  /// permission dialog, or split-screen peeking): `inactive` fires and
+  /// the app returns to `resumed` WITHOUT ever pausing. The challenge
+  /// must stay untouched (Phase 5P).
+  Future<void> cancelledGesture(WidgetTester tester) async {
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    await tester.pump();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pumpAndSettle();
   }
 
@@ -766,6 +782,170 @@ void main() {
     expect(find.byType(PinUnlockScreen), findsNothing);
     expect(overlay.secureWindow, isFalse);
     expect(sessionFor(container, 'com.whatsapp'), isNotNull);
+  });
+
+  // -- gesture navigation hardening (Phase 5P) --------------------------------
+
+  testWidgets(
+      'a CANCELLED home-swipe gesture never dismisses the challenge '
+      '(Phase 5P)', (WidgetTester tester) async {
+    final AppContainer container = await pumpApp(tester);
+    await container.auth.enrollPin('1234');
+    await protect(container, 'com.whatsapp');
+    final StaticOverlayLockService overlay =
+        container.overlay as StaticOverlayLockService;
+
+    await openApp(tester, container, 'com.whatsapp');
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+    final int showCalls = overlay.showLockChallengeCalls;
+
+    // Gesture starts (inactive) and the user lets go without leaving
+    // (resumed): the challenge must stay exactly where it is — no
+    // dismiss flicker, no re-presentation, no extra bring-to-front.
+    await cancelledGesture(tester);
+
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+    expect(overlay.secureWindow, isTrue);
+    expect(overlay.showLockChallengeCalls, showCalls);
+    expect(sessionFor(container, 'com.whatsapp'), isNull);
+
+    // The PIN still completes the untouched challenge.
+    for (final String digit in <String>['1', '2', '3', '4']) {
+      await tester.tap(find.byKey(Key('pin_key_$digit')));
+      await tester.pumpAndSettle();
+    }
+    expect(find.byType(PinUnlockScreen), findsNothing);
+    expect(sessionFor(container, 'com.whatsapp'), isNotNull);
+  });
+
+  testWidgets(
+      'the notification shade (transient inactive) never dismisses the '
+      'challenge (Phase 5P)', (WidgetTester tester) async {
+    final AppContainer container = await pumpApp(tester);
+    await container.auth.enrollPin('1234');
+    await protect(container, 'com.whatsapp');
+    final StaticOverlayLockService overlay =
+        container.overlay as StaticOverlayLockService;
+
+    await openApp(tester, container, 'com.whatsapp');
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+
+    // Shade down, shade up — two transient inactive/resumed cycles.
+    await cancelledGesture(tester);
+    await cancelledGesture(tester);
+
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+    expect(overlay.secureWindow, isTrue);
+    expect(sessionFor(container, 'com.whatsapp'), isNull);
+  });
+
+  testWidgets(
+      'a COMPLETED home-swipe (inactive -> paused) dismisses and '
+      're-challenges on return (Phase 5P)', (WidgetTester tester) async {
+    final AppContainer container = await pumpApp(tester);
+    await container.auth.enrollPin('1234');
+    await protect(container, 'com.whatsapp');
+    final StaticOverlayLockService overlay =
+        container.overlay as StaticOverlayLockService;
+
+    await openApp(tester, container, 'com.whatsapp');
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+
+    await pressHome(tester);
+    expect(find.byType(PinUnlockScreen), findsNothing);
+    expect(sessionFor(container, 'com.whatsapp'), isNull);
+
+    await returnToApp(tester);
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+    expect(overlay.secureWindow, isTrue);
+    expect(sessionFor(container, 'com.whatsapp'), isNull);
+  });
+
+  testWidgets(
+      'the hidden state counts as a real leave (Phase 5P)',
+      (WidgetTester tester) async {
+    final AppContainer container = await pumpApp(tester);
+    await container.auth.enrollPin('1234');
+    await protect(container, 'com.whatsapp');
+
+    await openApp(tester, container, 'com.whatsapp');
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+
+    tester.binding
+        .handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    await tester.pump();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(PinUnlockScreen), findsNothing);
+    expect(sessionFor(container, 'com.whatsapp'), isNull);
+
+    await returnToApp(tester);
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+  });
+
+  testWidgets(
+      'the edge-back gesture on the challenge re-presents it (5N + 5P '
+      'interaction)', (WidgetTester tester) async {
+    final AppContainer container = await pumpApp(tester);
+    await container.auth.enrollPin('1234');
+    await protect(container, 'com.whatsapp');
+    final StaticOverlayLockService overlay =
+        container.overlay as StaticOverlayLockService;
+
+    await openApp(tester, container, 'com.whatsapp');
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+
+    // An edge-back gesture pops the route exactly like the Back button:
+    // the challenge re-presents, the secure window stays armed, and no
+    // session is ever created.
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+    expect(overlay.secureWindow, isTrue);
+    expect(sessionFor(container, 'com.whatsapp'), isNull);
+
+    for (final String digit in <String>['1', '2', '3', '4']) {
+      await tester.tap(find.byKey(Key('pin_key_$digit')));
+      await tester.pumpAndSettle();
+    }
+    expect(find.byType(PinUnlockScreen), findsNothing);
+    expect(sessionFor(container, 'com.whatsapp'), isNotNull);
+  });
+
+  testWidgets(
+      'a rapid cancel-then-complete gesture sequence stays secure '
+      '(Phase 5P)', (WidgetTester tester) async {
+    final AppContainer container = await pumpApp(tester);
+    await container.auth.enrollPin('1234');
+    await protect(container, 'com.whatsapp');
+
+    await openApp(tester, container, 'com.whatsapp');
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+
+    // Cancel once (challenge stays), then complete the gesture.
+    await cancelledGesture(tester);
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+
+    await pressHome(tester);
+    expect(find.byType(PinUnlockScreen), findsNothing);
+    expect(sessionFor(container, 'com.whatsapp'), isNull);
+
+    // Returning brings the challenge back — and only the PIN ends it.
+    await returnToApp(tester);
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+    final StaticInstalledAppsService apps =
+        container.installedAppsService as StaticInstalledAppsService;
+    expect(apps.launchAppCalls, 0);
+
+    for (final String digit in <String>['1', '2', '3', '4']) {
+      await tester.tap(find.byKey(Key('pin_key_$digit')));
+      await tester.pumpAndSettle();
+    }
+    expect(find.byType(PinUnlockScreen), findsNothing);
+    expect(sessionFor(container, 'com.whatsapp'), isNotNull);
+    expect(apps.launchAppCalls, 1);
   });
 
   /// Draws [nodes] on the unlock screen's pattern grid: bounds-derived

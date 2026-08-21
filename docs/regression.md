@@ -595,3 +595,28 @@ the challenge comes straight back. Tap Smart App Lock's own task — the
 challenge is still there. Swipe Smart App Lock away from recents and
 relaunch — everything is locked again (in-memory sessions die with the
 process).
+
+---
+
+# Phase 5P — Gesture Navigation Hardening
+
+Automated suites: `test/ui/lock_challenge_test.dart` (5P group).
+
+| # | Scenario | Expected |
+| - | -------- | -------- |
+| 1 | Cancelled home-swipe (inactive→resumed) | Challenge stays; secure armed; no extra bring-to-front |
+| 2 | Notification shade ×2 | Challenge untouched |
+| 3 | Completed home-swipe (inactive→paused) | Dismissed; no session; re-challenges on resume |
+| 4 | `hidden` lifecycle state | Counts as a real leave |
+| 5 | Edge-back gesture | Re-presents (5N); secure armed; no session |
+| 6 | Cancel-then-complete sequence | Re-presented; only the PIN ends the loop; single launch |
+
+NOTE: the `pressHome` test helper now models the real Android sequence
+(inactive → paused); the previous immediate `inactive` dismissal was the
+flicker/race this phase removes.
+
+Device QA: with a challenge up — swipe up for home and LET GO WITHOUT
+LEAVING: the challenge must stay, no flash. Pull the notification shade:
+no change. Complete the home-swipe: the challenge dismisses; return and
+it re-presents. Edge-swipe from the left on the challenge: it bounces
+back to the challenge, never exposing the app.

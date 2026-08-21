@@ -69,6 +69,7 @@ implemented yet.
 | 5M | Home-button hardening (challenge dismissed on leave; requirements re-queued, never dropped) | ✅ |
 | 5N | Back-navigation hardening (Back cannot dismiss a challenge; re-presents in the foreground) | ✅ |
 | 5O | Recents hardening (FLAG_SECURE challenge snapshots; task-switch re-challenge) | ✅ |
+| 5P | Gesture navigation hardening (cancelled gestures never dismiss; paused/hidden count as leaves) | ✅ |
 
 ### Phase 1A ✅ — Create Android Project
 
@@ -582,7 +583,7 @@ Structural checks: `python3 tool/verify_structure.py` (no SDK needed).
 | minSdk / targetSdk / compileSdk | 24 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.2.1 / 9.4.1 / built-in Kotlin with KGP 2.3.20 (settings classpath `apply false` + buildscript; `android.builtInKotlin=true`; AGP legacy-DSL compat `android.newDsl=false` until the Flutter tool finishes its new-DSL migration) |
 | Java | 17 |
-| versionName / versionCode | `0.35.16` / `81` (in `pubspec.yaml`) |
+| versionName / versionCode | `0.35.17` / `82` (in `pubspec.yaml`) |
 | Dependencies | `crypto` (PIN hashing), `shared_preferences` (preferences), `sqflite` + `path` (database), `flutter_secure_storage` (Keystore-backed secrets), `cryptography` (AES-GCM), `local_auth` (biometrics) |
 
 ## Prerequisites (on your machine)
@@ -1211,6 +1212,25 @@ Recent-app/task switching can no longer leak or bypass the lock:
 - **No grants through recents** — every recents path resolves null for
   the host (5I invariants); sessions are never created by task
   switching.
+
+### Phase 5P ✅ — Gesture Navigation Hardening
+
+Modern gesture navigation is handled precisely:
+
+- **Transient `inactive` never dismisses** — the home-swipe gesture,
+  the notification shade, permission dialogs and split-screen peeking
+  all fire `inactive` WITHOUT the app leaving. The challenge now stays
+  exactly where it is through those (no dismiss flicker, no spurious
+  re-presentation, no extra bring-to-front).
+- **Real leaves are `paused`/`hidden`** — only when the task is truly
+  covered (completed home-swipe, recents switch) is the challenge
+  dismissed (5M idempotent dismissal), with re-challenge on resume.
+- **Edge-back gestures follow 5N** — a predictive-back/edge-back pop
+  re-presents the challenge immediately with the secure window armed;
+  no session is ever created by a gesture.
+- **Rapid sequences stay secure** — cancel-then-complete gesture
+  sequences end with the challenge re-presented and only the correct
+  credential ending the loop.
 
 ## Next phases
 

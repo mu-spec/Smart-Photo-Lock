@@ -120,26 +120,43 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     super.dispose();
   }
 
-  /// Phase 5K/5M lifecycle:
-  ///  * leaving the foreground (Home button / recents) while a
-  ///    challenge is showing DISMISSES it — otherwise `_challenging`
-  ///    stays true forever and every later requirement is dropped,
-  ///    letting a protected app open unchallenged;
-  ///  * resuming re-evaluates the foreground after a screen-off (5K)
-  ///    or an interrupted challenge (5M).
+  /// Phase 5K/5M/5P lifecycle:
+  ///  * `inactive` is TRANSIENT on modern Android — the home-swipe
+  ///    gesture, the notification shade, permission dialogs and the
+  ///    predictive-back peek all fire it WITHOUT the app actually
+  ///    leaving. Dismissing the challenge here would flicker it away
+  ///    on every cancelled gesture, so `inactive` only flips the
+  ///    foreground flag (queued re-presentations wait);
+  ///  * `paused`/`hidden` is a REAL leave (Home press completed, task
+  ///    covered by another) — the challenge is dismissed here, exactly
+  ///    once (idempotent), and re-challenged on resume (5M);
+  ///  * `resumed` re-evaluates the foreground after a screen-off (5K)
+  ///    or an interrupted challenge (5M) — a cancelled gesture returns
+  ///    to `resumed` with the challenge untouched.
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _appForeground = true;
       _onResumed();
-    } else if (state == AppLifecycleState.inactive ||
-        state == AppLifecycleState.paused) {
+      return;
+    }
+    if (state == AppLifecycleState.inactive) {
+      // Transient: cancelled gestures, shade pulls, dialogs, split
+      // screen — the challenge stays exactly where it is.
+      _appForeground = false;
+      return;
+    }
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
       _appForeground = false;
       _onLeftForeground();
     }
   }
 
-  /// Phase 5M/5N: Home-press handling — dismiss the on-screen challenge.
+  /// Phase 5M/5N/5P: Home-press handling — dismiss the on-screen
+  /// challenge. Only called on a REAL leave (`paused`/`hidden`); the
+  /// transient `inactive` never reaches here, so a cancelled
+  /// home-swipe or a shade pull never dismisses anything.
   void _onLeftForeground() {
     // Idempotent: a second lifecycle event must not double-pop (the
     // second pop would remove the SHELL route beneath the challenge).

@@ -1159,3 +1159,25 @@ Recents flows:
   fail-quiet).
 - The secure toggle is hardening, not enforcement: a failed toggle is
   tolerated; the lock logic never depends on it.
+
+## 5P. Gesture navigation hardening
+
+Modern gesture-nav lifecycle semantics:
+
+```
+didChangeAppLifecycleState:
+  inactive (transient: cancelled swipe, shade, dialog, split peek)
+      -> _appForeground = false only  (challenge untouched)
+  paused / hidden (REAL leave: completed home-swipe, covered task)
+      -> _appForeground = false + _onLeftForeground()  (5M dismissal)
+  resumed
+      -> _appForeground = true + _onResumed()
+           (screen-off 5K / interrupted 5M -> re-evaluate + challenge;
+            cancelled gesture -> nothing)
+```
+
+- The dismissal moved from `inactive` to `paused`/`hidden`: a cancelled
+  home-swipe or a shade pull previously popped the challenge (flicker +
+  a needless re-presentation race). Now only a real leave dismisses.
+- Edge-back / predictive-back on the challenge pops the route exactly
+  like the Back button — 5N re-presents it with FLAG_SECURE armed.
