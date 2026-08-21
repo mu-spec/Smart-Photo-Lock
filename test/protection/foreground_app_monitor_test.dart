@@ -39,6 +39,7 @@ void main() {
     test('a probe reports the foreground package', () async {
       installed.foregroundPackage = 'com.example.chat';
       await monitor.probe();
+      await pumpEventQueue();
 
       expect(changes, hasLength(1));
       expect(changes.single.packageName, 'com.example.chat');
@@ -51,6 +52,7 @@ void main() {
       await monitor.probe();
       await monitor.probe();
       await monitor.probe();
+      await pumpEventQueue();
 
       expect(changes, hasLength(1));
     });
@@ -63,6 +65,7 @@ void main() {
       await monitor.probe();
       installed.foregroundPackage = 'com.example.chat';
       await monitor.probe();
+      await pumpEventQueue();
 
       expect(changes, hasLength(3));
       expect(changes.map((ForegroundAppChange c) => c.packageName), <String>[
@@ -76,6 +79,7 @@ void main() {
         () async {
       installed.foregroundPackage = null;
       await monitor.probe();
+      await pumpEventQueue();
 
       expect(changes, isEmpty);
       expect(monitor.currentPackage, isNull);
@@ -90,15 +94,15 @@ void main() {
       // The baseline probe sees no foreground package and emits nothing.
       await monitor.start();
       accessibility.emitForegroundPackage('com.example.chat');
-      await Future<void>.delayed(Duration.zero);
+      await pumpEventQueue();
       accessibility.emitForegroundPackage('com.example.chat');
-      await Future<void>.delayed(Duration.zero);
+      await pumpEventQueue();
 
       expect(changes, hasLength(1));
       expect(changes.single.source, ForegroundDetectionSource.accessibility);
 
       accessibility.emitForegroundPackage('com.example.maps');
-      await Future<void>.delayed(Duration.zero);
+      await pumpEventQueue();
 
       expect(changes, hasLength(2));
       expect(changes.last.packageName, 'com.example.maps');
@@ -112,9 +116,10 @@ void main() {
       installed.foregroundPackage = 'com.example.chat';
       await monitor.probe(); // usage: chat
       accessibility.emitForegroundPackage('com.example.maps');
-      await Future<void>.delayed(Duration.zero); // accessibility: maps
+      await pumpEventQueue(); // accessibility: maps
       installed.foregroundPackage = 'com.example.chat';
       await monitor.probe(); // usage: chat again (real switch back)
+      await pumpEventQueue();
 
       expect(changes, hasLength(3));
       expect(changes.map((ForegroundAppChange c) => c.source),
@@ -130,8 +135,9 @@ void main() {
       await monitor.start(); // subscribe to the fallback; null baseline
       installed.foregroundPackage = 'com.example.chat';
       await monitor.probe();
+      await pumpEventQueue();
       accessibility.emitForegroundPackage('com.example.chat');
-      await Future<void>.delayed(Duration.zero);
+      await pumpEventQueue();
 
       expect(changes, hasLength(1));
       expect(monitor.currentPackage, 'com.example.chat');
@@ -155,8 +161,9 @@ void main() {
       // always runs the monitor via start()); the baseline probe sees
       // the already-reported package and adds no transition.
       await monitor.start();
+      await pumpEventQueue();
       accessibility.emitForegroundPackage('com.example.maps');
-      await Future<void>.delayed(Duration.zero);
+      await pumpEventQueue();
       expect(monitor.accessibilityEventCount, 1);
       expect(monitor.failureCount, 0);
     });
@@ -188,11 +195,13 @@ void main() {
       installed.foregroundPackage = 'com.example.chat';
       await monitor.start();
       await tester.pump(); // baseline probe already ran
+      await pumpEventQueue();
       expect(changes, hasLength(1));
       expect(installed.getForegroundPackageCalls, 1);
 
       installed.foregroundPackage = 'com.example.maps';
       await tester.pump(monitor.pollInterval); // next poll tick
+      await pumpEventQueue();
       expect(changes, hasLength(2));
       expect(installed.getForegroundPackageCalls, 2);
 
@@ -220,6 +229,7 @@ void main() {
       // After three full cycles the monitor still detects correctly.
       installed.foregroundPackage = 'com.example.chat';
       await monitor.probe();
+      await pumpEventQueue();
       expect(changes, hasLength(1));
       expect(changes.single.packageName, 'com.example.chat');
       expect(monitor.probeCount, greaterThanOrEqualTo(1));
@@ -243,6 +253,7 @@ void main() {
       installed.foregroundPackage = 'com.example.chat';
       await monitor.start();
       await tester.pump();
+      await pumpEventQueue();
       expect(changes, hasLength(1));
 
       // Dispose directly from the running state: the periodic timer must

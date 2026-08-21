@@ -170,6 +170,11 @@ class ForegroundAppMonitor {
 
   /// Stops polling and the accessibility subscription. The change stream
   /// stays open ([start] may be called again to resume detection).
+  ///
+  /// The periodic timer is cancelled SYNCHRONOUSLY (before any yield):
+  /// nothing here can block — the subscription cancel completes
+  /// asynchronously and is not awaited, so stop() can never hang a
+  /// caller, in any zone.
   Future<void> stop() async {
     // Audit fix: clear the started flag SYNCHRONOUSLY — a start() that
     // lands while the subscription cancel is in flight must see the
@@ -177,27 +182,34 @@ class ForegroundAppMonitor {
     _started = false;
     _timer?.cancel();
     _timer = null;
-    await _accessibilitySub?.cancel();
+    final StreamSubscription<Result<String>>? sub = _accessibilitySub;
     _accessibilitySub = null;
+    if (sub != null) {
+      unawaited(sub.cancel());
+    }
   }
 
   /// Permanently tears the monitor down: stops detection and closes the
   /// change stream. Not recoverable. Idempotent — a second dispose is a
   /// safe no-op (the periodic timer is cancelled exactly once, and the
   /// stream is closed exactly once).
+  ///
+  /// The timer dies SYNCHRONOUSLY first — no await may pass before the
+  /// periodic timer is cancelled, so a dispose racing an in-flight
+  /// stop can never leave the timer alive, and nothing here can hang.
   Future<void> dispose() async {
     if (_disposed) {
       return;
     }
     _disposed = true;
-    // Cancel the timer FIRST, synchronously — no await may pass before
-    // the periodic timer is dead, so a dispose() racing an in-flight
-    // stop() can never leave the timer alive.
     _timer?.cancel();
     _timer = null;
     _started = false;
-    await _accessibilitySub?.cancel();
+    final StreamSubscription<Result<String>>? sub = _accessibilitySub;
     _accessibilitySub = null;
-    await _controller.close();
+    if (sub != null) {
+      unawaited(sub.cancel());
+    }
+    unawaited(_controller.close());
   }
 }
