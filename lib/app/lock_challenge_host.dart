@@ -126,7 +126,7 @@ class _LockChallengeHostState extends State<LockChallengeHost>
   /// the whole transition — including trailing leaves — is absorbed.
   bool _ownPresentationInFlight = false;
 
-  /// Phase 5 mobile-QA fix #3: how long (in frame-clock time) the
+  /// Phase 5 mobile-QA fix #3: how long (in wall/fake-clock time) the
   /// challenge must remain up with the app foreground before the
   /// own-presentation suppression window is considered settled and a
   /// leave is treated as a REAL user leave again (a Home press after
@@ -134,15 +134,18 @@ class _LockChallengeHostState extends State<LockChallengeHost>
   static const Duration _presentationSettleWindow =
       Duration(milliseconds: 500);
 
-  /// Frame-clock timestamp (WidgetsBinding.currentFrameTimeStamp) of
-  /// the most recent resume during an own-presentation — the settle
-  /// window restarts at every resume, so a trailing leave shortly after
-  /// ANY resume of the transition is suppressed.
-  Duration? _presentationStartedAt;
-
-  /// True while a settle post-frame callback is scheduled (prevents
-  /// piling up callbacks).
-  bool _settleScheduled = false;
+  /// Phase 5 mobile-QA fix #3A: the settle timer that ends the
+  /// own-presentation suppression window. A one-shot [Timer] is safe to
+  /// create from ANY context — stream events, lifecycle callbacks and
+  /// build-time — unlike reading
+  /// `SchedulerBinding.currentFrameTimeStamp`, which asserts when
+  /// accessed outside an active Flutter frame (the crash this fix
+  /// removes). It also fires deterministically under flutter_test's
+  /// fake-async clock (`tester.pump(duration)` advances it), so the
+  /// settle window is testable without real time passing. Restarted at
+  /// every resume so a trailing leave fired by the launch transition
+  /// shortly after ANY resume is suppressed.
+  Timer? _settleTimer;
 
   /// Phase 5M: whether the app is currently in the foreground (drives
   /// the pending re-presentation; tracked explicitly so tests and
@@ -217,6 +220,11 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     WidgetsBinding.instance.removeObserver(this);
     _subscription?.cancel();
     _trigger?.stop();
+    // Phase 5 mobile-QA fix #3A: cancel the settle timer so a pending
+    // suppression window can never outlive the host (also keeps
+    // flutter_test's pending-timer check happy at teardown).
+    _settleTimer?.cancel();
+    _settleTimer = null;
     final AppContainer? container = _container;
     if (container != null) {
       unawaited(container.watcher.stop());
@@ -320,8 +328,6 @@ class _LockChallengeHostState extends State<LockChallengeHost>
       // dismiss the challenge (5M real Home presses still work once the
       // transition has settled).
       if (_ownPresentationInFlight) {
-        _presentationStartedAt =
-            WidgetsBinding.instance.currentFrameTimeStamp;
         _armPresentationSettle();
       }
       // Phase 5T (process/activity recreation): window flags do NOT
@@ -445,8 +451,6 @@ class _LockChallengeHostState extends State<LockChallengeHost>
       // suppression window must outlive the launch transition (trailing
       // lifecycle leaves), not end at the first resume.
       if (_ownPresentationInFlight) {
-        _presentationStartedAt ??=
-            WidgetsBinding.instance.currentFrameTimeStamp;
         _armPresentationSettle();
       }
       bool passed = false;
@@ -511,10 +515,11 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     _challenging = false;
     // Safety net: the challenge is no longer on screen, so no lifecycle
     // leave may ever be suppressed again (a real Home press behaves
-    // normally from here on). The scheduled settle callback stops
-    // itself the next time it runs (it observes the window ended).
+    // normally from here on). The settle timer is cancelled (it can
+    // no longer matter — nothing to settle).
     _ownPresentationInFlight = false;
-    _presentationStartedAt = null;
+    _settleTimer?.cancel();
+    _settleTimer = null;
     if (passed) {
       // The lock loop truly ends only when nothing is queued — the
       // queued re-presentation keeps the secure window armed (no
@@ -544,47 +549,48 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     _scheduleReChallenge();
   }
 
-  /// Phase 5 mobile-QA fix #3: ends the own-presentation suppression
-  /// window only after the challenge has been up with the app in the
-  /// foreground for the settle window, measured in FRAME-CLOCK time
-  /// (no wall-clock timers — deterministic under fake async). The
-  /// window restarts at every resume (`_onResumed`), so a trailing
-  /// leave fired by the launch transition shortly after ANY resume is
-  /// suppressed; once the app has been stably foreground with the
-  /// challenge up for the settle window, a leave is a REAL user leave
-  /// again (5M Home dismissal works).
+  /// Phase 5 mobile-QA fix #3: arms (or re-arms) the one-shot settle
+  /// timer that ends the own-presentation suppression window after the
+  /// challenge has been up with the app in the foreground for the
+  /// settle window.
+  ///
+  /// Phase 5 mobile-QA fix #3A: a [Timer] is the safe replacement for
+  /// the previous frame-clock mechanism — creating it does not require
+  /// an active Flutter frame (unlike `SchedulerBinding
+  /// .currentFrameTimeStamp`, which asserts when read outside one, the
+  /// crash this fix removes), and it fires deterministically under
+  /// flutter_test's fake-async clock (`tester.pump(duration)` elapses
+  /// it), so tests stay deterministic without real time passing.
+  ///
+  /// The window restarts at every resume (`_onResumed` re-arms), so a
+  /// trailing leave fired by the launch transition shortly after ANY
+  /// resume is suppressed; once the app has been stably foreground
+  /// with the challenge up for the settle window, a leave is a REAL
+  /// user leave again (5M Home dismissal works).
   void _armPresentationSettle() {
-    if (_settleScheduled || !mounted) {
+    if (!mounted || !_ownPresentationInFlight) {
       return;
     }
-    _settleScheduled = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _settleScheduled = false;
-      if (!mounted) {
-        return;
-      }
-      if (!_ownPresentationInFlight) {
-        // Nothing left to settle (window already ended, or the
-        // challenge closed) — stop watching.
-        _presentationStartedAt = null;
-        return;
-      }
-      final Duration now =
-          WidgetsBinding.instance.currentFrameTimeStamp;
-      _presentationStartedAt ??= now;
-      final Duration startedAt = _presentationStartedAt!;
-      if (_challenging &&
-          _appForeground &&
-          now - startedAt >= _presentationSettleWindow) {
-        // The transition has settled: from here on a lifecycle leave
-        // IS the user leaving and dismisses as before (5M).
-        _ownPresentationInFlight = false;
-        _presentationStartedAt = null;
-        return;
-      }
-      // Keep watching on subsequent frames.
-      _armPresentationSettle();
-    });
+    _settleTimer?.cancel();
+    _settleTimer = Timer(_presentationSettleWindow, _endPresentationSettle);
+  }
+
+  /// Phase 5 mobile-QA fix #3: fires when the settle window elapses —
+  /// the bring-to-front transition has (presumably) settled, so the
+  /// own-presentation suppression ends and a leave from here on is a
+  /// real user leave. Only ends when the challenge is genuinely up
+  /// with the app foreground; otherwise the window stays armed and the
+  /// next resume re-arms the timer.
+  void _endPresentationSettle() {
+    _settleTimer = null;
+    if (!mounted || !_ownPresentationInFlight) {
+      return;
+    }
+    if (_challenging && _appForeground) {
+      // The transition has settled: from here on a lifecycle leave IS
+      // the user leaving and dismisses as before (5M).
+      _ownPresentationInFlight = false;
+    }
   }
 
   /// Phase 5 mobile-QA fix #2: re-brings Smart App Lock to the front
@@ -608,7 +614,6 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     // Phase 5 mobile-QA fix #3: this re-bring-to-front is a NEW
     // transition — restart its settle window so its own trailing
     // leaves are absorbed too.
-    _presentationStartedAt = null;
     _armPresentationSettle();
     final Result<void> shown =
         await container.overlay.showLockChallenge(packageName);

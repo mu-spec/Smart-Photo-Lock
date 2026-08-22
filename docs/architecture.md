@@ -1668,3 +1668,31 @@ Verification (run by the developer):
 - `flutter analyze`
 - `flutter test test/ui/lock_challenge_test.dart --concurrency=1`
 - `flutter test --concurrency=1`
+
+## Phase 5 mobile-QA fix #3A — safe settle timing (scheduler crash fix)
+
+Fix #3's settle mechanism read `SchedulerBinding.currentFrameTimeStamp`
+to measure the settle window. That getter asserts when accessed OUTSIDE
+an active Flutter frame (`assert(_currentFrameTimeStamp != null)` in
+scheduler/binding.dart) — and `_presentChallenge` runs from a
+`lockRequired` stream event, i.e. outside any frame. Result: a crash in
+every background-presentation scenario (GAUNTLET 4/5, Phase 5M re-open,
+Phase 5O recents, and the flicker/flash-through regression tests).
+
+Fix: the settle window is now a one-shot `Timer`
+(`_armPresentationSettle` -> `Timer(_presentationSettleWindow,
+_endPresentationSettle)`), restarted at every resume, cancelled on
+challenge close and on host dispose. A `Timer` is safe to create from
+ANY context (no frame required), and it fires deterministically under
+flutter_test's fake-async clock (`tester.pump(duration)` elapses it), so
+the settle window remains testable without real time passing and without
+pending-timer leaks (dispose cancels it). The intended flicker/
+flash-through protection is unchanged: the suppression window still ends
+only after the challenge has been up with the app foreground for the
+500ms settle period.
+
+Verification (run by the developer):
+- `flutter analyze`
+- `flutter test test/ui/lock_challenge_test.dart --concurrency=1`
+- `flutter test test/regression/lock_engine_regression_test.dart --concurrency=1`
+- `flutter test --concurrency=1`
