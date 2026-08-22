@@ -46,6 +46,18 @@ class ForegroundAppChange {
 /// CHANGES (deduplicated across sources: the same package reported by
 /// the other source is not a new transition).
 ///
+/// Phase 5 mobile-QA fix #4 (source arbitration): accessibility
+/// window-state events are real-time and authoritative while recent;
+/// usage stats is the FALLBACK. A usage-stats probe that CONTRADICTS a
+/// recently received accessibility event is STALE — on real devices it
+/// reports background/VPN packages (e.g. com.cloudflare... on the Oppo
+/// A12) while the protected app is actually foreground — and must not
+/// fabricate a "left the app" transition that could dismiss an active
+/// challenge. Usage stats resumes authority once the accessibility
+/// event ages out of [accessibilityAuthorityWindow] (or when
+/// accessibility has never reported), so detection still works with
+/// accessibility unavailable.
+///
 /// Detection is fail-closed:
 ///  * probe failures are ignored (fail-quiet);
 ///  * a null probe result (Usage Access missing or backend failure) is
@@ -103,6 +115,22 @@ class ForegroundAppMonitor {
   /// treated as a fresh transition even when it carries the same
   /// package (see [invalidateCurrentPackage]).
   bool _currentStale = false;
+
+  /// Phase 5 mobile-QA fix #4: how long a received accessibility
+  /// window-state event stays AUTHORITATIVE over a conflicting
+  /// usage-stats probe. Accessibility is real-time; usage stats lags
+  /// (its 60s lookback can return a background/VPN package used before
+  /// the actual foreground). After this window (or with no
+  /// accessibility data at all) usage stats is the fallback again.
+  static const Duration accessibilityAuthorityWindow =
+      Duration(seconds: 5);
+
+  /// Phase 5 mobile-QA fix #4: when the last accessibility window-state
+  /// event was received (null = none yet). Refreshed by EVERY
+  /// accessibility report — even a deduplicated same-package one — since
+  /// any event proves accessibility is live and what is really
+  /// foreground.
+  DateTime? _lastAccessibilityAt;
 
   /// Foreground transitions (deduplicated per package across sources).
   Stream<ForegroundAppChange> get changes => _controller.stream;
@@ -178,6 +206,19 @@ class ForegroundAppMonitor {
     _report(package, ForegroundDetectionSource.accessibility);
   }
 
+  /// Phase 5 mobile-QA fix #4: true while the last accessibility
+  /// window-state event is recent enough to be authoritative over a
+  /// CONFLICTING usage-stats probe. No accessibility data yet (or it
+  /// aged out of [accessibilityAuthorityWindow]) => usage stats is the
+  /// fallback and its reports are accepted.
+  bool _accessibilityIsAuthoritative() {
+    final DateTime? at = _lastAccessibilityAt;
+    if (at == null) {
+      return false;
+    }
+    return _now().difference(at) < accessibilityAuthorityWindow;
+  }
+
   /// Phase 5O hardening: marks the last-known foreground package
   /// STALE, so the next report — even of the identical package — is
   /// emitted as a fresh transition.
@@ -212,6 +253,20 @@ class ForegroundAppMonitor {
     // foreground while our UI is on top (dedupe keeps swallowing its
     // reports — no fabricated transitions).
     if (package == ownPackage) {
+      return;
+    }
+    // Phase 5 mobile-QA fix #4 (source arbitration): accessibility is
+    // real-time and authoritative while recent; usage stats is the
+    // fallback. A usage-stats probe that contradicts a recent
+    // accessibility event is STALE (background/VPN packages on the
+    // device) and must NOT be treated as a foreground transition —
+    // that false "left the app" would revoke/dismiss an active
+    // unauthenticated challenge. Ignored entirely: no emission,
+    // `_current` unchanged, and the stale marker (if any) is NOT
+    // consumed — the next real observation remains the fresh one.
+    if (source == ForegroundDetectionSource.accessibility) {
+      _lastAccessibilityAt = _now();
+    } else if (_accessibilityIsAuthoritative()) {
       return;
     }
     // A stale last-known package is consumed by the FIRST observation,

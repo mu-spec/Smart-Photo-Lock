@@ -1334,6 +1334,65 @@ void main() {
   });
 
   testWidgets(
+      'a stale usage-stats report never dismisses the challenge or '
+      'creates a second one (Phase 5 mobile-QA fix #4)',
+      (WidgetTester tester) async {
+    final AppContainer container = await pumpApp(tester);
+    await container.auth.enrollPin('1234');
+    await protect(container, 'com.whatsapp');
+    final StaticOverlayLockService overlay =
+        container.overlay as StaticOverlayLockService;
+    final StaticInstalledAppsService apps =
+        container.installedAppsService as StaticInstalledAppsService;
+
+    // Real device: Smart App Lock is backgrounded when WhatsApp opens.
+    await pressHome(tester);
+
+    // Accessibility (real-time) reports WhatsApp -> the FIRST challenge.
+    await openApp(tester, container, 'com.whatsapp');
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+    final int showCalls = overlay.showLockChallengeCalls;
+    expect(showCalls, 1);
+
+    // The usage-stats backend is STALE: shortly after, it reports a
+    // background VPN package (the real-device evidence) instead of the
+    // protected foreground WhatsApp.
+    apps.foregroundPackage = 'com.cloudflare.onedotonedotonedotone';
+    await container.foregroundMonitor.probe();
+    await tester.pumpAndSettle();
+
+    // The stale report is NOT a transition: the monitor stays logically
+    // on WhatsApp, the challenge stays mounted — no dismissal, no
+    // second bring-to-front, no session, no launch.
+    expect(container.foregroundMonitor.currentPackage, 'com.whatsapp');
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+    expect(overlay.showLockChallengeCalls, showCalls);
+    expect(overlay.hideLockChallengeCalls, 0);
+    expect(overlay.secureWindow, isTrue);
+    expect(sessionFor(container, 'com.whatsapp'), isNull);
+    expect(apps.launchAppCalls, 0);
+
+    // Accessibility re-confirms WhatsApp: still the SAME challenge, no
+    // second presentation.
+    await openApp(tester, container, 'com.whatsapp');
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+    expect(overlay.showLockChallengeCalls, showCalls);
+    expect(sessionFor(container, 'com.whatsapp'), isNull);
+
+    // Only successful authentication ends it — exactly once.
+    for (final String digit in <String>['1', '2', '3', '4']) {
+      await tester.tap(find.byKey(Key('pin_key_$digit')));
+      await tester.pumpAndSettle();
+    }
+    expect(find.byType(PinUnlockScreen), findsNothing);
+    expect(overlay.hideLockChallengeCalls, 1);
+    expect(overlay.secureWindow, isFalse);
+    expect(sessionFor(container, 'com.whatsapp'), isNotNull);
+    expect(apps.launchAppCalls, 1);
+    expect(apps.launchedPackages, <String>['com.whatsapp']);
+  });
+
+  testWidgets(
       'a TRAILING leave after our bring-to-front never dismisses the '
       'first challenge (Phase 5 mobile-QA flash-through fix)',
       (WidgetTester tester) async {

@@ -1736,3 +1736,70 @@ The sequence `challenge#1 PRESENTED` -> `lifecycle=...` ->
 `challenge#1 DISMISS reason=...` -> `foreground=...` ->
 `challenge#2 ...` pinpoints the exact dismissal cause and what created
 challenge #2.
+
+## Phase 5 mobile-QA fix #4 — stale usage-stats must not override accessibility
+
+Real-device root cause (Oppo A12, [PHASE5_DIAG] logs): while protection
+runs, the native usage-stats backend repeatedly reports
+`com.cloudflare.onedotonedotonedotone` (a background VPN package) instead
+of the protected foreground WhatsApp. The old monitor treated any
+different package from any source as a transition:
+
+```
+accessibility -> com.whatsapp        (real-time, correct)
+usage stats   -> com.cloudflare...   (STALE: 60s lookback picks a
+                                       background/VPN package)
+  -> monitor emits a false "left WhatsApp" transition
+  -> LockTrigger sees the user left -> revoke path
+  -> the active unauthenticated challenge is disturbed ->
+     one flash-through, then a second challenge
+```
+
+Root cause: there was NO source arbitration — usage stats (laggy,
+stale-prone) could immediately override a just-received accessibility
+window-state event.
+
+Fix (ForegroundAppMonitor only):
+- Accessibility window-state events are authoritative while recent:
+  `_lastAccessibilityAt` is refreshed by EVERY accessibility report
+  (even a deduped same-package one — any event proves accessibility is
+  live and what is really foreground).
+- A usage-stats probe that CONTRADICTS a recent accessibility event is
+  STALE and ignored entirely: no emission, `_current` unchanged, and the
+  stale marker (Phase 5O) is NOT consumed — the next real observation
+  remains the fresh one.
+- Usage stats remains the FALLBACK: once the accessibility event ages
+  out of `accessibilityAuthorityWindow` (5s) — or when accessibility has
+  never reported — its reports are accepted again, so detection still
+  works with accessibility unavailable.
+- The conflicting report is not fabricated data and never a transition:
+  the monitor stays logically on the accessibility-reported foreground,
+  so no false "left WhatsApp" fires and the active challenge is never
+  revoked/dismissed by it.
+
+Regression tests:
+- `test/protection/foreground_app_monitor_test.dart`:
+  - accessibility reports com.whatsapp -> usage-stats shortly reports
+    stale com.cloudflare... -> monitor emits NO transition and stays on
+    com.whatsapp -> accessibility re-confirms com.whatsapp stays deduped
+    (the exact required scenario);
+  - usage stats is the fallback with no accessibility data;
+  - usage stats resumes authority after the window elapses;
+  - a matching usage report stays deduplicated.
+- `test/ui/lock_challenge_test.dart`: end-to-end — protected WhatsApp
+  opened from the background -> challenge #1 -> stale usage-stats report
+  -> challenge stays mounted (no dismissal, no second showLockChallenge,
+  no session, no launch) -> only the correct PIN ends it.
+
+Note: the pre-existing cross-source unit test "both paths share one
+deduplicated transition chain" asserted the OLD contract (usage
+immediately overriding a fresh accessibility event). It now advances the
+clock past the authority window before the usage switch-back, preserving
+its intent (cross-source transitions share one dedupe chain; usage is a
+genuine fallback) under the corrected contract.
+
+Verification (run by the developer):
+- `flutter analyze`
+- `flutter test test/protection/foreground_app_monitor_test.dart --concurrency=1`
+- `flutter test test/ui/lock_challenge_test.dart --concurrency=1`
+- `flutter test --concurrency=1`

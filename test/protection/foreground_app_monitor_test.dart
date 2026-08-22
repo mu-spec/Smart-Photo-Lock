@@ -19,13 +19,18 @@ void main() {
   late ForegroundAppMonitor monitor;
   late List<ForegroundAppChange> changes;
 
+  /// Shared fake clock (mutable so the source-arbitration tests can
+  /// advance it past the accessibility authority window).
+  late DateTime clock;
+
   setUp(() {
+    clock = DateTime(2026, 8, 21, 9, 0);
     installed = StaticInstalledAppsService(const <AppEntry>[]);
     accessibility = StaticAccessibilityLockService(enabled: true);
     monitor = ForegroundAppMonitor(
       installedApps: installed,
       accessibility: accessibility,
-      now: () => DateTime(2026, 8, 21, 9, 0),
+      now: () => clock,
     );
     changes = <ForegroundAppChange>[];
     monitor.changes.listen(changes.add);
@@ -116,7 +121,13 @@ void main() {
       installed.foregroundPackage = 'com.example.chat';
       await monitor.probe(); // usage: chat
       accessibility.emitForegroundPackage('com.example.maps');
-      await pumpEventQueue(); // accessibility: maps
+      await pumpEventQueue(); // accessibility: maps (now authoritative)
+      // Phase 5 mobile-QA fix #4: a stale usage result must not
+      // immediately override the fresh accessibility event — the usage
+      // switch-back is only accepted once the accessibility authority
+      // window has elapsed (the genuine fallback path).
+      clock =
+          clock.add(ForegroundAppMonitor.accessibilityAuthorityWindow);
       installed.foregroundPackage = 'com.example.chat';
       await monitor.probe(); // usage: chat again (real switch back)
       await pumpEventQueue();
@@ -141,6 +152,97 @@ void main() {
 
       expect(changes, hasLength(1));
       expect(monitor.currentPackage, 'com.example.chat');
+    });
+  });
+
+  group('source arbitration (Phase 5 mobile-QA fix #4)', () {
+    test('a stale usage-stats report does NOT override a recent '
+        'accessibility event (no false left-app transition)', () async {
+      await monitor.start(); // subscribe to the fallback; null baseline
+
+      // Accessibility (real-time) reports the protected foreground.
+      accessibility.emitForegroundPackage('com.whatsapp');
+      await pumpEventQueue();
+      expect(changes, hasLength(1));
+      expect(changes.single.packageName, 'com.whatsapp');
+      expect(monitor.currentPackage, 'com.whatsapp');
+
+      // Usage stats is STALE: shortly after it reports a background
+      // VPN package (the real-device evidence) instead of WhatsApp.
+      installed.foregroundPackage = 'com.cloudflare.onedotonedotonedotone';
+      await monitor.probe();
+      await pumpEventQueue();
+
+      // The stale report must NOT be a transition: the monitor stays
+      // logically on WhatsApp.
+      expect(changes, hasLength(1));
+      expect(monitor.currentPackage, 'com.whatsapp');
+
+      // Accessibility re-confirms WhatsApp: still deduplicated — no
+      // false "left then returned" cycle either.
+      accessibility.emitForegroundPackage('com.whatsapp');
+      await pumpEventQueue();
+      expect(changes, hasLength(1));
+      expect(monitor.currentPackage, 'com.whatsapp');
+    });
+
+    test('usage stats is the fallback when accessibility has never '
+        'reported', () async {
+      // No accessibility data at all: usage stats drives detection.
+      installed.foregroundPackage = 'com.example.chat';
+      await monitor.probe();
+      await pumpEventQueue();
+
+      expect(changes, hasLength(1));
+      expect(changes.single.packageName, 'com.example.chat');
+      expect(changes.single.source, ForegroundDetectionSource.usageStats);
+      expect(monitor.currentPackage, 'com.example.chat');
+    });
+
+    test('usage stats resumes authority once the accessibility window '
+        'elapses', () async {
+      await monitor.start();
+      accessibility.emitForegroundPackage('com.whatsapp');
+      await pumpEventQueue();
+      expect(monitor.currentPackage, 'com.whatsapp');
+
+      // Within the authority window a conflicting usage report is stale.
+      installed.foregroundPackage = 'com.cloudflare.onedotonedotonedotone';
+      await monitor.probe();
+      await pumpEventQueue();
+      expect(changes, hasLength(1));
+      expect(monitor.currentPackage, 'com.whatsapp');
+
+      // After the window, usage stats is the fallback again.
+      clock = clock.add(
+        ForegroundAppMonitor.accessibilityAuthorityWindow,
+      );
+      installed.foregroundPackage = 'com.example.maps';
+      await monitor.probe();
+      await pumpEventQueue();
+
+      expect(changes, hasLength(2));
+      expect(changes.last.packageName, 'com.example.maps');
+      expect(
+        changes.last.source,
+        ForegroundDetectionSource.usageStats,
+      );
+      expect(monitor.currentPackage, 'com.example.maps');
+    });
+
+    test('a matching usage report within the window stays deduplicated',
+        () async {
+      await monitor.start();
+      accessibility.emitForegroundPackage('com.whatsapp');
+      await pumpEventQueue();
+      expect(changes, hasLength(1));
+
+      // Usage CONFIRMS the same package: not a new transition.
+      installed.foregroundPackage = 'com.whatsapp';
+      await monitor.probe();
+      await pumpEventQueue();
+      expect(changes, hasLength(1));
+      expect(monitor.currentPackage, 'com.whatsapp');
     });
   });
 
