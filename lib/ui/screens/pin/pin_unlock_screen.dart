@@ -320,20 +320,41 @@ class _PinUnlockScreenState extends State<PinUnlockScreen>
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: Text(widget.title)),
-      body: SafeArea(
-        child: AnimatedSwitcher(
-          duration: const Duration(milliseconds: 200),
-          child: switch (_view) {
-            _UnlockView.loading => const Center(
-                key: ValueKey<String>('loading'),
-                child: CircularProgressIndicator(),
-              ),
-            _UnlockView.noCredential => _buildNoCredential(),
-            _UnlockView.lockedOut => _buildLockedOut(),
-            _UnlockView.ready => _buildEntry(),
-          },
+    // Phase 5I hardening: the unlock route ALWAYS resolves with an
+    // explicit non-unlock result when dismissed. System Back, the
+    // AppBar back button and predictive-back all route through
+    // Navigator.maybePop, which — with canPop:false — is vetoed and
+    // reported via onPopInvokedWithResult; this screen then pops
+    // itself with `false`. Without this, those dismissal paths resolve
+    // the route's future with `null`, which callers (the lock
+    // challenge host, the change-PIN verify step) must treat as "not
+    // unlocked" but cannot distinguish from an unresolved outcome.
+    // Enrollment is never authentication: even after the guided
+    // recovery/setup flow, only a successful credential verification
+    // pops `true`.
+    return PopScope<Object?>(
+      canPop: false,
+      onPopInvokedWithResult: (bool didPop, Object? result) {
+        if (didPop) {
+          return;
+        }
+        Navigator.of(context).pop(false);
+      },
+      child: Scaffold(
+        appBar: AppBar(title: Text(widget.title)),
+        body: SafeArea(
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 200),
+            child: switch (_view) {
+              _UnlockView.loading => const Center(
+                  key: ValueKey<String>('loading'),
+                  child: CircularProgressIndicator(),
+                ),
+              _UnlockView.noCredential => _buildNoCredential(),
+              _UnlockView.lockedOut => _buildLockedOut(),
+              _UnlockView.ready => _buildEntry(),
+            },
+          ),
         ),
       ),
     );

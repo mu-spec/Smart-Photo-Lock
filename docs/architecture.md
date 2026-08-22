@@ -1586,3 +1586,37 @@ Verification (run by the developer):
 - `flutter analyze`
 - `flutter test test/services/accessibility_service_test.dart --concurrency=1`
 - `flutter test test/services/screen_state_service_test.dart --concurrency=1`
+
+## Phase 5 mobile-QA fix #4D — PIN recovery enrollment never counts as unlock
+
+Full-suite run left exactly one failure: "Phase 5I: ENROLLING a PIN from
+the recovery view never counts as an unlock" — the unlock route resolved
+`null` instead of `false` when dismissed with the system/AppBar back
+after the guided recovery enrollment.
+
+Root cause: the unlock screen had no pop-result policy for system Back.
+`tester.pageBack()` taps the AppBar's automatic Back button, which goes
+through `Navigator.maybePop` -> `Navigator.pop()` with NO result, so the
+route's future completed with `null`. Callers (the lock challenge host,
+the change-PIN verify step) treat anything-but-`true` as "not unlocked",
+so security was not weakened — but a dismissed unlock was indistinguishable
+from an unresolved outcome, and the recovery flow's contract
+("enrollment is NOT authentication; leaving resolves false, never true")
+was not met.
+
+Fix (`PinUnlockScreen.build`): wrap the scaffold in
+`PopScope<Object?>(canPop: false, onPopInvokedWithResult: ...)` that
+pops the route with `false` whenever a pop was attempted and vetoed
+(system Back, AppBar back, predictive-back — all `Navigator.maybePop`
+paths). Programmatic pops are unaffected (`Navigator.pop` does not
+consult `popDisposition`): a correct credential still pops `true`, the
+on-screen Back buttons still pop `false`, and the setup screen's own
+pop is untouched. Verified against Flutter 3.47.1 sources
+(navigator.dart / routes.dart / pop_scope.dart): `maybePop` vetoes via
+`popDisposition` -> `onPopInvokedWithResult(false)`, and the AppBar back
+button stays visible (`impliesAppBarDismissal` depends on a route below).
+
+Verification (run by the developer):
+- `flutter analyze`
+- `flutter test test/ui/pin_unlock_screen_test.dart --concurrency=1`
+- `flutter test`
