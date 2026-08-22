@@ -132,6 +132,23 @@ class DefaultAccessController implements AccessController {
   }
 
   @override
+  Future<Result<void>> revokeAllExcept(String keepPackage) async {
+    // Phase 5 mobile-QA fix #4A: every package except [keepPackage]
+    // goes through the same revoke policy (immediate without grace,
+    // grace-armed with one). The snapshot (`toList`) guards against
+    // mutating the map while iterating it.
+    for (final String package in _sessions.keys.toList()) {
+      if (package != keepPackage) {
+        await revokeAccess(package);
+      }
+    }
+    return Result.success(null);
+  }
+
+  @override
+  Duration get gracePeriod => _gracePeriod;
+
+  @override
   Future<Result<void>> revokeAllAccess() async {
     // Phase 5K/5L: screen-off re-locks EVERYTHING immediately — the
     // grace period never softens a screen-off.

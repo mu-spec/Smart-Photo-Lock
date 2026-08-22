@@ -57,7 +57,12 @@ class LockTrigger {
   final DateTime Function() _now;
 
   final StreamController<LockRequired> _lockRequired =
-      StreamController<LockRequired>.broadcast();
+      // Phase 5 mobile-QA fix #4A: SYNC delivery — an emission is
+      // observable by listeners the moment `add` returns. The startup
+      // baseline (and every transition) must be visible to a caller
+      // that awaits `start()` / the processing queue without relying on
+      // a microtask delivery that a bare `await` may not have flushed.
+      StreamController<LockRequired>.broadcast(sync: true);
 
   StreamSubscription<ForegroundAppChange>? _subscription;
   StreamSubscription<Result<ScreenStateEvent>>? _screenSub;
@@ -195,6 +200,15 @@ class LockTrigger {
     _previousPackage = change.packageName;
     if (previous != null && previous != change.packageName) {
       await _controller.revokeAccess(previous);
+    } else if (previous == null) {
+      // Phase 5 mobile-QA fix #4A: the trigger has no memory of the
+      // previous foreground (blind start — the first observation after
+      // a start that probed nothing). Revoke every session EXCEPT the
+      // incoming package so a protected app the user just left can
+      // never keep its unlock window: leaving revokes immediately (or
+      // arms the grace clock), exactly as if the entry had been
+      // observed.
+      await _controller.revokeAllExcept(change.packageName);
     }
 
     final AccessDecision decision =

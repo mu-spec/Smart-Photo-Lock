@@ -1399,3 +1399,53 @@ challenge remains continuously active (exactly one screen, no dismissal,
 no second `showLockChallenge`) -> re-reporting the protected package
 stays deduped -> only the correct PIN ends it, granting/launching
 exactly once. The test fails on the pre-fix code.
+
+## Phase 5 mobile-QA fix #4A — lock trigger session regressions
+
+Full-suite run exposed a cluster of LockTrigger / AccessController
+session-lifecycle regressions. Three distinct root causes, fixed without
+touching the challenge-flicker fix (#2):
+
+1. **Leaving revokes immediately — even when the entry was never
+   observed (blind start).** `LockTrigger` only revoked the PREVIOUS
+   package (`_previousPackage`, seeded from the monitor at start). When
+   the trigger starts with no known foreground (monitor probed nothing)
+   and the FIRST transition arrives, `_previousPackage` is null and no
+   session is revoked — a just-left protected app keeps its unlock
+   window. Fix: on an unknown previous foreground, revoke EVERY session
+   except the incoming package (`AccessController.revokeAllExcept`),
+   applying the same per-package grace policy as `revokeAccess`.
+   - `AccessController.revokeAllExcept(keepPackage)` (interface + impl).
+   - `LockTrigger._processChange`: `else if (previous == null)` branch.
+
+2. **Baseline requirement delivery was asynchronous.** The startup
+   baseline (`_enforceBaseline`) added its `LockRequired` to an ASYNC
+   broadcast stream — a caller that merely `await start()` could observe
+   the listener list BEFORE the delivery microtask ran, so a cold start
+   on a protected foreground looked unchallenged. Fix: the
+   `lockRequired` broadcast is now SYNC (`broadcast(sync: true)`) — an
+   emission is observable the moment `add` returns. (The host's listener
+   only performs safe synchronous prefix work — flag checks + a
+   non-dependency `AppScope.read` — everything else is behind awaits.)
+
+3. **Startup grace application clobbered a pre-configured grace.**
+   `LockChallengeHost._applyPersistedGracePeriod` ran on mount and
+   applied the PERSISTED grace (default zero when unset), overriding a
+   grace that had already been configured on the access controller
+   (e.g. the gauntlet's `boot(gracePeriod: ...)` before `pumpWidget`).
+   The grace path then behaved as no-grace: returning inside the
+   configured window challenged. Fix: the controller exposes
+   `gracePeriod`; the host only applies the persisted value when the
+   controller has none configured yet (cold-start production still
+   applies the persisted policy — the controller starts at zero).
+
+Test repair (not a weakening): the clocked grace-cycle test protected
+the SETUP container while driving a SEPARATE clocked container whose own
+repository was empty — the clocked trigger could never see WhatsApp as
+protected. The test now adds the protected app to the container it
+actually drives.
+
+Verification (run by the developer):
+- `flutter analyze` → No issues found.
+- `flutter test test/protection/lock_trigger_test.dart --concurrency=1`
+- `flutter test test/regression/lock_engine_regression_test.dart --concurrency=1`

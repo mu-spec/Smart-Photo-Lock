@@ -389,7 +389,6 @@ void main() {
 
   test('rapid switching respects the grace window on every cycle',
       () async {
-    await protect('com.whatsapp');
     DateTime clock = DateTime(2026, 8, 21, 9, 0);
     final AppContainer clocked = AppContainer.inMemory(
       accessClock: () => clock,
@@ -400,6 +399,18 @@ void main() {
     controller.setGracePeriod(const Duration(seconds: 30));
     final List<LockRequired> clockedRequirements = <LockRequired>[];
     clockedTrigger.lockRequired.listen(clockedRequirements.add);
+    // The protected list must live on the SAME container the clocked
+    // trigger evaluates against — a separate in-memory container has
+    // its own repository, so protecting the outer one here would leave
+    // the clocked trigger seeing WhatsApp as unprotected (no
+    // requirement at all).
+    await clocked.protectedApps.add(
+      ProtectedApp(
+        packageName: 'com.whatsapp',
+        label: 'com.whatsapp',
+        addedAt: DateTime(2026, 8, 21),
+      ),
+    );
 
     await clockedTrigger.start();
     final StaticAccessibilityLockService a11y =

@@ -35,6 +35,14 @@ abstract interface class AccessController {
   /// grace is allowed without re-authentication.
   Future<Result<void>> revokeAccess(String packageName);
 
+  /// Phase 5 mobile-QA fix #4A: revokes access for EVERY package except
+  /// [keepPackage], applying the grace policy per package. Used when the
+  /// lock trigger has no memory of the previous foreground (a blind
+  /// start), so a session for a protected app the user just left can
+  /// never survive the transition — the same immediate/grace re-lock
+  /// policy as [revokeAccess], just for the whole session map at once.
+  Future<Result<void>> revokeAllExcept(String keepPackage);
+
   /// Phase 5K: immediately ends EVERY unlock window — the screen
   /// turned off, so every protected app re-locks at once. The grace
   /// period NEVER applies here (screen-off is a hard security signal).
@@ -43,4 +51,11 @@ abstract interface class AccessController {
   /// Phase 5L: configures the re-lock grace period applied when the
   /// user leaves a protected app (zero = immediate re-lock).
   void setGracePeriod(Duration period);
+
+  /// Phase 5 mobile-QA fix #4A: the re-lock grace currently configured
+  /// (zero = immediate re-lock). The app layer reads it at startup so
+  /// applying the persisted default never clobbers a grace that was
+  /// already configured before the host started (e.g. an in-memory
+  /// boot or a test seeding it directly).
+  Duration get gracePeriod;
 }

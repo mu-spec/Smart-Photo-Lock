@@ -157,10 +157,20 @@ class _LockChallengeHostState extends State<LockChallengeHost>
 
   /// Phase 5L: applies the persisted re-lock grace on startup, so the
   /// configured policy is live without visiting any settings screen.
+  ///
+  /// Phase 5 mobile-QA fix #4A: only applies when the controller has
+  /// NOT already been configured — a grace seeded before the host
+  /// started (an in-memory boot or a test setting it directly on the
+  /// access controller) must survive; the persisted default (zero when
+  /// nothing was stored) must never clobber it. Cold-start production
+  /// still gets the persisted policy (the controller starts at zero).
   Future<void> _applyPersistedGracePeriod() async {
     final AppContainer? container = _container;
     if (container == null) {
       return;
+    }
+    if (container.accessController.gracePeriod != Duration.zero) {
+      return; // already configured — do not override
     }
     final Result<Duration> result = await container.lockSettings.getGracePeriod();
     if (!mounted || result.isFailure) {
