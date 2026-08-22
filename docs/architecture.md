@@ -1696,3 +1696,43 @@ Verification (run by the developer):
 - `flutter test test/ui/lock_challenge_test.dart --concurrency=1`
 - `flutter test test/regression/lock_engine_regression_test.dart --concurrency=1`
 - `flutter test --concurrency=1`
+
+## Phase 5 mobile-QA diagnostics #1 (temporary) — real-device flash-through tracing
+
+Temporary, DEBUG-ONLY instrumentation (assert-guarded, stripped in
+release) to identify why challenge #1 is dismissed and challenge #2 is
+created on the Oppo A12. NO protection behavior changed — purely
+additive logs with the `[PHASE5_DIAG]` prefix:
+
+- ForegroundAppMonitor: every foreground package change (package,
+  source, stale marker, previous package).
+- LockTrigger: every transition evaluated (package, source, previous,
+  decision), the startup baseline, and screen off/on events (+ wake
+  enforcement decision).
+- LockChallengeHost: every challenge request gets a diagnostic ID
+  (`challenge#1`, `challenge#2`, ...) — REQUEST / PRESENT-START /
+  PRESENTED / PRESENT-FAIL / BUSY (queue-pending vs same-package
+  dropped vs re-bring-to-front) / RE-BRING-TO-FRONT / ABORT /
+  DISMISS / CLOSED with an exact reason classification:
+  authentication-success, home-background-lifecycle-leave,
+  backgrounded-dismissal, or route-navigation-completion-back, plus the
+  lifecycle state at dismissal, the associated package, and the pending
+  slot. Every didChangeAppLifecycleState transition is logged with the
+  host's decision-relevant state.
+
+Capturing on the device:
+
+1. Run the app in DEBUG mode (asserts + prints are active):
+       flutter run
+   (or build a debug APK and install it).
+2. Reproduce the bug (open protected WhatsApp).
+3. Capture the logcat stream:
+       adb logcat -v threadtime | grep -F '[PHASE5_DIAG]'
+   or, when using `flutter run`, the prints already appear in the
+   terminal — alternatively:
+       flutter logs | grep -F '[PHASE5_DIAG]'
+
+The sequence `challenge#1 PRESENTED` -> `lifecycle=...` ->
+`challenge#1 DISMISS reason=...` -> `foreground=...` ->
+`challenge#2 ...` pinpoints the exact dismissal cause and what created
+challenge #2.

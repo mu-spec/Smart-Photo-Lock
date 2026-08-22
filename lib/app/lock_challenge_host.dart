@@ -152,6 +152,31 @@ class _LockChallengeHostState extends State<LockChallengeHost>
   /// platform lifecycle quirks behave deterministically).
   bool _appForeground = true;
 
+  // -- Phase 5 mobile-QA diagnostics #1 (temporary, debug-only) --------
+
+  /// Monotonic counter giving each challenge presentation attempt a
+  /// stable diagnostic ID (`challenge#1`, `challenge#2`, ...).
+  int _diagChallengeNumber = 0;
+
+  /// The diagnostic ID of the challenge currently on screen (used by
+  /// dismissal logs). Set when the challenge route is pushed, cleared
+  /// when the challenge closes.
+  String? _diagActiveChallengeId;
+
+  /// The most recent lifecycle state observed (diagnostic — lets the
+  /// dismissal log state exactly what lifecycle we were in).
+  AppLifecycleState? _lastLifecycleState;
+
+  /// Debug-only trace helper. Stripped entirely in release builds (and
+  /// asserts), so it never changes behavior or output in production.
+  static void _diag(String message) {
+    assert(() {
+      // ignore: avoid_print
+      print('[PHASE5_DIAG] $message');
+      return true;
+    }());
+  }
+
   @override
   void initState() {
     super.initState();
@@ -247,6 +272,15 @@ class _LockChallengeHostState extends State<LockChallengeHost>
   ///    to `resumed` with the challenge untouched.
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    _lastLifecycleState = state;
+    // Phase 5 mobile-QA diagnostics #1 (temporary): every lifecycle
+    // transition with the host's decision-relevant state.
+    _diag(
+      'lifecycle=${state.name} appForeground=$_appForeground '
+      'challenging=$_challenging ownInFlight=$_ownPresentationInFlight '
+      'interrupted=$_interruptedChallenge '
+      'activeChallenge=$_diagActiveChallengeId',
+    );
     if (state == AppLifecycleState.resumed) {
       _appForeground = true;
       _onResumed();
@@ -280,8 +314,17 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     // loop observed on device. Suppress it entirely: the challenge
     // stays continuously active and the monitor's state is untouched.
     if (_ownPresentationInFlight) {
+      _diag(
+        'leave SUPPRESSED (own-presentation in flight) '
+        'activeChallenge=$_diagActiveChallengeId lifecycle=$_lastLifecycleState',
+      );
       return;
     }
+    _diag(
+      'leave NOT-suppressed challenging=$_challenging '
+      'interrupted=$_interruptedChallenge lifecycle=$_lastLifecycleState '
+      'activeChallenge=$_diagActiveChallengeId',
+    );
     // Phase 5O hardening: the moment another task covers Smart App
     // Lock, detection continuity breaks — the task switcher or the
     // launcher may pass without EITHER detection path observing it
@@ -299,9 +342,21 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     // Idempotent: a second lifecycle event must not double-pop (the
     // second pop would remove the SHELL route beneath the challenge).
     if (!_challenging || _interruptedChallenge) {
+      _diag(
+        'dismissal SKIPPED (idempotent guard) challenging=$_challenging '
+        'interrupted=$_interruptedChallenge '
+        'activeChallenge=$_diagActiveChallengeId',
+      );
       return;
     }
     _interruptedChallenge = true;
+    // Phase 5 mobile-QA diagnostics #1 (temporary): a real dismissal
+    // caused by a Home/background lifecycle leave.
+    _diag(
+      '${_diagActiveChallengeId ?? 'challenge#?'} DISMISS '
+      'reason=home-background-lifecycle-leave '
+      'package=$_lastPresentedPackage lifecycle=$_lastLifecycleState',
+    );
     // Pop the challenge route: its awaited future completes with null
     // (Phase 5I: null never grants a session), which clears
     // `_challenging` through the finally block below. canPop guards
@@ -318,6 +373,11 @@ class _LockChallengeHostState extends State<LockChallengeHost>
       return;
     }
     final bool screenOff = trigger.takeScreenOffPending();
+    _diag(
+      'resumed challenging=$_challenging screenOffPending=$screenOff '
+      'interrupted=$_interruptedChallenge ownInFlight=$_ownPresentationInFlight '
+      'activeChallenge=$_diagActiveChallengeId',
+    );
     if (_challenging) {
       // Phase 5 mobile-QA fix #3: the app is back in the foreground
       // with the challenge on screen. Our own bring-to-front has NOT
@@ -344,9 +404,13 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     // interrupted challenge (5M) — a plain resume must not re-challenge
     // a still-valid session.
     if (!screenOff && !_interruptedChallenge) {
+      _diag('resumed plain (no re-lock enforcement needed)');
       return;
     }
     _interruptedChallenge = false;
+    _diag(
+      'resumed -> re-evaluate+challenge screenOffPending=$screenOff',
+    );
     await _reevaluateAndChallenge();
   }
 
@@ -354,6 +418,16 @@ class _LockChallengeHostState extends State<LockChallengeHost>
       _presentChallenge(requirement.packageName);
 
   Future<void> _presentChallenge(String packageName) async {
+    // Phase 5 mobile-QA diagnostics #1 (temporary): every challenge
+    // request gets a diagnostic ID.
+    _diagChallengeNumber++;
+    final String diagId = 'challenge#$_diagChallengeNumber';
+    _diag(
+      '$diagId REQUEST package=$packageName '
+      'presenting=$_presenting challenging=$_challenging '
+      'appForeground=$_appForeground ownInFlight=$_ownPresentationInFlight '
+      'lastPresented=$_lastPresentedPackage pending=$_pendingPackage',
+    );
     if (_presenting || _challenging || !mounted) {
       if (!mounted) {
         return;
@@ -367,6 +441,15 @@ class _LockChallengeHostState extends State<LockChallengeHost>
       // DIFFERENT package queues.
       if (packageName != _lastPresentedPackage) {
         _pendingPackage = packageName;
+        _diag(
+          '$diagId BUSY queue-pending package=$packageName '
+          '(different from active $_lastPresentedPackage)',
+        );
+      } else {
+        _diag(
+          '$diagId BUSY same-package-dropped package=$packageName '
+          '(already active $_lastPresentedPackage)',
+        );
       }
       // When our challenge is up but the app is BACKGROUNDED (a leave
       // suppressed during our own bring-to-front), the current screen is
@@ -376,6 +459,7 @@ class _LockChallengeHostState extends State<LockChallengeHost>
       // usable before authentication; no second route is pushed (the
       // challenge route is still on the navigator).
       if (!_appForeground) {
+        _diag('$diagId BUSY re-bring-to-front package=$packageName');
         _bringChallengeToFront(packageName);
       }
       return;
@@ -391,6 +475,7 @@ class _LockChallengeHostState extends State<LockChallengeHost>
       _pendingPackage = null;
       final AppContainer? container = AppScope.read(context);
       if (container == null) {
+        _diag('$diagId ABORT no-container package=$packageName');
         return;
       }
 
@@ -399,6 +484,7 @@ class _LockChallengeHostState extends State<LockChallengeHost>
       final CredentialState? status =
           (await container.auth.status()).valueOrNull;
       if (status == null || !status.hasAnyCredential) {
+        _diag('$diagId ABORT no-credential package=$packageName');
         return;
       }
 
@@ -415,6 +501,10 @@ class _LockChallengeHostState extends State<LockChallengeHost>
       // foreground (in-app flows, tests), no bring-to-front happens and
       // no suppression is needed.
       _ownPresentationInFlight = !_appForeground;
+      _diag(
+        '$diagId PRESENT-START package=$packageName '
+        'fromBackground=${!_appForeground}',
+      );
       // Bring Smart App Lock to the front (basic challenge presentation;
       // the overlay window lands in the lock-screen phase).
       final shown = await container.overlay.showLockChallenge(packageName);
@@ -428,6 +518,7 @@ class _LockChallengeHostState extends State<LockChallengeHost>
         // The presentation never reached the screen — nothing is in
         // flight, so no lifecycle leave may be suppressed.
         _ownPresentationInFlight = false;
+        _diag('$diagId PRESENT-FAIL package=$packageName');
         if (kDebugMode && shown.isFailure) {
           debugPrint(
             '🔒 LockChallengeHost: presentation failed: '
@@ -436,6 +527,7 @@ class _LockChallengeHostState extends State<LockChallengeHost>
         }
         return;
       }
+      _diag('$diagId PRESENTED package=$packageName');
 
       // Phase 5O (recents hardening): FLAG_SECURE keeps the recents
       // snapshot blank while the challenge is on screen — the PIN dots,
@@ -444,6 +536,9 @@ class _LockChallengeHostState extends State<LockChallengeHost>
       await container.overlay.setSecureWindow(true);
 
       _challenging = true;
+      // Phase 5 mobile-QA diagnostics #1 (temporary): the challenge now
+      // on screen carries its diagnostic ID (used by dismissal logs).
+      _diagActiveChallengeId = diagId;
       // A fresh challenge supersedes the interrupted state (Home-press
       // dismissal) — nothing is pending to re-evaluate anymore.
       _interruptedChallenge = false;
@@ -512,7 +607,28 @@ class _LockChallengeHostState extends State<LockChallengeHost>
   ///    **Back-press dismissal** — the challenge RE-PRESENTS
   ///    immediately: Back can never bypass the lock into the app UI.
   void _afterChallengeClosed(bool passed) {
+    final String? diagId = _diagActiveChallengeId;
+    _diagActiveChallengeId = null;
     _challenging = false;
+    // Phase 5 mobile-QA diagnostics #1 (temporary): the challenge
+    // closed — classify the exact reason.
+    final String dismissalReason;
+    if (passed) {
+      dismissalReason = 'authentication-success';
+    } else if (_interruptedChallenge) {
+      dismissalReason = 'home-background-lifecycle-leave';
+    } else if (!_appForeground) {
+      dismissalReason = 'backgrounded-dismissal';
+    } else {
+      dismissalReason = 'route-navigation-completion-back';
+    }
+    _diag(
+      '${diagId ?? 'challenge#?'} CLOSED reason=$dismissalReason '
+      'passed=$passed interrupted=$_interruptedChallenge '
+      'appForeground=$_appForeground lifecycle=$_lastLifecycleState '
+      'ownInFlight=$_ownPresentationInFlight package=$_lastPresentedPackage '
+      'pending=$_pendingPackage',
+    );
     // Safety net: the challenge is no longer on screen, so no lifecycle
     // leave may ever be suppressed again (a real Home press behaves
     // normally from here on). The settle timer is cancelled (it can
@@ -521,6 +637,7 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     _settleTimer?.cancel();
     _settleTimer = null;
     if (passed) {
+      _diag('${diagId ?? 'challenge#?'} CLOSED -> grant+launch path');
       // The lock loop truly ends only when nothing is queued — the
       // queued re-presentation keeps the secure window armed (no
       // flicker window for a recents snapshot to exploit).
@@ -532,6 +649,7 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     }
     if (_interruptedChallenge && _appForeground && mounted) {
       _interruptedChallenge = false;
+      _diag('${diagId ?? 'challenge#?'} CLOSED -> re-evaluate+challenge');
       _reevaluateAndChallenge();
       return;
     }
@@ -539,6 +657,7 @@ class _LockChallengeHostState extends State<LockChallengeHost>
       // Home/Recents dismissal (backgrounded): no challenge is visible
       // anymore — the snapshot may show normal content again; the
       // resume path re-arms the secure window with the re-challenge.
+      _diag('${diagId ?? 'challenge#?'} CLOSED -> defer to resume path');
       _clearSecure();
       _maybePresentPending();
       return;
@@ -546,6 +665,7 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     // Phase 5N: Back-press dismissal while foreground — re-present.
     // The secure window STAYS armed: the challenge reappears next
     // frame (no flicker window for a recents snapshot to exploit).
+    _diag('${diagId ?? 'challenge#?'} CLOSED -> schedule re-challenge');
     _scheduleReChallenge();
   }
 
@@ -615,6 +735,10 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     // transition — restart its settle window so its own trailing
     // leaves are absorbed too.
     _armPresentationSettle();
+    _diag(
+      '${_diagActiveChallengeId ?? 'challenge#?'} RE-BRING-TO-FRONT '
+      'package=$packageName',
+    );
     final Result<void> shown =
         await container.overlay.showLockChallenge(packageName);
     if (kDebugMode) {
@@ -647,6 +771,7 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     if (target == null) {
       return;
     }
+    _diag('schedule-re-challenge target=$target (pending=${_pendingPackage})');
     _pendingPackage = null;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && !_presenting && !_challenging && _pendingPackage == null) {
@@ -667,6 +792,9 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     }
     final AccessDecision decision =
         await container.accessController.evaluate(packageName);
+    _diag(
+      'presentIfRequired package=$packageName decision=${decision.name}',
+    );
     if (!mounted) {
       return;
     }
@@ -695,10 +823,12 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     }
     final String? current = container.foregroundMonitor.currentPackage;
     if (current == null) {
+      _diag('reevaluate current=null (no foreground)');
       return;
     }
     final AccessDecision decision =
         await container.accessController.evaluate(current);
+    _diag('reevaluate current=$current decision=${decision.name}');
     if (!mounted) {
       return;
     }
@@ -716,8 +846,13 @@ class _LockChallengeHostState extends State<LockChallengeHost>
   void _maybePresentPending() {
     final String? pending = _pendingPackage;
     if (pending == null || !mounted || !_appForeground) {
+      _diag(
+        'maybePresentPending skip pending=$pending '
+        'mounted=$mounted appForeground=$_appForeground',
+      );
       return;
     }
+    _diag('maybePresentPending queue pending=$pending');
     _pendingPackage = null;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       // Skip when a NEWER requirement already took over (it either

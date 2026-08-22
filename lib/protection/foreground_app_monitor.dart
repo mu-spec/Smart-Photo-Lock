@@ -224,12 +224,20 @@ class ForegroundAppMonitor {
     if (!stale && package == _current) {
       return; // same package from either source is not a transition
     }
+    final String? previousCurrent = _current;
     _current = package;
     // Mobile-QA diagnostics (asserts are stripped in release builds):
     // trace the real-device pipeline in logcat.
     assert(() {
       // ignore: avoid_print
       print('🔍 ForegroundAppMonitor: ${source.name} -> $package');
+      // Phase 5 mobile-QA diagnostics #1 (temporary): every foreground
+      // package change with source and stale-marker state.
+      // ignore: avoid_print
+      print(
+        '[PHASE5_DIAG] foreground=$package source=${source.name} '
+        'stale=$stale previous=$previousCurrent',
+      );
       return true;
     }());
     _controller.add(

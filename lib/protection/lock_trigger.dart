@@ -119,6 +119,15 @@ class LockTrigger {
       return;
     }
     final AccessDecision decision = await _controller.evaluate(current);
+    // Phase 5 mobile-QA diagnostics #1 (temporary): baseline evaluation.
+    assert(() {
+      // ignore: avoid_print
+      print(
+        '[PHASE5_DIAG] trigger-baseline pkg=$current '
+        'decision=${decision.name}',
+      );
+      return true;
+    }());
     if (decision == AccessDecision.challenge ||
         decision == AccessDecision.deny) {
       _lockRequired.add(LockRequired(packageName: current, at: _now()));
@@ -218,6 +227,14 @@ class LockTrigger {
     assert(() {
       // ignore: avoid_print
       print('🔒 LockTrigger: ${change.packageName} -> ${decision.name}');
+      // Phase 5 mobile-QA diagnostics #1 (temporary): every foreground
+      // transition + its access decision.
+      // ignore: avoid_print
+      print(
+        '[PHASE5_DIAG] trigger-change pkg=${change.packageName} '
+        'source=${change.source.name} previous=$previous '
+        'decision=${decision.name}',
+      );
       return true;
     }());
     // Phase 5E: `challenge` requires the PIN; `deny` (authentication in
@@ -243,6 +260,12 @@ class LockTrigger {
       // resume, so returning to a protected app challenges immediately.
       _screenOffPending = true;
       await _controller.revokeAllAccess();
+      // Phase 5 mobile-QA diagnostics #1 (temporary): screen-off.
+      assert(() {
+        // ignore: avoid_print
+        print('[PHASE5_DIAG] trigger-screen screenOff pending=true');
+        return true;
+      }());
       return;
     }
     // Phase 5R: WAKING the screen enforces the pending re-lock
@@ -251,6 +274,12 @@ class LockTrigger {
     // instead of revealing the unlocked app until Smart App Lock
     // happens to resume.
     if (!_screenOffPending) {
+      // Phase 5 mobile-QA diagnostics #1 (temporary): plain screen-on.
+      assert(() {
+        // ignore: avoid_print
+        print('[PHASE5_DIAG] trigger-screen screenOn pending=false');
+        return true;
+      }());
       return; // plain screen-on with no pending re-lock: nothing to do
     }
     await _monitor.probe();
@@ -259,6 +288,15 @@ class LockTrigger {
       return;
     }
     final AccessDecision decision = await _controller.evaluate(current);
+    // Phase 5 mobile-QA diagnostics #1 (temporary): wake enforcement.
+    assert(() {
+      // ignore: avoid_print
+      print(
+        '[PHASE5_DIAG] trigger-screen screenOn pending=true '
+        'pkg=$current decision=${decision.name}',
+      );
+      return true;
+    }());
     if (decision == AccessDecision.challenge ||
         decision == AccessDecision.deny) {
       _lockRequired.add(
