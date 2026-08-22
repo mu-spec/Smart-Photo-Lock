@@ -1339,3 +1339,63 @@ LockChallengeHost owns it: start with the trigger, stop on dispose.
   kDebugMode prints in the challenge host.
 - The in-memory container wires a static watcher so tests assert the
   host lifecycle without any platform.
+
+## Phase 5 mobile-QA fix #2 — challenge flicker / re-entry
+
+Real-device symptom (Oppo A12): opening a protected app shows the PIN
+challenge, it suddenly disappears (the protected app becomes visible),
+then the challenge re-appears — repeating without authentication.
+
+Root cause: presenting the challenge calls the native
+`showLockChallenge` bridge, which `startActivity`s Smart App Lock's OWN
+activity from the background. The device fires lifecycle leaves
+(`hidden`/`paused`) during that launch transition. `LockChallengeHost`
+treated them as the user leaving:
+
+```
+challenge up -> lifecycle leave (OUR bring-to-front)
+  -> _onLeftForeground: invalidate + pop the challenge
+  -> resume: _reevaluateAndChallenge re-probes
+  -> the usage-stats probe filters our own package and reports the
+     last OTHER package (the protected app, still in the 60s lookback)
+  -> the stale marker promotes it to a FRESH transition
+  -> LockTrigger emits a NEW LockRequired
+  -> _presentChallenge calls showLockChallenge AGAIN (2nd startActivity)
+  -> the repeated startActivity fires another lifecycle leave
+  -> dismissed again  => infinite flicker / re-entry loop
+```
+
+Fix (all in the Dart layer — the native paths already filter our own
+package):
+
+1. `LockChallengeHost._ownPresentationInFlight` — a suppression window
+   from the moment WE call `showLockChallenge` (presenting from the
+   background) until the app has resumed with the challenge on screen.
+   A lifecycle leave inside the window is OUR bring-to-front, not the
+   user leaving: no challenge dismissal, no monitor invalidation, no
+   interrupted marker. Cleared on the first `resumed` with the
+   challenge up (a later leave is a REAL Home press again), on
+   presentation failure, and as a safety net when the challenge closes.
+2. Same-package requirement idempotency — while a challenge is on
+   screen, a new `LockRequired` for that same package is the same
+   challenge: it is not re-queued (no second `startActivity` after the
+   close). Different packages still re-queue (5M). If the challenge is
+   up but the app is BACKGROUNDED, a requirement — even the same
+   package — re-brings the existing challenge to the front
+   (`_bringChallengeToFront`) so the protected app is never usable
+   before authentication; no second route is pushed.
+3. `ForegroundAppMonitor.ownPackage` — Smart App Lock's own package is
+   never a foreground transition: no emit, no `_current` update, no
+   stale-marker consumption (mirrors the native filters for the
+   static/test services and defense-in-depth). Our own lock UI is never
+   read as the user leaving the protected app, so sessions are not
+   revoked and grace clocks are not armed by our own bring-to-front.
+
+Regression test (`test/ui/lock_challenge_test.dart`): protected app
+opened from the background -> challenge shown -> Smart App Lock/challenge
+becomes the foreground package (own-package report + the bring-to-front
+lifecycle storm `inactive -> hidden -> inactive -> resumed`) -> the
+challenge remains continuously active (exactly one screen, no dismissal,
+no second `showLockChallenge`) -> re-reporting the protected package
+stays deduped -> only the correct PIN ends it, granting/launching
+exactly once. The test fails on the pre-fix code.

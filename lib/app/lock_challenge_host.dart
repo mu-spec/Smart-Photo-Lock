@@ -38,10 +38,22 @@ import 'router.dart';
 /// Back while the app is foreground RE-PRESENTS it immediately — Back
 /// can never walk past the challenge into the app's own UI.
 ///
+/// Phase 5 mobile-QA fix #2 (challenge flicker / re-entry): presenting
+/// the challenge brings OUR OWN activity to the front; the device fires
+/// lifecycle leaves during that transition. The host distinguishes them
+/// from a REAL user leave (an own-presentation suppression window) so
+/// the challenge is never dismissed-and-re-presented in a loop, and the
+/// foreground monitor excludes our own package entirely. Once the app
+/// has resumed with the challenge on screen, exactly ONE challenge
+/// remains continuously active until authentication; a Home press after
+/// that is a real leave and dismisses as before (5M).
+///
 /// Fail-safe: when NO credential is enrolled there is nothing to
 /// challenge with — the trigger requirement is ignored (setup lives on
 /// the Security tab). Re-entrant requirements while a challenge is
-/// already showing are re-queued, never dropped.
+/// already showing are re-queued, never dropped (same-package
+/// duplicates while on screen are the same challenge and are dropped —
+/// one active challenge, no stacked screens).
 class LockChallengeHost extends StatefulWidget {
   const LockChallengeHost({
     super.key,
@@ -92,6 +104,19 @@ class _LockChallengeHostState extends State<LockChallengeHost>
   /// presented for — used to re-present it when Back tries to dismiss
   /// the challenge in the foreground.
   String? _lastPresentedPackage;
+
+  /// Phase 5 mobile-QA fix #2 (challenge flicker / re-entry): true from
+  /// the moment WE bring Smart App Lock to the front (`showLockChallenge`
+  /// — the native `startActivity` bridge) until the app has actually
+  /// resumed with the challenge on screen. Presenting from the
+  /// background fires lifecycle events (`hidden`/`paused` during the
+  /// launch transition) that belong to OUR OWN presentation — they are
+  /// NOT the user leaving the protected app. While this is set, a
+  /// lifecycle leave is suppressed: no challenge dismissal, no monitor
+  /// invalidation, no interrupted marker. The window is the bring-to-
+  /// front transition only; once resumed with the challenge up it is
+  /// cleared and a subsequent leave is a REAL Home press again.
+  bool _ownPresentationInFlight = false;
 
   /// Phase 5M: whether the app is currently in the foreground (drives
   /// the pending re-presentation; tracked explicitly so tests and
@@ -201,6 +226,18 @@ class _LockChallengeHostState extends State<LockChallengeHost>
   /// transient `inactive` never reaches here, so a cancelled
   /// home-swipe or a shade pull never dismisses anything.
   void _onLeftForeground() {
+    // Phase 5 mobile-QA fix #2: a leave inside our own presentation
+    // window (see [_ownPresentationInFlight]) is OUR challenge activity
+    // being brought to the front — the device briefly covers the app
+    // during the launch transition. It is not the user leaving the
+    // protected app: dismissing here would pop the challenge, then the
+    // resume path would re-probe (finding the same protected package
+    // via the stale marker) and re-present — the flicker / re-entry
+    // loop observed on device. Suppress it entirely: the challenge
+    // stays continuously active and the monitor's state is untouched.
+    if (_ownPresentationInFlight) {
+      return;
+    }
     // Phase 5O hardening: the moment another task covers Smart App
     // Lock, detection continuity breaks — the task switcher or the
     // launcher may pass without EITHER detection path observing it
@@ -238,6 +275,11 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     }
     final bool screenOff = trigger.takeScreenOffPending();
     if (_challenging) {
+      // Phase 5 mobile-QA fix #2: the app is back in the foreground
+      // with the challenge on screen — our own bring-to-front completed,
+      // so the suppression window ends here. From this point on a
+      // lifecycle leave IS the user leaving and dismisses as before.
+      _ownPresentationInFlight = false;
       // Phase 5T (process/activity recreation): window flags do NOT
       // survive an activity recreation — re-arm FLAG_SECURE whenever a
       // challenge is on screen, so the recents snapshot is protected
@@ -263,10 +305,28 @@ class _LockChallengeHostState extends State<LockChallengeHost>
 
   Future<void> _presentChallenge(String packageName) async {
     if (_presenting || _challenging || !mounted) {
+      if (!mounted) {
+        return;
+      }
       // Phase 5M/5Q: never silently drop a requirement — remember the
       // latest one and re-present it when the current challenge closes.
-      if (mounted) {
+      // Phase 5 mobile-QA fix #2: a requirement for the package whose
+      // challenge is ALREADY ON SCREEN is the same challenge — queuing
+      // it would re-present (and re-bring-to-front via a second
+      // `startActivity`) after the close for no new protection. Only a
+      // DIFFERENT package queues.
+      if (packageName != _lastPresentedPackage) {
         _pendingPackage = packageName;
+      }
+      // When our challenge is up but the app is BACKGROUNDED (a leave
+      // suppressed during our own bring-to-front), the current screen is
+      // NOT protected: a requirement — even for the same package — must
+      // bring the existing challenge back to the front so the protected
+      // app is covered again. The protected app must never become
+      // usable before authentication; no second route is pushed (the
+      // challenge route is still on the navigator).
+      if (!_appForeground) {
+        _bringChallengeToFront(packageName);
       }
       return;
     }
@@ -292,6 +352,19 @@ class _LockChallengeHostState extends State<LockChallengeHost>
         return;
       }
 
+      // Phase 5N: remember what this challenge guards. Recorded BEFORE
+      // the native call so the busy-guard above can recognize
+      // same-package requirements while the presentation is in flight.
+      _lastPresentedPackage = packageName;
+      // Phase 5 mobile-QA fix #2: presenting from the background brings
+      // OUR OWN activity to the front (`startActivity`) — the device
+      // fires lifecycle leaves during that transition. They are our
+      // presentation, not the user leaving the protected app: suppress
+      // dismissal until the app has resumed with the challenge on
+      // screen (cleared in `_onResumed`). When the app is already
+      // foreground (in-app flows, tests), no bring-to-front happens and
+      // no suppression is needed.
+      _ownPresentationInFlight = !_appForeground;
       // Bring Smart App Lock to the front (basic challenge presentation;
       // the overlay window lands in the lock-screen phase).
       final shown = await container.overlay.showLockChallenge(packageName);
@@ -302,6 +375,9 @@ class _LockChallengeHostState extends State<LockChallengeHost>
         );
       }
       if (!mounted || shown.isFailure) {
+        // The presentation never reached the screen — nothing is in
+        // flight, so no lifecycle leave may be suppressed.
+        _ownPresentationInFlight = false;
         if (kDebugMode && shown.isFailure) {
           debugPrint(
             '🔒 LockChallengeHost: presentation failed: '
@@ -321,9 +397,6 @@ class _LockChallengeHostState extends State<LockChallengeHost>
       // A fresh challenge supersedes the interrupted state (Home-press
       // dismissal) — nothing is pending to re-evaluate anymore.
       _interruptedChallenge = false;
-      // Phase 5N: remember what this challenge guards, so a Back-press
-      // dismissal can be re-presented instead of exposing the app UI.
-      _lastPresentedPackage = packageName;
       bool passed = false;
       try {
         // Phase 5F: route by the user's PRIMARY credential (the one they
@@ -384,6 +457,10 @@ class _LockChallengeHostState extends State<LockChallengeHost>
   ///    immediately: Back can never bypass the lock into the app UI.
   void _afterChallengeClosed(bool passed) {
     _challenging = false;
+    // Safety net: the challenge is no longer on screen, so no lifecycle
+    // leave may ever be suppressed again (a real Home press behaves
+    // normally from here on).
+    _ownPresentationInFlight = false;
     if (passed) {
       // The lock loop truly ends only when nothing is queued — the
       // queued re-presentation keeps the secure window armed (no
@@ -411,6 +488,39 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     // The secure window STAYS armed: the challenge reappears next
     // frame (no flicker window for a recents snapshot to exploit).
     _scheduleReChallenge();
+  }
+
+  /// Phase 5 mobile-QA fix #2: re-brings Smart App Lock to the front
+  /// while the active challenge is up but the app is BACKGROUNDED (a
+  /// leave suppressed inside our own presentation window) and a new
+  /// requirement arrived — the user is looking at a protected app whose
+  /// challenge is not covering the screen. No second route is pushed
+  /// (the challenge route is still on the navigator); only the native
+  /// bring-to-front is repeated, with the own-presentation suppression
+  /// re-armed so this bring-to-front cannot dismiss the challenge it is
+  /// performing. The protected app stays covered until authentication.
+  Future<void> _bringChallengeToFront(String packageName) async {
+    if (!mounted) {
+      return;
+    }
+    final AppContainer? container = AppScope.read(context);
+    if (container == null) {
+      return;
+    }
+    _ownPresentationInFlight = true;
+    final Result<void> shown =
+        await container.overlay.showLockChallenge(packageName);
+    if (kDebugMode) {
+      debugPrint(
+        '🔒 LockChallengeHost: re-bring-to-front($packageName) -> '
+        '${shown.isSuccess}',
+      );
+    }
+    if (!mounted || shown.isFailure) {
+      // Nothing reached the front; the suppression window must not
+      // linger (a subsequent REAL leave behaves normally).
+      _ownPresentationInFlight = false;
+    }
   }
 
   /// Phase 5O: clears FLAG_SECURE (the lock loop ended). Failures are

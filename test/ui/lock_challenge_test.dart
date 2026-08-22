@@ -1259,6 +1259,79 @@ void main() {
     expect(find.byType(PinUnlockScreen), findsNothing);
     expect(sessionFor(container, 'com.whatsapp'), isNotNull);
   });
+
+  // -- Phase 5 mobile-QA fix #2: challenge flicker / re-entry ---------------
+
+  testWidgets(
+      'our own challenge bring-to-front never dismisses or re-presents '
+      'the challenge (Phase 5 mobile-QA flicker fix)',
+      (WidgetTester tester) async {
+    final AppContainer container = await pumpApp(tester);
+    await container.auth.enrollPin('1234');
+    await protect(container, 'com.whatsapp');
+    final StaticOverlayLockService overlay =
+        container.overlay as StaticOverlayLockService;
+
+    // Model the real device: the user is OUTSIDE Smart App Lock when
+    // the protected app opens (Smart App Lock is backgrounded).
+    await pressHome(tester);
+
+    // Open protected WhatsApp from the launcher: the challenge presents
+    // FROM THE BACKGROUND — the native bring-to-front is in flight.
+    await openApp(tester, container, 'com.whatsapp');
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+    final int showCalls = overlay.showLockChallengeCalls;
+    expect(showCalls, 1);
+
+    // Smart App Lock/challenge becomes the foreground package: the
+    // detection paths observe our own UI (in the static test services
+    // the own-package report reaches the monitor; the native paths
+    // filter it — this guard keeps the Dart pipeline identical).
+    (container.accessibility as StaticAccessibilityLockService)
+        .emitForegroundPackage('com.smartapplock.app');
+    await tester.pump();
+
+    // The device's bring-to-front fires the lifecycle storm: a
+    // transient inactive, a hidden (our own activity briefly covered by
+    // the launch transition), then back up to resumed. This is OUR
+    // presentation — not the user leaving — so the challenge must stay
+    // exactly where it is: continuously active, exactly one.
+    await transition(tester, AppLifecycleState.inactive);
+    await transition(tester, AppLifecycleState.hidden);
+    await transition(tester, AppLifecycleState.inactive);
+    await transition(tester, AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+
+    // While the challenge covers WhatsApp, detection re-reports the
+    // protected app (the usage-stats poll keeps confirming it): it is
+    // the SAME challenge — no dismissal, no second bring-to-front.
+    (container.accessibility as StaticAccessibilityLockService)
+        .emitForegroundPackage('com.whatsapp');
+    await tester.pumpAndSettle();
+
+    // The challenge remains continuously active: exactly ONE screen, no
+    // dismissal, no second bring-to-front, the secure window still
+    // armed, and no session was ever granted.
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+    expect(overlay.showLockChallengeCalls, showCalls);
+    expect(overlay.secureWindow, isTrue);
+    expect(overlay.hideLockChallengeCalls, 0);
+    expect(sessionFor(container, 'com.whatsapp'), isNull);
+
+    // Only successful authentication ends it — exactly once.
+    for (final String digit in <String>['1', '2', '3', '4']) {
+      await tester.tap(find.byKey(Key('pin_key_$digit')));
+      await tester.pumpAndSettle();
+    }
+    expect(find.byType(PinUnlockScreen), findsNothing);
+    expect(overlay.hideLockChallengeCalls, 1);
+    expect(overlay.secureWindow, isFalse);
+    expect(sessionFor(container, 'com.whatsapp'), isNotNull);
+    final StaticInstalledAppsService apps =
+        container.installedAppsService as StaticInstalledAppsService;
+    expect(apps.launchAppCalls, 1);
+    expect(apps.launchedPackages, <String>['com.whatsapp']);
+  });
 }
 
 /// Deterministic biometric fake for the challenge-flow tests (Phase 5G).

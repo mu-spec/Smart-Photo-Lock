@@ -63,9 +63,21 @@ class ForegroundAppMonitor {
     required AccessibilityLockService accessibility,
     this.pollInterval = const Duration(seconds: 1),
     DateTime Function()? now,
+    this.ownPackage = defaultOwnPackage,
   })  : _installedApps = installedApps,
         _accessibility = accessibility,
         _now = now ?? DateTime.now;
+
+  /// The production application package — the Android applicationId
+  /// (`com.smartapplock.app`). Smart App Lock's OWN UI (the challenge
+  /// activity the lock host brings to the front) is never a foreground
+  /// transition; the native detection paths already exclude it, and
+  /// this guard makes the static/test services behave identically
+  /// (defense-in-depth at the detection boundary).
+  static const String defaultOwnPackage = 'com.smartapplock.app';
+
+  /// Smart App Lock's own package, excluded from detection.
+  final String ownPackage;
 
   final InstalledAppsService _installedApps;
   final AccessibilityLockService _accessibility;
@@ -187,6 +199,21 @@ class ForegroundAppMonitor {
   }
 
   void _report(String package, ForegroundDetectionSource source) {
+    // Phase 5 mobile-QA fix #2 (challenge flicker / re-entry): Smart App
+    // Lock's own package is NEVER a foreground transition. Presenting
+    // the challenge brings OUR OWN activity to the front; if that report
+    // reached the pipeline it would look like the user LEFT the
+    // protected app (revoking sessions, arming grace clocks and, via
+    // the stale marker, re-triggering the challenge — the flicker
+    // loop). The native paths already filter it; this guard makes the
+    // static/test services behave identically. It is not an
+    // observation: `_current` is NOT updated and the stale marker is
+    // NOT consumed, so the protected app stays the last-known
+    // foreground while our UI is on top (dedupe keeps swallowing its
+    // reports — no fabricated transitions).
+    if (package == ownPackage) {
+      return;
+    }
     // A stale last-known package is consumed by the FIRST observation,
     // whatever it carries: a same-package report is a real return
     // (Recents covered Smart App Lock without detection seeing the

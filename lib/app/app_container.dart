@@ -99,9 +99,13 @@ class AppContainer {
     // Phase 5A: merged foreground detection (usage-stats primary +
     // accessibility fallback). One shared instance; NOT auto-started —
     // the lock engine (later phase) owns the start/stop lifecycle.
+    // Phase 5 mobile-QA fix #2: the monitor excludes our own package —
+    // the lock host's challenge bring-to-front must never read as the
+    // user leaving the protected app.
     foregroundMonitor = ForegroundAppMonitor(
       installedApps: installedAppsService,
       accessibility: accessibilityService,
+      ownPackage: ForegroundAppMonitor.defaultOwnPackage,
     );
     // Phase 5C: matching a detected foreground package against the
     // protected list. Wired to the SAME repository the Apps tab writes
