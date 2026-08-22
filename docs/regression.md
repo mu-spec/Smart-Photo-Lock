@@ -960,3 +960,25 @@ cancels the monitor's 1-second timer), and `unawaited(container
 .watcher.stop())`. Every other AppScope read remains in
 mounted-guarded handlers. Ownership is unchanged: the host starts the
 trigger + watcher, and stops exactly those resources.
+
+---
+
+# Phase 5 — QA Fix #3B (lock trigger timer teardown)
+
+Root cause: `LockTrigger.stop()` cancelled the monitor LAST — after
+awaiting the subscription cancels and the processing-queue drain. The
+host's dispose calls `_trigger?.stop()` fire-and-forget, so those
+awaits suspended the function before the monitor's 1-second periodic
+timer was ever cancelled: every widget test ended with a pending timer.
+
+Fix: `LockTrigger.stop()` now stops the MONITOR FIRST — and the
+monitor's own stop body has no awaits (its timer cancel executes
+synchronously during the call). An unawaited stop() from a dispose path
+therefore kills the periodic timer immediately, before any suspension
+point; the subscription cancels and the queue drain follow. Ownership
+is unchanged: the host starts the trigger, stops it on dispose;
+repeated stop/dispose stay idempotent.
+
+Also cleaned the two analyzer infos in lock_challenge_test.dart:
+`_lifecycle` -> `lifecycle`, `_transition` -> `transition` (local
+identifiers must not carry leading underscores).

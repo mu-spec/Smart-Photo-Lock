@@ -149,7 +149,10 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     // Stop exactly what this host started: the subscription, the
     // trigger (which stops the monitor's polling timer) and the watcher
     // foreground service. Uses ONLY the cached container — a
-    // deactivated widget's element can never be walked.
+    // deactivated widget's element can never be walked. The trigger
+    // stop is deliberately unawaited: its periodic-timer cancel is
+    // synchronous (LockTrigger.stop cancels the monitor FIRST), so the
+    // teardown timer check passes without this dispose ever awaiting.
     WidgetsBinding.instance.removeObserver(this);
     _subscription?.cancel();
     _trigger?.stop();

@@ -122,11 +122,20 @@ class LockTrigger {
 
   /// Stops the pipeline: unsubscribes and stops the monitor. The lock
   /// stream stays open ([start] may be called again).
+  ///
+  /// Timer teardown contract: the monitor's periodic timer must die
+  /// SYNCHRONOUSLY, before any suspension point — dispose paths call
+  /// stop() fire-and-forget, and a deferred cancel would leave the
+  /// 1-second timer alive for the teardown check. The monitor stop is
+  /// placed FIRST: its own body has no awaits, so the timer cancel
+  /// executes during the call itself, even when this future is never
+  /// awaited.
   Future<void> stop() async {
     // Audit fix: clear the started flag SYNCHRONOUSLY — a start() that
     // lands while the subscription cancel is in flight must see the
     // stopped state and re-arm the pipeline, not silently no-op.
     _started = false;
+    await _monitor.stop(); // cancels the periodic timer synchronously
     await _subscription?.cancel();
     _subscription = null;
     await _screenSub?.cancel();
@@ -134,7 +143,6 @@ class LockTrigger {
     // Phase 5Q: drain the processing queue so no transition evaluates
     // (or emits) after stop() resolves.
     await _processing;
-    await _monitor.stop();
   }
 
   /// True while the pipeline is running (audit: lets other components —

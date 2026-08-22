@@ -629,18 +629,18 @@ void main() {
   /// LEGAL transitions (Flutter's lifecycle state machine allows
   /// resumed <- inactive <- hidden <- paused; a direct paused->resumed
   /// is invalid and asserts).
-  AppLifecycleState _lifecycle = AppLifecycleState.resumed;
+  AppLifecycleState lifecycle = AppLifecycleState.resumed;
 
-  Future<void> _transition(
+  Future<void> transition(
     WidgetTester tester,
     AppLifecycleState next,
   ) async {
-    if (_lifecycle == next) {
+    if (lifecycle == next) {
       return;
     }
     tester.binding.handleAppLifecycleStateChanged(next);
     await tester.pump();
-    _lifecycle = next;
+    lifecycle = next;
   }
 
   /// Simulates the Home button / a COMPLETED home-swipe gesture:
@@ -648,9 +648,9 @@ void main() {
   /// task is being covered, and `paused` once it is. Only
   /// `paused`/`hidden` count as a leave (Phase 5P).
   Future<void> pressHome(WidgetTester tester) async {
-    await _transition(tester, AppLifecycleState.inactive);
-    await _transition(tester, AppLifecycleState.hidden);
-    await _transition(tester, AppLifecycleState.paused);
+    await transition(tester, AppLifecycleState.inactive);
+    await transition(tester, AppLifecycleState.hidden);
+    await transition(tester, AppLifecycleState.paused);
     await tester.pumpAndSettle();
   }
 
@@ -659,19 +659,19 @@ void main() {
   /// the app returns to `resumed` WITHOUT ever pausing. The challenge
   /// must stay untouched (Phase 5P).
   Future<void> cancelledGesture(WidgetTester tester) async {
-    await _transition(tester, AppLifecycleState.inactive);
-    await _transition(tester, AppLifecycleState.resumed);
+    await transition(tester, AppLifecycleState.inactive);
+    await transition(tester, AppLifecycleState.resumed);
     await tester.pumpAndSettle();
   }
 
   /// Simulates returning to Smart App Lock, climbing the legal
   /// lifecycle ladder (paused -> hidden -> inactive -> resumed).
   Future<void> returnToApp(WidgetTester tester) async {
-    if (_lifecycle == AppLifecycleState.paused) {
-      await _transition(tester, AppLifecycleState.hidden);
+    if (lifecycle == AppLifecycleState.paused) {
+      await transition(tester, AppLifecycleState.hidden);
     }
-    await _transition(tester, AppLifecycleState.inactive);
-    await _transition(tester, AppLifecycleState.resumed);
+    await transition(tester, AppLifecycleState.inactive);
+    await transition(tester, AppLifecycleState.resumed);
     await tester.pumpAndSettle();
   }
 
