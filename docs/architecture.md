@@ -1620,3 +1620,51 @@ Verification (run by the developer):
 - `flutter analyze`
 - `flutter test test/ui/pin_unlock_screen_test.dart --concurrency=1`
 - `flutter test`
+
+## Phase 5 mobile-QA fix #3 — one-time protected-app flash-through
+
+Real-device symptom (Oppo A12) after fix #2: opening a protected app
+still shows ONE unauthorized flash-through cycle — the PIN challenge
+appears, disappears without input (WhatsApp becomes visible briefly),
+then reappears and stays stable.
+
+Root cause: fix #2's own-presentation suppression window
+(`_ownPresentationInFlight`) ended at the FIRST `resumed` after the
+challenge was on screen. On the device, the bring-to-front launch
+transition fires a TRAILING `hidden`/`paused` AFTER that resumed (the
+window/launch transition has not fully settled). With the window already
+cleared, that trailing leave ran `_onLeftForeground`:
+
+```
+challenge up (armed) -> resumed -> window cleared (fix #2)
+  -> TRAILING hidden/paused (still OUR transition) -> NOT suppressed
+  -> challenge popped -> WhatsApp visible (flash-through)
+  -> invalidate + stale marker -> resume path -> SECOND challenge -> stable
+```
+
+Fix (`LockChallengeHost`): the suppression window now ends only after a
+SETTLE period — the challenge up with the app in the foreground for
+`_presentationSettleWindow` (500 ms) of frame-clock time — restarted at
+EVERY resume (`_onResumed` re-captures `_presentationStartedAt`). A
+trailing leave shortly after any resume of the transition is suppressed;
+once the app has been stably foreground with the challenge up for the
+settle window, a leave is a REAL user leave again (5M Home dismissal
+still works). Implemented with a post-frame watcher using
+`WidgetsBinding.currentFrameTimeStamp` — no wall-clock timers, so tests
+stay deterministic under fake async and no pending-timer leaks.
+
+The monitor/trigger are untouched: our own package is still filtered at
+the detection boundary, so the trailing leave's invalidation (now
+suppressed) cannot re-trigger a second challenge.
+
+Regression test (`test/ui/lock_challenge_test.dart`): protected WhatsApp
+opened from the background -> first challenge appears -> our lock UI
+becomes foreground -> the bring-to-front `resumed` is followed by a
+TRAILING `hidden` leave and a return to `resumed` -> the SAME challenge
+remains mounted (no dismissal, no second showLockChallenge, no session,
+no launch) -> only the correct PIN ends it. Fails on the pre-fix code.
+
+Verification (run by the developer):
+- `flutter analyze`
+- `flutter test test/ui/lock_challenge_test.dart --concurrency=1`
+- `flutter test --concurrency=1`

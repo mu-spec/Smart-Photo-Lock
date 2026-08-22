@@ -113,10 +113,36 @@ class _LockChallengeHostState extends State<LockChallengeHost>
   /// launch transition) that belong to OUR OWN presentation — they are
   /// NOT the user leaving the protected app. While this is set, a
   /// lifecycle leave is suppressed: no challenge dismissal, no monitor
-  /// invalidation, no interrupted marker. The window is the bring-to-
-  /// front transition only; once resumed with the challenge up it is
-  /// cleared and a subsequent leave is a REAL Home press again.
+  /// invalidation, no interrupted marker.
+  ///
+  /// Phase 5 mobile-QA fix #3 (one-time flash-through): the window does
+  /// NOT end at the first `resumed`. On real devices (Oppo A12) the
+  /// launch transition fires a TRAILING `hidden`/`paused` AFTER the app
+  /// has already resumed — clearing the window there lets that trailing
+  /// leave dismiss the first challenge (one unauthorized flash-through,
+  /// then a second challenge). The window now ends only after the
+  /// challenge has been up with the app in the foreground for a short
+  /// SETTLE period (frame-clock based, restarted at every resume), so
+  /// the whole transition — including trailing leaves — is absorbed.
   bool _ownPresentationInFlight = false;
+
+  /// Phase 5 mobile-QA fix #3: how long (in frame-clock time) the
+  /// challenge must remain up with the app foreground before the
+  /// own-presentation suppression window is considered settled and a
+  /// leave is treated as a REAL user leave again (a Home press after
+  /// the transition has settled still dismisses — 5M).
+  static const Duration _presentationSettleWindow =
+      Duration(milliseconds: 500);
+
+  /// Frame-clock timestamp (WidgetsBinding.currentFrameTimeStamp) of
+  /// the most recent resume during an own-presentation — the settle
+  /// window restarts at every resume, so a trailing leave shortly after
+  /// ANY resume of the transition is suppressed.
+  Duration? _presentationStartedAt;
+
+  /// True while a settle post-frame callback is scheduled (prevents
+  /// piling up callbacks).
+  bool _settleScheduled = false;
 
   /// Phase 5M: whether the app is currently in the foreground (drives
   /// the pending re-presentation; tracked explicitly so tests and
@@ -285,11 +311,19 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     }
     final bool screenOff = trigger.takeScreenOffPending();
     if (_challenging) {
-      // Phase 5 mobile-QA fix #2: the app is back in the foreground
-      // with the challenge on screen — our own bring-to-front completed,
-      // so the suppression window ends here. From this point on a
-      // lifecycle leave IS the user leaving and dismisses as before.
-      _ownPresentationInFlight = false;
+      // Phase 5 mobile-QA fix #3: the app is back in the foreground
+      // with the challenge on screen. Our own bring-to-front has NOT
+      // necessarily settled — the device can fire a TRAILING
+      // hidden/paused after this resumed. Restart the settle window at
+      // this resume instead of ending the suppression now: a leave
+      // within the settle period is still OUR transition and must not
+      // dismiss the challenge (5M real Home presses still work once the
+      // transition has settled).
+      if (_ownPresentationInFlight) {
+        _presentationStartedAt =
+            WidgetsBinding.instance.currentFrameTimeStamp;
+        _armPresentationSettle();
+      }
       // Phase 5T (process/activity recreation): window flags do NOT
       // survive an activity recreation — re-arm FLAG_SECURE whenever a
       // challenge is on screen, so the recents snapshot is protected
@@ -407,6 +441,14 @@ class _LockChallengeHostState extends State<LockChallengeHost>
       // A fresh challenge supersedes the interrupted state (Home-press
       // dismissal) — nothing is pending to re-evaluate anymore.
       _interruptedChallenge = false;
+      // Phase 5 mobile-QA fix #3: arm the presentation settle now — the
+      // suppression window must outlive the launch transition (trailing
+      // lifecycle leaves), not end at the first resume.
+      if (_ownPresentationInFlight) {
+        _presentationStartedAt ??=
+            WidgetsBinding.instance.currentFrameTimeStamp;
+        _armPresentationSettle();
+      }
       bool passed = false;
       try {
         // Phase 5F: route by the user's PRIMARY credential (the one they
@@ -469,8 +511,10 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     _challenging = false;
     // Safety net: the challenge is no longer on screen, so no lifecycle
     // leave may ever be suppressed again (a real Home press behaves
-    // normally from here on).
+    // normally from here on). The scheduled settle callback stops
+    // itself the next time it runs (it observes the window ended).
     _ownPresentationInFlight = false;
+    _presentationStartedAt = null;
     if (passed) {
       // The lock loop truly ends only when nothing is queued — the
       // queued re-presentation keeps the secure window armed (no
@@ -500,6 +544,49 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     _scheduleReChallenge();
   }
 
+  /// Phase 5 mobile-QA fix #3: ends the own-presentation suppression
+  /// window only after the challenge has been up with the app in the
+  /// foreground for the settle window, measured in FRAME-CLOCK time
+  /// (no wall-clock timers — deterministic under fake async). The
+  /// window restarts at every resume (`_onResumed`), so a trailing
+  /// leave fired by the launch transition shortly after ANY resume is
+  /// suppressed; once the app has been stably foreground with the
+  /// challenge up for the settle window, a leave is a REAL user leave
+  /// again (5M Home dismissal works).
+  void _armPresentationSettle() {
+    if (_settleScheduled || !mounted) {
+      return;
+    }
+    _settleScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _settleScheduled = false;
+      if (!mounted) {
+        return;
+      }
+      if (!_ownPresentationInFlight) {
+        // Nothing left to settle (window already ended, or the
+        // challenge closed) — stop watching.
+        _presentationStartedAt = null;
+        return;
+      }
+      final Duration now =
+          WidgetsBinding.instance.currentFrameTimeStamp;
+      _presentationStartedAt ??= now;
+      final Duration startedAt = _presentationStartedAt!;
+      if (_challenging &&
+          _appForeground &&
+          now - startedAt >= _presentationSettleWindow) {
+        // The transition has settled: from here on a lifecycle leave
+        // IS the user leaving and dismisses as before (5M).
+        _ownPresentationInFlight = false;
+        _presentationStartedAt = null;
+        return;
+      }
+      // Keep watching on subsequent frames.
+      _armPresentationSettle();
+    });
+  }
+
   /// Phase 5 mobile-QA fix #2: re-brings Smart App Lock to the front
   /// while the active challenge is up but the app is BACKGROUNDED (a
   /// leave suppressed inside our own presentation window) and a new
@@ -518,6 +605,11 @@ class _LockChallengeHostState extends State<LockChallengeHost>
       return;
     }
     _ownPresentationInFlight = true;
+    // Phase 5 mobile-QA fix #3: this re-bring-to-front is a NEW
+    // transition — restart its settle window so its own trailing
+    // leaves are absorbed too.
+    _presentationStartedAt = null;
+    _armPresentationSettle();
     final Result<void> shown =
         await container.overlay.showLockChallenge(packageName);
     if (kDebugMode) {
