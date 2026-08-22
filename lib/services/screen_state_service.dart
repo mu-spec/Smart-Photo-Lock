@@ -17,7 +17,7 @@ enum ScreenStateEvent {
 /// revoke every fresh session instantly).
 abstract interface class ScreenStateService {
   /// Emits [ScreenStateEvent]s as they happen. Fail-closed: channel
-  /// problems surface as [Result.failure] events (never fabricated
-  /// screen states); a missing plugin yields an empty stream.
+  /// problems — including a missing native handler — surface as
+  /// [Result.failure] events (never fabricated screen states).
   Stream<Result<ScreenStateEvent>> get events;
 }

@@ -357,6 +357,12 @@ def run():
         invoked = set(
             re.findall(r"invokeMethod<[^>]*>\(\s*'([A-Za-z0-9_]+)'", dart_src)
         )
+        # 'listen'/'cancel' are the EventChannel activation protocol — the
+        # engine serves them to the native EventChannel.StreamHandler
+        # (onListen/onCancel), NOT to a MethodChannel `when` handler, so
+        # they can never have a `"x" ->` case. The service files own the
+        # stream lifecycle (QA fix #4C.1) and invoke them explicitly.
+        invoked -= {"listen", "cancel"}
         handled = set(re.findall(r'"([A-Za-z0-9_]+)"\s*->', kt_src))
         for method in sorted(invoked - handled):
             missing_wiring.append(

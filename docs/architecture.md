@@ -1541,3 +1541,48 @@ Verification (run by the developer):
 - `flutter test test/services/accessibility_service_test.dart --concurrency=1`
 - `flutter test test/services/screen_state_service_test.dart --concurrency=1`
 - `flutter test`
+
+## Phase 5 mobile-QA fix #4C.1 — MethodChannel failure streams (take 2)
+
+The first #4C fix (transforming the receiveBroadcastStream result) did
+NOT make the four stream tests pass. Reading the Flutter 3.47.1
+framework source (`EventChannel.receiveBroadcastStream`) showed why:
+
+  * Its `onListen` wraps the activation in
+    `try { await invokeMethod('listen') } catch { FlutterError.reportError(...) }`
+    — a MISSING native handler (MissingPluginException) or a platform
+    activation error is swallowed into the FlutterError facility and
+    NEVER reaches the stream. No transform/handleError on the returned
+    stream can ever see it (the "no native handler" tests got []).
+  * Error ENVELOPES do reach the stream as errors (decodeEnvelope ->
+    addError), so the error-envelope tests are fixable at the stream,
+    but the activation path fundamentally cannot be.
+
+Fix: the two services now OWN the stream lifecycle instead of using
+`receiveBroadcastStream`:
+  * `binaryMessenger.setMessageHandler(name, handler)` registers the
+    inbound handler — success envelopes decode to data, error envelopes
+    decode to PlatformException and become a Result.failure, a null
+    reply closes the stream.
+  * `MethodChannel(name, codec).invokeMethod('listen')` activates the
+    native stream ourselves, with `.then(onError:)` turning a failed
+    activation (missing handler / platform error) into exactly one
+    Result.failure data event.
+  * `onCancel` unregisters the handler and invokes 'cancel'
+    (fail-quiet).
+
+Contract satisfied for both services: channel error OR missing native
+handler -> exactly one observable Result.failure, never fabricated data.
+Consumers (ForegroundAppMonitor, LockTrigger) already handle
+Result.failure fail-quiet — a missing handler now counts a failure
+instead of being invisible.
+
+Note: `listen`/`cancel` are the engine-served EventChannel activation
+protocol (the native side registers an EventChannel.StreamHandler —
+there are no `when` cases). verify_structure.py now excludes them from
+the Dart-invoked-methods wiring check, which previously false-positived.
+
+Verification (run by the developer):
+- `flutter analyze`
+- `flutter test test/services/accessibility_service_test.dart --concurrency=1`
+- `flutter test test/services/screen_state_service_test.dart --concurrency=1`

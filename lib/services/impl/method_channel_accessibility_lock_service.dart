@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 
 import '../../utilities/result.dart';
@@ -11,7 +13,7 @@ import '../accessibility_lock_service.dart';
 /// setting; enabling happens exclusively through the system Accessibility
 /// settings screen. [foregroundPackages] relays window-state package
 /// names reported by the detection-only accessibility service —
-/// fail-closed (QA fix #4C): channel errors and a missing native
+/// fail-closed (QA fix #4C.1): channel errors AND a missing native
 /// handler surface as [Result.failure] events, never fabricated
 /// packages.
 class MethodChannelAccessibilityLockService
@@ -60,22 +62,74 @@ class MethodChannelAccessibilityLockService
 
   @override
   Stream<Result<String>> get foregroundPackages {
-    // Phase 5 mobile-QA fix #4C: every channel error — including a
-    // MISSING native handler, which arrives asynchronously as a stream
-    // error (the platform `send` for the `listen` method call fails)
-    // rather than as a synchronous throw — is converted into a
-    // [Result.failure] DATA event. The previous `handleError` (which
-    // builds a Result and discards it) SWALLOWED errors, so channel
-    // problems surfaced as nothing at all. Fail-closed: an error is
-    // never turned into a foreground package; the fail-quiet consumer
+    // Phase 5 mobile-QA fix #4C.1: the framework's
+    // `EventChannel.receiveBroadcastStream` SWALLOWS `listen` activation
+    // failures — a missing native handler (MissingPluginException) or a
+    // platform error during activation is caught inside its `onListen`
+    // and routed to `FlutterError.reportError`, so it NEVER reaches the
+    // stream (subscribers see nothing, not even a failure). Owning the
+    // stream lifecycle here (register the inbound message handler and
+    // invoke `listen` ourselves) surfaces EVERY channel error — error
+    // envelopes AND a missing native handler — as exactly one
+    // [Result.failure] data event. Fail-closed: an error is never
+    // turned into a foreground package; the fail-quiet consumer
     // (ForegroundAppMonitor) counts it and stays quiet.
-    return _eventsChannel.receiveBroadcastStream().transform(
-      StreamTransformer<dynamic, Result<String>>.fromHandlers(
-        handleData: (dynamic event, sink) =>
-            sink.add(Result.success(event as String)),
-        handleError: (Object error, StackTrace stackTrace, sink) =>
-            sink.add(Result<String>.failure(error)),
-      ),
+    final EventChannel eventChannel = _eventsChannel;
+    final MethodChannel activation =
+        MethodChannel(eventChannel.name, eventChannel.codec);
+    late StreamController<Result<String>> controller;
+    void emit(Result<String> result) {
+      if (!controller.isClosed) {
+        controller.add(result);
+      }
+    }
+
+    controller = StreamController<Result<String>>.broadcast(
+      onListen: () {
+        // Inbound platform messages on this channel: success envelopes
+        // carry foreground packages; error envelopes carry failures;
+        // a null reply signals end-of-stream.
+        eventChannel.binaryMessenger.setMessageHandler(
+          eventChannel.name,
+          (ByteData? reply) async {
+            if (reply == null) {
+              // End-of-stream: close only once.
+              if (!controller.isClosed) {
+                await controller.close();
+              }
+              return null;
+            }
+            try {
+              emit(Result.success(eventChannel.codec.decodeEnvelope(reply) as String));
+            } catch (Object error) {
+              // PlatformException (error envelope) or an undecodable
+              // payload — a failure, never fabricated data.
+              emit(Result<String>.failure(error));
+            }
+            return null;
+          },
+        );
+        // Activate the native stream. If activation itself fails (no
+        // native handler, platform error), surface exactly one failure
+        // instead of losing the error to FlutterError.
+        unawaited(
+          activation.invokeMethod<void>('listen').then(
+            (_) {},
+            onError: (Object error, StackTrace stackTrace) {
+              emit(Result<String>.failure(error));
+            },
+          ),
+        );
+      },
+      onCancel: () async {
+        eventChannel.binaryMessenger.setMessageHandler(eventChannel.name, null);
+        try {
+          await activation.invokeMethod<void>('cancel');
+        } catch (_) {
+          // Fail-quiet: nothing to cancel (missing handler, teardown).
+        }
+      },
     );
+    return controller.stream;
   }
 }
