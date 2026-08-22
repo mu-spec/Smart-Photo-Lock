@@ -1449,3 +1449,56 @@ Verification (run by the developer):
 - `flutter analyze` → No issues found.
 - `flutter test test/protection/lock_trigger_test.dart --concurrency=1`
 - `flutter test test/regression/lock_engine_regression_test.dart --concurrency=1`
+
+## Phase 5 mobile-QA fix #4B — lockout state + process recreation
+
+Full-suite run exposed a lockout/authentication cluster (2 failures).
+
+Failure A — "an active lockout survives process recreation" expected
+`AuthLockedOut`, got `AuthSuccess`.
+
+Root cause: the container-built `DefaultCredentialManager` used the
+state machine's GENERIC defaults (maxFailedAttempts 5) instead of the
+app's documented Phase 2F policy (3 failed attempts -> 30s cooldown).
+Three wrong attempts therefore never triggered a lockout, nothing was
+persisted, and a recreated manager saw no lockout — a user could bypass
+the cooldown by restarting the app (fail-open). The persisted policy
+fields on SecuritySettings were dead data: never read by the manager.
+
+Fix: `AppContainer` now wires the app lockout policy explicitly into
+the credential manager (`CredentialStateMachine(maxFailedAttempts: 3,
+lockoutDuration: 30s)`), matching every lockout test and the docs. The
+full lifecycle — trigger -> persist `lockedOutUntil` (encrypted
+settings) -> restore after recreation -> block until expiry — is now
+exercised by the production wiring, and the persisted deadline is
+authoritative until it expires.
+
+Failure B — "a lockout that has expired challenges again" expected
+`challenge`, got `deny`.
+
+Root cause: the test built the credential manager on the REAL wall
+clock but evaluated with controllers on a FIXED fake clock
+(2026-08-21 09:00 / 09:01). The lockout deadline is written as
+`now + cooldown`; with the real clock it could only sit between those
+two fake times inside a ~60-second real-world window on that exact
+date — a latent time-bomb that now always reports the second assertion
+as deny. The expiry logic itself (`CredentialState.statusAt`) was
+correct: once the deadline passes, status is `enrolled` and the access
+controller returns `challenge`.
+
+Fix: the test now injects the same fake clock into the manager
+(`now: 2026-08-21 09:00`), so the deadline is deterministically
+09:00:30: 09:00 is inside the cooldown (deny), 09:01 is past it
+(challenge). Assertions unchanged — this is a determinism repair of a
+latent time-bomb, mirroring how the reboot-recovery suite makes expiry
+deterministic.
+
+Both fixes preserve the mobile flicker fix (#2) and the
+LockTrigger/session/grace fixes (#4A) — none of those files were
+touched.
+
+Verification (run by the developer):
+- `flutter analyze`
+- `flutter test test/protection/default_access_controller_test.dart --concurrency=1`
+- `flutter test test/regression/process_recreation_test.dart --concurrency=1`
+- `flutter test`

@@ -28,6 +28,7 @@ import '../security/encryption/settings_cipher.dart';
 import '../security/encryption/settings_cipher_impl.dart';
 import '../security/credentials/credential_manager.dart';
 import '../security/credentials/credential_hash_policy.dart';
+import '../security/credentials/credential_state_machine.dart';
 import '../security/credentials/impl/default_credential_manager.dart';
 import '../security/credentials/impl/default_pin_credential_store.dart';
 import '../security/storage/impl/flutter_secure_secret_store.dart';
@@ -124,6 +125,21 @@ class AppContainer {
       pinStore: DefaultPinCredentialStore(
         securitySettings,
         policy: CredentialHashPolicy.strict,
+      ),
+      // Phase 5 mobile-QA fix #4B: the app's lockout policy — 3 failed
+      // attempts trip a 30-second cooldown — must be the policy the
+      // container-built manager actually applies. Without an explicit
+      // machine the manager falls back to the state machine's generic
+      // defaults (5 attempts), so the lockout would never trigger after
+      // 3 failures: no lockout is persisted, and an ACTIVE lockout
+      // cannot survive process recreation (fail-open — a user could
+      // bypass the cooldown by restarting the app). Explicitly wiring
+      // the policy keeps the whole lockout lifecycle (trigger ->
+      // persist -> restore after recreation) consistent with the
+      // documented Phase 2F behavior.
+      stateMachine: CredentialStateMachine(
+        maxFailedAttempts: 3,
+        lockoutDuration: const Duration(seconds: 30),
       ),
       biometricService: biometrics,
     );

@@ -176,6 +176,15 @@ void main() {
         maxFailedAttempts: 3,
         lockoutDuration: const Duration(seconds: 30),
       ),
+      // QA fix #4B: the lockout deadline must be written against the
+      // SAME clock the controllers below read. Previously the manager
+      // used the real wall clock while the controllers used the fixed
+      // fake clock (09:00 / 09:01), so the deadline could only ever
+      // sit between those two times during a ~60-second real-world
+      // window — a latent time-bomb. The deadline is now determinis-
+      // tically 09:00:30: 09:00 is inside the cooldown (deny), 09:01
+      // is past it (challenge). Assertions unchanged.
+      now: () => DateTime(2026, 8, 21, 9, 0),
     );
     await manager.enrollPin('1234');
     for (int i = 0; i < 3; i++) {
