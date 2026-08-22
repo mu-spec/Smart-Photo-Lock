@@ -144,6 +144,80 @@ void main() {
     });
   });
 
+  group('stale invalidation (recents return)', () {
+    test('a same-package report after invalidation re-emits a transition',
+        () async {
+      installed.foregroundPackage = 'com.example.chat';
+      await monitor.probe();
+      await pumpEventQueue();
+      expect(changes, hasLength(1));
+
+      // Smart App Lock left the foreground (Recents covered it): the
+      // last-known package goes stale — the task switcher may never be
+      // observed by either detection path.
+      monitor.invalidateCurrentPackage();
+
+      // The protected app's task returns: the SAME package must be a
+      // fresh transition, never swallowed by the dedupe.
+      installed.foregroundPackage = 'com.example.chat';
+      await monitor.probe();
+      await pumpEventQueue();
+
+      expect(changes, hasLength(2));
+      expect(changes.last.packageName, 'com.example.chat');
+      expect(changes.last.source, ForegroundDetectionSource.usageStats);
+    });
+
+    test('invalidation is consumed by the next report; dedupe resumes',
+        () async {
+      installed.foregroundPackage = 'com.example.chat';
+      await monitor.probe();
+      monitor.invalidateCurrentPackage();
+
+      await monitor.probe(); // forced re-emission (same package)
+      await monitor.probe(); // deduped again
+      await pumpEventQueue();
+
+      expect(changes, hasLength(2));
+    });
+
+    test('a different package after invalidation clears the stale flag',
+        () async {
+      installed.foregroundPackage = 'com.example.chat';
+      await monitor.probe();
+      monitor.invalidateCurrentPackage();
+
+      installed.foregroundPackage = 'com.example.maps';
+      await monitor.probe();
+      await monitor.probe(); // maps again — must dedupe (flag consumed)
+      await pumpEventQueue();
+
+      expect(changes, hasLength(2));
+      expect(changes.last.packageName, 'com.example.maps');
+    });
+
+    test('null probes never consume the invalidation (fail-closed)',
+        () async {
+      installed.foregroundPackage = 'com.example.chat';
+      await monitor.probe();
+      monitor.invalidateCurrentPackage();
+
+      // A null probe (usage access missing) is NOT an observation:
+      // the stale flag must survive for the next real report.
+      installed.foregroundPackage = null;
+      await monitor.probe();
+      await pumpEventQueue();
+      expect(changes, hasLength(1));
+
+      installed.foregroundPackage = 'com.example.chat';
+      await monitor.probe();
+      await pumpEventQueue();
+
+      expect(changes, hasLength(2));
+      expect(changes.last.packageName, 'com.example.chat');
+    });
+  });
+
   group('diagnostic counters', () {
     test('probes, nulls, accessibility events and failures are counted',
         () async {

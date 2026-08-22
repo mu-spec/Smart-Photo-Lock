@@ -1150,8 +1150,15 @@ Challenge closes:
 
 Recents flows:
   ├─ tap OUR task            -> interrupted challenge re-presents
-  └─ tap PROTECTED app task  -> detection fires while backgrounded;
-                               challenge presents; no session/launch
+  ├─ tap PROTECTED app task  -> detection fires while backgrounded;
+  │                             challenge presents; no session/launch
+  └─ REAL leave (hidden/paused) -> the monitor's last-known package
+                               goes STALE: the next report — even the
+                               SAME package — is a fresh transition,
+                               because the task switcher may pass
+                               without either detection path observing
+                               it (fail-closed; dedupe resumes after
+                               that first report)
 ```
 
 - Native: `OverlayStatusChannel.setSecureWindow` toggles

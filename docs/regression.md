@@ -1005,3 +1005,32 @@ test uses the same climb-back via the shared `transition` helper.
 Semantics preserved: the leave still happens on hidden/paused, the host
 still considers the app backgrounded at inactive, no session is ever
 granted, and returning re-presents the challenge.
+
+---
+
+# Phase 5 — QA Fix #3D (protected-app Recents return re-challenge)
+
+Root cause: `ForegroundAppMonitor`'s cross-source dedupe drops any
+report whose package equals the LAST-KNOWN foreground. When Smart App
+Lock was covered by Recents, the intermediate foreground (task
+switcher / launcher blip) could be invisible to BOTH detection paths —
+a sub-second pass slips past the 1-second usage-stats poll and emits no
+accessibility window event. The protected app returning through its
+Recents task was then reported as the SAME package and silently
+swallowed: no `ForegroundAppChange`, no `LockRequired`, no challenge —
+the protected app was exposed (fail-open).
+
+Fix (production, fail-closed): `ForegroundAppMonitor` gains
+`invalidateCurrentPackage()`, which marks the last-known package
+stale. The FIRST report after invalidation is emitted as a fresh
+transition even when it carries the identical package; the flag is
+consumed by that report (null probes never consume it — they are not
+observations), and dedupe resumes afterwards. `LockChallengeHost` calls
+it on EVERY real leave (`hidden`/`paused` — the one shared leave path):
+any real leave breaks detection continuity, and re-evaluation can
+never produce a false challenge because the access controller still
+honors live sessions and grace periods. Transient `inactive` (shade,
+cancelled gestures) never invalidates. No UI test was changed; four
+monitor unit tests cover the new API. This also repairs the same
+latent path in the regression gauntlet (Home + re-open / Recents task
+switch).

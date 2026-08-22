@@ -84,6 +84,14 @@ class ForegroundAppMonitor {
   bool _started = false;
   bool _disposed = false;
 
+  /// Phase 5O hardening: true while the last-known foreground package
+  /// is STALE — Smart App Lock left the foreground, so the
+  /// intermediate foreground (Recents UI, launcher) may never be
+  /// observed by either detection path. The next report is then
+  /// treated as a fresh transition even when it carries the same
+  /// package (see [invalidateCurrentPackage]).
+  bool _currentStale = false;
+
   /// Foreground transitions (deduplicated per package across sources).
   Stream<ForegroundAppChange> get changes => _controller.stream;
 
@@ -158,8 +166,35 @@ class ForegroundAppMonitor {
     _report(package, ForegroundDetectionSource.accessibility);
   }
 
+  /// Phase 5O hardening: marks the last-known foreground package
+  /// STALE, so the next report — even of the identical package — is
+  /// emitted as a fresh transition.
+  ///
+  /// Called when Smart App Lock itself leaves the foreground (Recents
+  /// or another task covers it). Detection continuity is broken: a
+  /// sub-second pass through the task switcher can slip past the
+  /// 1-second usage-stats poll AND emit no accessibility window event,
+  /// so a protected app returning through its Recents task would be
+  /// reported as the SAME package and swallowed by the dedupe — the
+  /// protected app would be exposed with no challenge.
+  ///
+  /// Fail-closed: the invalidation only re-runs evaluation for the
+  /// next observation (the access controller still honors live
+  /// sessions and grace periods), so it can never fabricate a false
+  /// challenge. Null probes are not observations and never consume it.
+  void invalidateCurrentPackage() {
+    _currentStale = true;
+  }
+
   void _report(String package, ForegroundDetectionSource source) {
-    if (package == _current) {
+    // A stale last-known package is consumed by the FIRST observation,
+    // whatever it carries: a same-package report is a real return
+    // (Recents covered Smart App Lock without detection seeing the
+    // task switcher), and a different package is a normal transition
+    // that re-establishes fresh ground truth — dedupe resumes after it.
+    final bool stale = _currentStale;
+    _currentStale = false;
+    if (!stale && package == _current) {
       return; // same package from either source is not a transition
     }
     _current = package;

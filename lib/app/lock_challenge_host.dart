@@ -196,11 +196,25 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     }
   }
 
-  /// Phase 5M/5N/5P: Home-press handling — dismiss the on-screen
+  /// Phase 5M/5N/5P/5O: Home-press handling — dismiss the on-screen
   /// challenge. Only called on a REAL leave (`paused`/`hidden`); the
   /// transient `inactive` never reaches here, so a cancelled
   /// home-swipe or a shade pull never dismisses anything.
   void _onLeftForeground() {
+    // Phase 5O hardening: the moment another task covers Smart App
+    // Lock, detection continuity breaks — the task switcher or the
+    // launcher may pass without EITHER detection path observing it
+    // (sub-second blip vs. the 1-second usage-stats poll; no a11y
+    // window event). Mark the monitor's last-known package stale: the
+    // next report — even the SAME protected package returning through
+    // its Recents task — is a fresh transition and re-triggers the
+    // challenge instead of being deduped away. Fail-closed:
+    // re-evaluation honors live sessions and grace periods, so this
+    // can never produce a false challenge.
+    final AppContainer? container = _container;
+    if (container != null) {
+      container.foregroundMonitor.invalidateCurrentPackage();
+    }
     // Idempotent: a second lifecycle event must not double-pop (the
     // second pop would remove the SHELL route beneath the challenge).
     if (!_challenging || _interruptedChallenge) {
