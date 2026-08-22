@@ -70,7 +70,7 @@ class MethodChannelScreenStateService implements ScreenStateService {
                     ),
                 },
               );
-            } catch (Object error) {
+            } catch (error) {
               // PlatformException (error envelope) or an undecodable
               // payload — a failure, never fabricated data.
               emit(Result<ScreenStateEvent>.failure(error));

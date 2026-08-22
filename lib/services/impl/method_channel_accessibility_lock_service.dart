@@ -101,7 +101,7 @@ class MethodChannelAccessibilityLockService
             }
             try {
               emit(Result.success(eventChannel.codec.decodeEnvelope(reply) as String));
-            } catch (Object error) {
+            } catch (error) {
               // PlatformException (error envelope) or an undecodable
               // payload — a failure, never fabricated data.
               emit(Result<String>.failure(error));
