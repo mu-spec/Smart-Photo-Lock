@@ -8,9 +8,9 @@ import '../screen_state_service.dart';
 ///
 /// The native side relays `ACTION_SCREEN_OFF` / `ACTION_SCREEN_ON`
 /// broadcasts as `screen_off` / `screen_on` payloads while a listener
-/// is attached. Fail-closed: an unavailable event channel yields an
-/// empty stream; unknown payloads and channel errors surface as
-/// [Result.failure] events — never fabricated screen states.
+/// is attached. Fail-closed (QA fix #4C): unknown payloads, channel
+/// errors and a missing native handler surface as [Result.failure]
+/// events — never fabricated screen states.
 class MethodChannelScreenStateService implements ScreenStateService {
   MethodChannelScreenStateService({EventChannel? channel})
       : _channel = channel ??
@@ -20,10 +20,20 @@ class MethodChannelScreenStateService implements ScreenStateService {
 
   @override
   Stream<Result<ScreenStateEvent>> get events {
-    Stream<Result<ScreenStateEvent>> stream;
-    try {
-      stream = _channel.receiveBroadcastStream().map(
-            (dynamic event) => switch (event) {
+    // Phase 5 mobile-QA fix #4C: every channel error — including a
+    // MISSING native handler, which arrives asynchronously as a stream
+    // error (the platform `send` for the `listen` method call fails)
+    // rather than as a synchronous throw — is converted into a
+    // [Result.failure] DATA event. The previous `handleError` (which
+    // builds a Result and discards it) SWALLOWED errors, so channel
+    // problems surfaced as nothing at all. Fail-closed: an error or an
+    // unknown payload is never turned into a screen state; the
+    // fail-quiet consumer (LockTrigger) stays quiet.
+    return _channel.receiveBroadcastStream().transform(
+      StreamTransformer<dynamic, Result<ScreenStateEvent>>.fromHandlers(
+        handleData: (dynamic event, sink) {
+          sink.add(
+            switch (event) {
               'screen_off' => Result.success(ScreenStateEvent.screenOff),
               'screen_on' => Result.success(ScreenStateEvent.screenOn),
               _ => Result.failure(
@@ -31,11 +41,10 @@ class MethodChannelScreenStateService implements ScreenStateService {
                 ),
             },
           );
-    } on MissingPluginException {
-      return const Stream<Result<ScreenStateEvent>>.empty();
-    }
-    return stream.handleError(
-      (Object error) => Result<ScreenStateEvent>.failure(error),
+        },
+        handleError: (Object error, StackTrace stackTrace, sink) =>
+            sink.add(Result<ScreenStateEvent>.failure(error)),
+      ),
     );
   }
 }

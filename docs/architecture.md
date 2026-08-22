@@ -1502,3 +1502,42 @@ Verification (run by the developer):
 - `flutter test test/protection/default_access_controller_test.dart --concurrency=1`
 - `flutter test test/regression/process_recreation_test.dart --concurrency=1`
 - `flutter test`
+
+## Phase 5 mobile-QA fix #4C — MethodChannel failure streams
+
+Full-suite run exposed 4 failures in the two MethodChannel stream
+services (accessibility foreground events + screen-state events).
+
+Root cause (shared pattern in both services): the stream getters used
+
+  Stream<Result<T>> stream;
+  try { stream = _channel.receiveBroadcastStream().map(...); }
+  on MissingPluginException { return const Stream.empty(); }
+  return stream.handleError((error) => Result.failure(error));
+
+  * `handleError` SWALLOWS errors: its callback builds a
+    `Result.failure(...)` and discards it, and the error is consumed —
+    never forwarded to the listener as data OR error. Channel errors
+    surfaced as NOTHING (tests expecting 1 failure got 0).
+  * The `on MissingPluginException` branch is dead code: with no native
+    handler the failure arrives ASYNCHRONOUSLY as a stream error (the
+    platform `send` for the `listen` method call fails) during
+    `onListen`, not as a synchronous throw — so it flowed into the
+    stream where `handleError` swallowed it too (tests expecting a
+    non-empty failure stream got []).
+
+Fix (one consistent pattern in both services): convert the raw event
+channel through `StreamTransformer<dynamic, Result<T>>.fromHandlers` —
+every DATA event becomes `Result.success`, every ERROR event (channel
+errors AND a missing native handler) becomes a `Result.failure` DATA
+event. No error is ever turned into a foreground package or screen
+state; the existing fail-quiet consumers (ForegroundAppMonitor,
+LockTrigger) already handle `Result.failure` by counting/ignoring, so
+production behavior is preserved — problems are now observable (the
+failure counters) instead of invisible.
+
+Verification (run by the developer):
+- `flutter analyze`
+- `flutter test test/services/accessibility_service_test.dart --concurrency=1`
+- `flutter test test/services/screen_state_service_test.dart --concurrency=1`
+- `flutter test`
