@@ -149,13 +149,22 @@ void main() {
 
   /// Simulates the Home button with only LEGAL lifecycle transitions:
   /// the 3.47 state machine requires the hidden step between inactive
-  /// and paused (inactive -> hidden -> paused).
+  /// and paused (inactive -> hidden -> paused). Climbs back up to
+  /// `inactive` afterwards — hidden/paused freeze frame rendering in
+  /// the test binding, so the challenge's dismissal pop must render in
+  /// a frames-enabled state (exactly like a real device, where the
+  /// paused window renders nothing and the removal completes on the
+  /// next rendered frame).
   Future<void> pressHome(WidgetTester tester) async {
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
     await tester.pump();
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
     await tester.pump();
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    await tester.pump();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
     await tester.pumpAndSettle();
   }
 

@@ -982,3 +982,26 @@ repeated stop/dispose stay idempotent.
 Also cleaned the two analyzer infos in lock_challenge_test.dart:
 `_lifecycle` -> `lifecycle`, `_transition` -> `transition` (local
 identifiers must not carry leading underscores).
+
+---
+
+# Phase 5 — QA Fix #3C (real app-leave challenge dismissal)
+
+Root cause: Flutter 3.47 disables frame rendering while the app
+lifecycle is `hidden`/`paused` (SchedulerBinding sets framesEnabled
+false, so `scheduleFrame()` becomes a no-op), and the automated test
+binding's `pump()` only renders `if (hasScheduledFrame)`. When the host
+dismissed the challenge on a REAL leave (hidden/paused), the pop's
+route-removal could never visually complete in the frozen state — the
+PinUnlockScreen stayed mounted and every dismissal assert failed.
+
+The host behavior is production-correct: a real device's paused window
+renders nothing, and the removal completes on the next rendered frame.
+The fix is test-side only: the `pressHome` helpers (both suites) now
+climb back UP to `inactive` — the first frames-enabled backgrounded
+state — before settling, so the dismissal pop renders exactly like a
+real device's next frame. The "hidden state counts as a real leave"
+test uses the same climb-back via the shared `transition` helper.
+Semantics preserved: the leave still happens on hidden/paused, the host
+still considers the app backgrounded at inactive, no session is ever
+granted, and returning re-presents the challenge.

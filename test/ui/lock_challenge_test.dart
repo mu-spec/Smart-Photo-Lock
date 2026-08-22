@@ -647,10 +647,20 @@ void main() {
   /// Android fires `inactive` when the swipe starts, `hidden` while the
   /// task is being covered, and `paused` once it is. Only
   /// `paused`/`hidden` count as a leave (Phase 5P).
+  ///
+  /// The helper climbs back UP to `inactive` before settling: Flutter
+  /// disables frame rendering while `hidden`/`paused` (framesEnabled is
+  /// off, so `scheduleFrame` is a no-op and the dismissal pop can never
+  /// visually complete). On a real device the paused window renders
+  /// nothing either — the removal finishes on the next rendered frame,
+  /// which is exactly what the climb-back models. The host still
+  /// considers the app backgrounded at `inactive`.
   Future<void> pressHome(WidgetTester tester) async {
     await transition(tester, AppLifecycleState.inactive);
     await transition(tester, AppLifecycleState.hidden);
     await transition(tester, AppLifecycleState.paused);
+    await transition(tester, AppLifecycleState.hidden);
+    await transition(tester, AppLifecycleState.inactive);
     await tester.pumpAndSettle();
   }
 
@@ -964,10 +974,12 @@ void main() {
     await openApp(tester, container, 'com.whatsapp');
     expect(find.byType(PinUnlockScreen), findsOneWidget);
 
-    tester.binding
-        .handleAppLifecycleStateChanged(AppLifecycleState.inactive);
-    await tester.pump();
-    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    // The hidden step IS the real leave (the host dismisses there).
+    // Climb back to inactive so frames render the dismissal pop —
+    // hidden/paused freeze frame rendering in the test binding.
+    await transition(tester, AppLifecycleState.inactive);
+    await transition(tester, AppLifecycleState.hidden);
+    await transition(tester, AppLifecycleState.inactive);
     await tester.pumpAndSettle();
 
     expect(find.byType(PinUnlockScreen), findsNothing);
