@@ -33,7 +33,7 @@ void main() {
       final ScreenStateService service = MethodChannelScreenStateService();
       final List<Result<ScreenStateEvent>> seen = <Result<ScreenStateEvent>>[];
       service.events.listen(seen.add);
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await pumpEventQueue();
 
       expect(seen, hasLength(2));
       expect(seen[0].valueOrNull, ScreenStateEvent.screenOff);
@@ -53,7 +53,7 @@ void main() {
       final ScreenStateService service = MethodChannelScreenStateService();
       final List<Result<ScreenStateEvent>> seen = <Result<ScreenStateEvent>>[];
       service.events.listen(seen.add);
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await pumpEventQueue();
 
       expect(seen, hasLength(1));
       expect(seen.single.isFailure, isTrue);
@@ -71,7 +71,7 @@ void main() {
       final ScreenStateService service = MethodChannelScreenStateService();
       final List<Result<ScreenStateEvent>> seen = <Result<ScreenStateEvent>>[];
       service.events.listen(seen.add);
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await pumpEventQueue();
 
       expect(seen, hasLength(1));
       expect(seen.single.isFailure, isTrue);
@@ -82,7 +82,7 @@ void main() {
       final ScreenStateService service = MethodChannelScreenStateService();
       final List<Result<ScreenStateEvent>> seen = <Result<ScreenStateEvent>>[];
       service.events.listen(seen.add);
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await pumpEventQueue();
 
       expect(seen, isNotEmpty);
       expect(seen.every((Result<ScreenStateEvent> e) => e.isFailure), isTrue);

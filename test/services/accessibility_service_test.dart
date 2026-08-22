@@ -86,7 +86,7 @@ void main() {
           MethodChannelAccessibilityLockService();
       final List<Result<String>> events = <Result<String>>[];
       service.foregroundPackages.listen(events.add);
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await pumpEventQueue();
 
       expect(events, hasLength(2));
       expect(events[0].isSuccess, isTrue);
@@ -108,7 +108,7 @@ void main() {
           MethodChannelAccessibilityLockService();
       final List<Result<String>> events = <Result<String>>[];
       service.foregroundPackages.listen(events.add);
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await pumpEventQueue();
 
       expect(events, hasLength(1));
       expect(events.single.isFailure, isTrue);
@@ -120,7 +120,7 @@ void main() {
           MethodChannelAccessibilityLockService();
       final List<Result<String>> events = <Result<String>>[];
       service.foregroundPackages.listen(events.add);
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await pumpEventQueue();
 
       expect(events, isNotEmpty);
       expect(events.every((Result<String> e) => e.isFailure), isTrue);

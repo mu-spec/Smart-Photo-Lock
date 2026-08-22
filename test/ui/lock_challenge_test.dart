@@ -625,14 +625,32 @@ void main() {
   });
   // -- Home-button hardening (Phase 5M) --------------------------------------
 
-  /// Simulates the Home button / a COMPLETED home-swipe gesture:
-  /// Android fires `inactive` when the swipe starts and `paused` once
-  /// the task is actually covered. Only the `paused` counts as a leave
-  /// (Phase 5P).
-  Future<void> pressHome(WidgetTester tester) async {
-    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+  /// The lifecycle state the helpers last set — used to emit only
+  /// LEGAL transitions (Flutter's lifecycle state machine allows
+  /// resumed <- inactive <- hidden <- paused; a direct paused->resumed
+  /// is invalid and asserts).
+  AppLifecycleState _lifecycle = AppLifecycleState.resumed;
+
+  Future<void> _transition(
+    WidgetTester tester,
+    AppLifecycleState next,
+  ) async {
+    if (_lifecycle == next) {
+      return;
+    }
+    tester.binding.handleAppLifecycleStateChanged(next);
     await tester.pump();
-    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    _lifecycle = next;
+  }
+
+  /// Simulates the Home button / a COMPLETED home-swipe gesture:
+  /// Android fires `inactive` when the swipe starts, `hidden` while the
+  /// task is being covered, and `paused` once it is. Only
+  /// `paused`/`hidden` count as a leave (Phase 5P).
+  Future<void> pressHome(WidgetTester tester) async {
+    await _transition(tester, AppLifecycleState.inactive);
+    await _transition(tester, AppLifecycleState.hidden);
+    await _transition(tester, AppLifecycleState.paused);
     await tester.pumpAndSettle();
   }
 
@@ -641,15 +659,19 @@ void main() {
   /// the app returns to `resumed` WITHOUT ever pausing. The challenge
   /// must stay untouched (Phase 5P).
   Future<void> cancelledGesture(WidgetTester tester) async {
-    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
-    await tester.pump();
-    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await _transition(tester, AppLifecycleState.inactive);
+    await _transition(tester, AppLifecycleState.resumed);
     await tester.pumpAndSettle();
   }
 
-  /// Simulates returning to Smart App Lock.
+  /// Simulates returning to Smart App Lock, climbing the legal
+  /// lifecycle ladder (paused -> hidden -> inactive -> resumed).
   Future<void> returnToApp(WidgetTester tester) async {
-    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    if (_lifecycle == AppLifecycleState.paused) {
+      await _transition(tester, AppLifecycleState.hidden);
+    }
+    await _transition(tester, AppLifecycleState.inactive);
+    await _transition(tester, AppLifecycleState.resumed);
     await tester.pumpAndSettle();
   }
 

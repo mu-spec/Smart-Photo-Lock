@@ -147,8 +147,13 @@ void main() {
   StaticScreenStateService screenOf(AppContainer container) =>
       container.screenState as StaticScreenStateService;
 
+  /// Simulates the Home button with only LEGAL lifecycle transitions:
+  /// the 3.47 state machine requires the hidden step between inactive
+  /// and paused (inactive -> hidden -> paused).
   Future<void> pressHome(WidgetTester tester) async {
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    await tester.pump();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
     await tester.pump();
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
     await tester.pumpAndSettle();

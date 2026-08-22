@@ -925,3 +925,22 @@ open a protected app -> expect `a11y foreground -> <pkg>` or
 challenge` and the challenge screen. If the process is force-stopped
 or swiped away, protection resumes the moment Smart App Lock is opened
 again (documented boundary until nothing else can run).
+
+---
+
+# Phase 5 — QA Fix #2 (regressions from the mobile pipeline fix)
+
+Genuine regressions/robustness issues found and repaired:
+
+| # | Issue | Fix |
+| - | ----- | --- |
+| 1 | `DetectionDiagnosticsScreen` read `AppScope` during `dispose()` (walking a deactivated element) | The container is now captured in `initState` (`_container`); `dispose()` and the monitor-ownership check use the captured reference — no BuildContext/AppScope access during teardown |
+| 2 | Lifecycle helpers emitted ILLEGAL transitions (`inactive -> paused`, `paused -> resumed`); the 3.47.0 state machine requires the `hidden` step (paused legal only from hidden/null; resumed legal only from inactive/hidden/null) | `pressHome` now walks inactive -> hidden -> paused; `returnToApp` climbs paused -> hidden -> inactive -> resumed (state-tracked, same-state steps skipped); the regression gauntlet's `pressHome` updated identically |
+| 3 | The accessibility/screen-state channel-error tests used arbitrary 50 ms real-timer delays | Replaced with the deterministic `pumpEventQueue()` flush (no arbitrary delays) |
+
+Verified clean:
+- Every remaining raw `handleAppLifecycleStateChanged` sequence in the
+  suite is legal (all others are `inactive -> resumed`).
+- The host still stops the trigger + watcher on teardown (timer
+  cancellation remains synchronous); the capability guard stops the
+  capability monitor.

@@ -63,10 +63,17 @@ class _DetectionDiagnosticsScreenState
   /// (null while nothing is known yet).
   ProtectedMatchDecision? _matchDecision;
 
+  /// The container in scope, captured in initState. dispose() must
+  /// NEVER touch AppScope/BuildContext — a deactivated element cannot
+  /// be walked — so every late reference (teardown, toggles) uses this
+  /// captured instance instead.
+  AppContainer? _container;
+
   @override
   void initState() {
     super.initState();
     final AppContainer? container = AppScope.read(context);
+    _container = container;
     _monitor = container?.foregroundMonitor;
     if (_monitor != null) {
       _subscription = _monitor!.changes.listen(_onChange);
@@ -93,7 +100,10 @@ class _DetectionDiagnosticsScreenState
     // only our own subscription goes away. When the trigger is NOT
     // running (standalone diagnostics/tests), we stop what we started.
     _subscription?.cancel();
-    final bool triggerOwnsDetection = _triggerIsRunning();
+    // Capture the trigger's running state BEFORE any teardown work:
+    // reads the captured container, never the BuildContext.
+    final bool triggerOwnsDetection =
+        (_container?.lockTrigger.isRunning) ?? false;
     if (!triggerOwnsDetection) {
       _monitor?.stop();
     }
@@ -101,8 +111,9 @@ class _DetectionDiagnosticsScreenState
   }
 
   bool _triggerIsRunning() {
-    final AppContainer? container = AppScope.read(context);
-    return container?.lockTrigger.isRunning ?? false;
+    // The captured container — safe in every callback (and, unlike
+    // AppScope reads, also safe during teardown).
+    return _container?.lockTrigger.isRunning ?? false;
   }
 
   void _onChange(ForegroundAppChange change) {
