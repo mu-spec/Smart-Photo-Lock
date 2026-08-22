@@ -944,3 +944,19 @@ Verified clean:
 - The host still stops the trigger + watcher on teardown (timer
   cancellation remains synchronous); the capability guard stops the
   capability monitor.
+
+---
+
+# Phase 5 — QA Fix #3A (lock challenge host dispose)
+
+Root cause: the watcher stop added to `LockChallengeHost.dispose()`
+read `AppScope.read(context)` during teardown — walking a deactivated
+element ("Looking up a deactivated widget's ancestor is unsafe").
+
+Fix: the host now captures the `AppContainer` ONCE in `initState`
+(`_container`) and dispose() uses only that cached reference:
+`_subscription.cancel()`, `_trigger.stop()` (which synchronously
+cancels the monitor's 1-second timer), and `unawaited(container
+.watcher.stop())`. Every other AppScope read remains in
+mounted-guarded handlers. Ownership is unchanged: the host starts the
+trigger + watcher, and stops exactly those resources.

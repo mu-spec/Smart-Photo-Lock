@@ -61,6 +61,11 @@ class LockChallengeHost extends StatefulWidget {
 
 class _LockChallengeHostState extends State<LockChallengeHost>
     with WidgetsBindingObserver {
+  /// The container captured in initState — dispose() must NEVER call
+  /// AppScope.read(context): a deactivated widget's element cannot be
+  /// walked, so every teardown reference uses this cached instance.
+  AppContainer? _container;
+
   LockTrigger? _trigger;
   StreamSubscription<LockRequired>? _subscription;
 
@@ -97,7 +102,11 @@ class _LockChallengeHostState extends State<LockChallengeHost>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _trigger = AppScope.read(context)?.lockTrigger;
+    // Capture the container ONCE here: teardown (dispose) may never
+    // touch the BuildContext, and the cached instance is shared by
+    // every safe late reference as well.
+    _container = AppScope.read(context);
+    _trigger = _container?.lockTrigger;
     _subscription = _trigger?.lockRequired.listen(_onLockRequired);
     _trigger?.start();
     _startWatcher();
@@ -109,7 +118,7 @@ class _LockChallengeHostState extends State<LockChallengeHost>
   /// isolate when the app is backgrounded and protected apps open with
   /// no challenge. Started and stopped with the lock engine itself.
   Future<void> _startWatcher() async {
-    final AppContainer? container = AppScope.read(context);
+    final AppContainer? container = _container;
     if (container == null) {
       return;
     }
@@ -124,7 +133,7 @@ class _LockChallengeHostState extends State<LockChallengeHost>
   /// Phase 5L: applies the persisted re-lock grace on startup, so the
   /// configured policy is live without visiting any settings screen.
   Future<void> _applyPersistedGracePeriod() async {
-    final AppContainer? container = AppScope.read(context);
+    final AppContainer? container = _container;
     if (container == null) {
       return;
     }
@@ -139,11 +148,12 @@ class _LockChallengeHostState extends State<LockChallengeHost>
   void dispose() {
     // Stop exactly what this host started: the subscription, the
     // trigger (which stops the monitor's polling timer) and the watcher
-    // foreground service.
+    // foreground service. Uses ONLY the cached container — a
+    // deactivated widget's element can never be walked.
     WidgetsBinding.instance.removeObserver(this);
     _subscription?.cancel();
     _trigger?.stop();
-    final AppContainer? container = AppScope.read(context);
+    final AppContainer? container = _container;
     if (container != null) {
       unawaited(container.watcher.stop());
     }
