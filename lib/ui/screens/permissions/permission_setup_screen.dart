@@ -3,22 +3,25 @@ import 'package:flutter/material.dart';
 import '../../../app/app_scope.dart';
 import '../../../app/router.dart';
 import '../../../design_system/design_system.dart';
+import '../../../protection/protection_health.dart';
 
 /// One required capability shown on the centralized setup screen.
 class _Capability {
   const _Capability({
     required this.name,
     required this.description,
-    required this.route,
     required this.icon,
     required this.rowKey,
+    required this.requirement,
+    this.route,
   });
 
   final String name;
   final String description;
-  final String route;
+  final String? route;
   final IconData icon;
   final String rowKey;
+  final CapabilityRequirement requirement;
 }
 
 /// Centralized permission setup (Phase 4E).
@@ -36,10 +39,12 @@ class PermissionSetupScreen extends StatefulWidget {
 
   static const String headerTitle = 'App lock permissions';
   static const String headerSubtitle =
-      'Enable every capability Smart App Lock needs to protect your apps.';
+      'Enable background presentation and at least one detection method.';
   static const String enabledLabel = 'Enabled';
   static const String actionRequiredLabel = 'Action Required';
   static String readyCount(int n) => '$n of 3 ready';
+  static const String coreReadyLabel = 'Core requirements ready';
+  static const String coreMissingLabel = 'Core setup incomplete';
 
   @override
   State<PermissionSetupScreen> createState() => _PermissionSetupScreenState();
@@ -54,6 +59,7 @@ class _PermissionSetupScreenState extends State<PermissionSetupScreen>
       route: RouteNames.usageAccess,
       icon: Icons.insights,
       rowKey: 'perm_row_usage',
+      requirement: CapabilityRequirement.alternative,
     ),
     _Capability(
       name: 'Accessibility service',
@@ -61,13 +67,22 @@ class _PermissionSetupScreenState extends State<PermissionSetupScreen>
       route: RouteNames.accessibilitySetup,
       icon: Icons.accessibility_new,
       rowKey: 'perm_row_accessibility',
+      requirement: CapabilityRequirement.alternative,
     ),
     _Capability(
-      name: 'Draw over apps',
-      description: 'Shows the lock screen over protected apps',
+      name: 'Background lock shield',
+      description: 'Blocks protected content while secure unlock opens',
       route: RouteNames.overlaySetup,
       icon: Icons.layers,
       rowKey: 'perm_row_overlay',
+      requirement: CapabilityRequirement.required,
+    ),
+    _Capability(
+      name: 'Protection notification',
+      description: 'Optional visible indicator for the recovery service',
+      icon: Icons.notifications_outlined,
+      rowKey: 'perm_row_notification',
+      requirement: CapabilityRequirement.optional,
     ),
   ];
 
@@ -75,6 +90,7 @@ class _PermissionSetupScreenState extends State<PermissionSetupScreen>
     'usage': false,
     'accessibility': false,
     'overlay': false,
+    'notification': true,
   };
   bool _probing = true;
 
@@ -100,8 +116,10 @@ class _PermissionSetupScreenState extends State<PermissionSetupScreen>
     }
   }
 
-  int get _readyCount =>
-      _granted.values.where((bool granted) => granted).length;
+  bool get _detectionReady =>
+      _granted['usage']! || _granted['accessibility']!;
+
+  bool get _coreReady => _detectionReady && _granted['overlay']!;
 
   Future<void> _refresh() async {
     final container = AppScope.read(context);
@@ -116,6 +134,7 @@ class _PermissionSetupScreenState extends State<PermissionSetupScreen>
     final usage = await container.installedAppsService.hasUsageAccess();
     final accessibility = await container.accessibility.isServiceEnabled();
     final overlay = await container.overlay.canDrawOverlays();
+    final health = await container.watcher.getHealth();
     if (!mounted) {
       return;
     }
@@ -124,12 +143,18 @@ class _PermissionSetupScreenState extends State<PermissionSetupScreen>
       _granted['accessibility'] =
           accessibility.isSuccess && accessibility.valueOrNull == true;
       _granted['overlay'] = overlay.isSuccess && overlay.valueOrNull == true;
+      _granted['notification'] = health.isFailure ||
+          health.valueOrNull!.notificationPermissionGranted;
       _probing = false;
     });
   }
 
   Future<void> _openCapability(_Capability capability) async {
-    await Navigator.of(context).pushNamed(capability.route);
+    final String? route = capability.route;
+    if (route == null) {
+      return;
+    }
+    await Navigator.of(context).pushNamed(route);
     if (mounted) {
       await _refresh();
     }
@@ -138,7 +163,15 @@ class _PermissionSetupScreenState extends State<PermissionSetupScreen>
   bool _grantedFor(_Capability capability) => switch (capability.rowKey) {
         'perm_row_usage' => _granted['usage']!,
         'perm_row_accessibility' => _granted['accessibility']!,
-        _ => _granted['overlay']!,
+        'perm_row_overlay' => _granted['overlay']!,
+        _ => _granted['notification']!,
+      };
+
+  String _missingLabel(_Capability capability) => switch (capability.requirement) {
+        CapabilityRequirement.required => 'Required',
+        CapabilityRequirement.alternative => 'Alternative',
+        CapabilityRequirement.optional => 'Optional',
+        CapabilityRequirement.internal => 'Unavailable',
       };
 
   @override
@@ -167,8 +200,10 @@ class _PermissionSetupScreenState extends State<PermissionSetupScreen>
               key: const Key('perm_ready_count'),
               label: _probing
                   ? 'Checking…'
-                  : PermissionSetupScreen.readyCount(_readyCount),
-              tone: _probing || _readyCount < 3
+                  : _coreReady
+                      ? PermissionSetupScreen.coreReadyLabel
+                      : PermissionSetupScreen.coreMissingLabel,
+              tone: _probing || !_coreReady
                   ? DsTone.warning
                   : DsTone.success,
               showDot: !_probing,
@@ -189,8 +224,10 @@ class _PermissionSetupScreenState extends State<PermissionSetupScreen>
                           : SecurityLevel.atRisk,
                       statusLabel: _grantedFor(capability)
                           ? PermissionSetupScreen.enabledLabel
-                          : PermissionSetupScreen.actionRequiredLabel,
-                      onTap: () => _openCapability(capability),
+                          : _missingLabel(capability),
+                      onTap: capability.route == null
+                          ? null
+                          : () => _openCapability(capability),
                     ),
                     if (capability != _capabilities.last)
                       const Divider(),

@@ -6,6 +6,7 @@ import 'package:smart_app_lock/app/app_container.dart';
 import 'package:smart_app_lock/app/router.dart';
 import 'package:smart_app_lock/app/theme/app_theme.dart';
 import 'package:smart_app_lock/data/models/protected_app.dart';
+import 'package:smart_app_lock/data/storage/impl/in_memory_local_database.dart';
 import 'package:smart_app_lock/design_system/design_system.dart';
 import 'package:smart_app_lock/protection/impl/default_access_controller.dart';
 import 'package:smart_app_lock/security/credentials/auth_type.dart';
@@ -35,20 +36,17 @@ final Map<String, WidgetBuilder> kSecurityTabRoutes = <String, WidgetBuilder>{
   RouteNames.pinSetup: (BuildContext context) => const PinSetupScreen(),
   RouteNames.pinUnlock: (BuildContext context) => const PinUnlockScreen(),
   RouteNames.pinChange: (BuildContext context) => const PinChangeScreen(),
-  RouteNames.patternSetup:
-      (BuildContext context) => const PatternSetupScreen(),
-  RouteNames.patternUnlock:
-      (BuildContext context) => const PatternUnlockScreen(),
-  RouteNames.patternChange:
-      (BuildContext context) => const PatternChangeScreen(),
-  RouteNames.usageAccess:
-      (BuildContext context) => const UsageAccessScreen(),
-  RouteNames.accessibilitySetup:
-      (BuildContext context) => const AccessibilitySetupScreen(),
-  RouteNames.overlaySetup:
-      (BuildContext context) => const OverlaySetupScreen(),
-  RouteNames.permissionSetup:
-      (BuildContext context) => const PermissionSetupScreen(),
+  RouteNames.patternSetup: (BuildContext context) => const PatternSetupScreen(),
+  RouteNames.patternUnlock: (BuildContext context) =>
+      const PatternUnlockScreen(),
+  RouteNames.patternChange: (BuildContext context) =>
+      const PatternChangeScreen(),
+  RouteNames.usageAccess: (BuildContext context) => const UsageAccessScreen(),
+  RouteNames.accessibilitySetup: (BuildContext context) =>
+      const AccessibilitySetupScreen(),
+  RouteNames.overlaySetup: (BuildContext context) => const OverlaySetupScreen(),
+  RouteNames.permissionSetup: (BuildContext context) =>
+      const PermissionSetupScreen(),
 };
 
 void main() {
@@ -177,11 +175,13 @@ void main() {
     await pumpWithScope(tester, container: container);
 
     expect(
-      find.widgetWithText(SecurityStatusItem, SecurityScreen.changePatternTitle),
+      find.widgetWithText(
+          SecurityStatusItem, SecurityScreen.changePatternTitle),
       findsOneWidget,
     );
     await tester.tap(
-      find.widgetWithText(SecurityStatusItem, SecurityScreen.changePatternTitle),
+      find.widgetWithText(
+          SecurityStatusItem, SecurityScreen.changePatternTitle),
     );
     await tester.pumpAndSettle();
 
@@ -257,7 +257,13 @@ void main() {
       (WidgetTester tester) async {
     await pumpWithScope(tester);
     expect(find.text('Biometric unlock'), findsOneWidget);
-    expect(find.text('Enabled'), findsNothing);
+    expect(
+      find.descendant(
+        of: find.widgetWithText(SecurityStatusItem, 'Biometric unlock'),
+        matching: find.text('Enabled'),
+      ),
+      findsNothing,
+    );
   });
 
   testWidgets('biometric row requires a primary credential first',
@@ -283,7 +289,13 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     await pumpWithScope(tester, container: container);
 
-    expect(find.text('Enabled'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.widgetWithText(SecurityStatusItem, 'Biometric unlock'),
+        matching: find.text('Enabled'),
+      ),
+      findsOneWidget,
+    );
 
     final Finder biometricRow = find.text('Biometric unlock');
     await tester.ensureVisible(biometricRow);
@@ -292,7 +304,13 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Biometric unlock disabled.'), findsOneWidget);
-    expect(find.text('Enabled'), findsNothing);
+    expect(
+      find.descendant(
+        of: find.widgetWithText(SecurityStatusItem, 'Biometric unlock'),
+        matching: find.text('Enabled'),
+      ),
+      findsNothing,
+    );
     final state = (await container.auth.status()).valueOrNull!;
     expect(state.hasEnrolled(AuthType.biometric), isFalse);
   });
@@ -320,34 +338,59 @@ void main() {
     );
   });
 
+  testWidgets('failed biometric persistence never reports biometric enabled',
+      (WidgetTester tester) async {
+    final _FailingSettingsDatabase database = _FailingSettingsDatabase();
+    final AppContainer container = AppContainer.inMemory(
+      biometrics: const _AvailableBiometricService(),
+      database: database,
+    );
+    await container.auth.enrollPin('1234');
+    database.failSecuritySettingsWrites = true;
+    await pumpWithScope(tester, container: container);
+
+    final Finder biometricRow = find.text('Biometric unlock');
+    await tester.ensureVisible(biometricRow);
+    await tester.pumpAndSettle();
+    await tester.tap(biometricRow);
+    await tester.pumpAndSettle();
+
+    expect(find.text(SecurityScreen.couldNotSaveMessage), findsOneWidget);
+    expect(
+      (await container.auth.status()).valueOrNull!.hasEnrolled(
+            AuthType.biometric,
+          ),
+      isFalse,
+    );
+  });
+
   // -------------------------------------------------------------------
   // Usage access row (Phase 4B)
   // -------------------------------------------------------------------
-  testWidgets('usage access row reports Needed when the grant is missing',
+  testWidgets('usage access row reports Alternative when the grant is missing',
       (WidgetTester tester) async {
     final AppContainer container =
         AppContainer.inMemory(usageAccessGranted: false);
     await pumpWithScope(tester, container: container);
 
     expect(find.text('Usage access'), findsOneWidget);
-    // Scoped to the row: other permission rows also show 'Needed'.
     expect(
       find.descendant(
         of: find.widgetWithText(SecurityStatusItem, 'Usage access'),
-        matching: find.text('Needed'),
+        matching: find.text('Alternative'),
       ),
       findsOneWidget,
     );
     expect(
       find.descendant(
         of: find.widgetWithText(SecurityStatusItem, 'Usage access'),
-        matching: find.text('Granted'),
+        matching: find.text('Enabled'),
       ),
       findsNothing,
     );
   });
 
-  testWidgets('usage access row reports Granted when enabled',
+  testWidgets('usage access row reports Enabled when granted',
       (WidgetTester tester) async {
     final AppContainer container =
         AppContainer.inMemory(usageAccessGranted: true);
@@ -357,14 +400,14 @@ void main() {
     expect(
       find.descendant(
         of: find.widgetWithText(SecurityStatusItem, 'Usage access'),
-        matching: find.text('Granted'),
+        matching: find.text('Enabled'),
       ),
       findsOneWidget,
     );
     expect(
       find.descendant(
         of: find.widgetWithText(SecurityStatusItem, 'Usage access'),
-        matching: find.text('Needed'),
+        matching: find.text('Alternative'),
       ),
       findsNothing,
     );
@@ -389,7 +432,7 @@ void main() {
   // -------------------------------------------------------------------
   // Accessibility row (Phase 4C)
   // -------------------------------------------------------------------
-  testWidgets('accessibility row reports Needed when the service is off',
+  testWidgets('accessibility row reports Alternative when the service is off',
       (WidgetTester tester) async {
     final AppContainer container =
         AppContainer.inMemory(accessibilityEnabled: false);
@@ -399,7 +442,7 @@ void main() {
     expect(
       find.descendant(
         of: find.widgetWithText(SecurityStatusItem, 'Accessibility service'),
-        matching: find.text('Needed'),
+        matching: find.text('Alternative'),
       ),
       findsOneWidget,
     );
@@ -452,19 +495,18 @@ void main() {
   });
 
   // -------------------------------------------------------------------
-  // Draw over apps row (Phase 4D)
+  // Background lock shield row (Phase 4D/C0)
   // -------------------------------------------------------------------
-  testWidgets('overlay row reports Needed when the grant is missing',
+  testWidgets('overlay row reports Required when the grant is missing',
       (WidgetTester tester) async {
-    final AppContainer container =
-        AppContainer.inMemory(overlayGranted: false);
+    final AppContainer container = AppContainer.inMemory(overlayGranted: false);
     await pumpWithScope(tester, container: container);
 
-    expect(find.text('Draw over apps'), findsOneWidget);
+    expect(find.text('Background lock shield'), findsOneWidget);
     expect(
       find.descendant(
-        of: find.widgetWithText(SecurityStatusItem, 'Draw over apps'),
-        matching: find.text('Needed'),
+        of: find.widgetWithText(SecurityStatusItem, 'Background lock shield'),
+        matching: find.text('Required'),
       ),
       findsOneWidget,
     );
@@ -472,14 +514,13 @@ void main() {
 
   testWidgets('overlay row reports Enabled when granted',
       (WidgetTester tester) async {
-    final AppContainer container =
-        AppContainer.inMemory(overlayGranted: true);
+    final AppContainer container = AppContainer.inMemory(overlayGranted: true);
     await pumpWithScope(tester, container: container);
 
-    expect(find.text('Draw over apps'), findsOneWidget);
+    expect(find.text('Background lock shield'), findsOneWidget);
     expect(
       find.descendant(
-        of: find.widgetWithText(SecurityStatusItem, 'Draw over apps'),
+        of: find.widgetWithText(SecurityStatusItem, 'Background lock shield'),
         matching: find.text('Enabled'),
       ),
       findsOneWidget,
@@ -488,11 +529,10 @@ void main() {
 
   testWidgets('tapping the overlay row opens the disclosure flow',
       (WidgetTester tester) async {
-    final AppContainer container =
-        AppContainer.inMemory(overlayGranted: false);
+    final AppContainer container = AppContainer.inMemory(overlayGranted: false);
     await pumpWithScope(tester, container: container);
 
-    final Finder row = find.text('Draw over apps');
+    final Finder row = find.text('Background lock shield');
     await tester.ensureVisible(row);
     await tester.pumpAndSettle();
     await tester.tap(row);
@@ -524,7 +564,7 @@ void main() {
     expect(find.text(PermissionSetupScreen.headerTitle), findsOneWidget);
     expect(find.text('Usage access'), findsOneWidget);
     expect(find.text('Accessibility service'), findsOneWidget);
-    expect(find.text('Draw over apps'), findsOneWidget);
+    expect(find.text('Background lock shield'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -584,8 +624,60 @@ void main() {
       Duration.zero,
     );
   });
+
+  testWidgets('failed grace persistence leaves the live policy unchanged',
+      (WidgetTester tester) async {
+    final _FailingSettingsDatabase database = _FailingSettingsDatabase()
+      ..failGraceWrites = true;
+    final AppContainer container = AppContainer.inMemory(database: database);
+    await pumpWithScope(tester, container: container);
+
+    final Finder selector = find.byKey(const Key('grace_selector'));
+    await tester.ensureVisible(selector);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('30 seconds'));
+    await tester.pumpAndSettle();
+
+    expect(find.text(SecurityScreen.couldNotSaveMessage), findsOneWidget);
+    expect(container.accessController.gracePeriod, Duration.zero);
+    expect(
+      (await container.lockSettings.getGracePeriod()).valueOrNull,
+      Duration.zero,
+    );
+  });
 }
 
+class _FailingSettingsDatabase extends InMemoryLocalDatabase {
+  bool failSecuritySettingsWrites = false;
+  bool failGraceWrites = false;
+
+  @override
+  Future<void> setSetting(String key, String value) async {
+    if ((key == 'security_settings' && failSecuritySettingsWrites) ||
+        (key == 'lock.grace_period_seconds' && failGraceWrites)) {
+      throw StateError('simulated settings write failure');
+    }
+    await super.setSetting(key, value);
+  }
+}
+
+class _AvailableBiometricService implements BiometricService {
+  const _AvailableBiometricService();
+
+  @override
+  Future<Result<bool>> isSupported() async => Result.success(true);
+
+  @override
+  Future<Result<Set<BiometricKind>>> availableKinds() async =>
+      Result.success(const <BiometricKind>{BiometricKind.strong});
+
+  @override
+  Future<Result<bool>> authenticate({
+    required String reason,
+    BiometricOptions? options,
+  }) async =>
+      Result.success(true);
+}
 
 /// Deterministic fake: the platform reports biometric hardware unavailable.
 class _UnavailableBiometricService implements BiometricService {

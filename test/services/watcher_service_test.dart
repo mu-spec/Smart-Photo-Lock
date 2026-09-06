@@ -54,6 +54,53 @@ void main() {
       expect((await service.start()).isFailure, isTrue);
       expect((await service.stop()).isFailure, isTrue);
       expect((await service.isRunning()).isFailure, isTrue);
+      expect((await service.heartbeat()).isFailure, isTrue);
+      expect((await service.getHealth()).isFailure, isTrue);
+    });
+
+    test('bootstrap configuration, heartbeat, pending and health decode',
+        () async {
+      final List<MethodCall> calls = <MethodCall>[];
+      messenger.setMockMethodCallHandler(channel, (MethodCall call) async {
+        calls.add(call);
+        if (call.method == 'takePendingChallenge') return 'com.example.locked';
+        if (call.method == 'getHealth') {
+          return <String, dynamic>{
+            'protectionConfigured': true,
+            'serviceRunning': true,
+            'engineState': 'recovering',
+            'notificationPermissionGranted': false,
+            'lastError': 'recovering',
+          };
+        }
+        return true;
+      });
+      final WatcherService service = MethodChannelWatcherService();
+
+      expect(
+        (await service.configureProtection(
+          enabled: true,
+          protectedPackages: {'com.example.locked'},
+        ))
+            .isSuccess,
+        isTrue,
+      );
+      expect((await service.heartbeat()).isSuccess, isTrue);
+      expect((await service.markEngineUnavailable()).isSuccess, isTrue);
+      expect(
+        (await service.takePendingChallenge()).valueOrNull,
+        'com.example.locked',
+      );
+      final health = (await service.getHealth()).valueOrNull!;
+      expect(health.engineState, ProtectionEngineState.recovering);
+      expect(health.notificationPermissionGranted, isFalse);
+      expect(
+        calls.first.arguments,
+        <String, dynamic>{
+          'enabled': true,
+          'protectedPackages': <String>['com.example.locked'],
+        },
+      );
     });
   });
 
@@ -70,6 +117,18 @@ void main() {
       expect((await service.stop()).valueOrNull, isTrue);
       expect(service.stopCalls, 1);
       expect(service.running, isFalse);
+
+      await service.configureProtection(
+        enabled: true,
+        protectedPackages: {'com.example.locked'},
+      );
+      await service.start();
+      await service.heartbeat();
+      expect((await service.getHealth()).valueOrNull!.engineState,
+          ProtectionEngineState.healthy);
+      await service.markEngineUnavailable();
+      expect((await service.getHealth()).valueOrNull!.engineState,
+          ProtectionEngineState.recovering);
     });
   });
 }

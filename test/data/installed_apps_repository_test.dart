@@ -16,7 +16,10 @@ void main() {
   const List<AppEntry> seed = <AppEntry>[
     AppEntry(packageName: 'com.whatsapp', label: 'WhatsApp'),
     AppEntry(packageName: 'com.smartapplock.app', label: 'Smart App Lock'),
-    AppEntry(packageName: 'com.android.settings', label: 'Settings', isSystemApp: true),
+    AppEntry(
+        packageName: 'com.android.settings',
+        label: 'Settings',
+        isSystemApp: true),
     AppEntry(packageName: 'com.broken', label: ''),
     AppEntry(packageName: 'com.gmail', label: 'Gmail'),
   ];
@@ -78,8 +81,7 @@ void main() {
     test('caches per flag and only refetches on refresh()', () async {
       final StaticInstalledAppsService service =
           StaticInstalledAppsService(seed);
-      final InstalledAppsRepository repo =
-          InstalledAppsRepositoryImpl(service);
+      final InstalledAppsRepository repo = InstalledAppsRepositoryImpl(service);
 
       await repo.getInstalledApps();
       await repo.getInstalledApps();
@@ -90,7 +92,7 @@ void main() {
 
       await repo.refresh();
       await repo.getInstalledApps();
-      expect(service.getInstalledAppsCalls, 4); // refresh cleared both caches
+      expect(service.getInstalledAppsCalls, 3); // refresh warmed default cache
     });
 
     test('service failures propagate as Failures', () async {
@@ -102,16 +104,14 @@ void main() {
   });
 
   group('AppContainer.inMemory wiring', () {
-    test('installedApps repository is wired over the static service',
-        () async {
+    test('installedApps repository is wired over the static service', () async {
       final AppContainer container = AppContainer.inMemory(apps: seed);
       final List<AppEntry> apps = (await container.installedApps
               .getInstalledApps(includeSystemApps: true))
           .valueOrNull!;
       expect(apps.map((AppEntry a) => a.packageName),
           isNot(contains('com.smartapplock.app')));
-      expect(apps.map((AppEntry a) => a.packageName),
-          contains('com.whatsapp'));
+      expect(apps.map((AppEntry a) => a.packageName), contains('com.whatsapp'));
     });
   });
 }

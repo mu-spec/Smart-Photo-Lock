@@ -4,8 +4,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:smart_app_lock/app/app_container.dart';
 import 'package:smart_app_lock/app/app_scope.dart';
 import 'package:smart_app_lock/app/theme/app_theme.dart';
+import 'package:smart_app_lock/data/models/protected_app.dart';
 import 'package:smart_app_lock/services/impl/static_accessibility_lock_service.dart';
 import 'package:smart_app_lock/services/impl/static_installed_apps_service.dart';
+import 'package:smart_app_lock/services/impl/static_overlay_lock_service.dart';
 import 'package:smart_app_lock/ui/screens/security/security_screen.dart';
 
 /// Phase 4 UX: the Security tab distinguishes a first-install protection
@@ -18,6 +20,7 @@ void main() {
     required bool usage,
     required bool accessibility,
     required bool overlay,
+    bool configured = false,
   }) async {
     tester.view.physicalSize = const Size(800, 1600);
     tester.view.devicePixelRatio = 1.0;
@@ -27,6 +30,16 @@ void main() {
       accessibilityEnabled: accessibility,
       overlayGranted: overlay,
     );
+    if (configured) {
+      await container.auth.enrollPin('1234');
+      await container.protectedApps.add(
+        ProtectedApp(
+          packageName: 'com.example.protected',
+          label: 'Protected',
+          addedAt: DateTime(2026, 9, 6),
+        ),
+      );
+    }
     await tester.pumpWidget(
       AppScope(
         container: container,
@@ -47,7 +60,7 @@ void main() {
   }
 
   testWidgets(
-      'fresh install: setup banner with 0 of 3, never a revocation warning',
+      'fresh install shows required shield and detector setup',
       (WidgetTester tester) async {
     await pumpSecurity(
       tester,
@@ -58,12 +71,13 @@ void main() {
 
     expect(find.text(SecurityScreen.setupRequiredTitle), findsOneWidget);
     expect(find.text(SecurityScreen.setupRequiredMessage), findsOneWidget);
-    expect(find.text(SecurityScreen.readyCount(0)), findsOneWidget);
+    expect(find.textContaining('Choose a detection method'), findsOneWidget);
+    expect(find.textContaining('Shield required'), findsOneWidget);
     expect(find.text(SecurityScreen.revokedTitle), findsNothing);
     expect(find.text(SecurityScreen.protectionReadyTitle), findsNothing);
   });
 
-  testWidgets('one capability granted shows 1 of 3 ready',
+  testWidgets('one detector still requires the shield',
       (WidgetTester tester) async {
     await pumpSecurity(
       tester,
@@ -73,11 +87,12 @@ void main() {
     );
 
     expect(find.text(SecurityScreen.setupRequiredTitle), findsOneWidget);
-    expect(find.text(SecurityScreen.readyCount(1)), findsOneWidget);
+    expect(find.textContaining('Detection ready'), findsOneWidget);
+    expect(find.textContaining('Shield required'), findsOneWidget);
     expect(find.text(SecurityScreen.revokedTitle), findsNothing);
   });
 
-  testWidgets('two capabilities granted show 2 of 3 ready',
+  testWidgets('both detectors still require the shield',
       (WidgetTester tester) async {
     await pumpSecurity(
       tester,
@@ -87,7 +102,8 @@ void main() {
     );
 
     expect(find.text(SecurityScreen.setupRequiredTitle), findsOneWidget);
-    expect(find.text(SecurityScreen.readyCount(2)), findsOneWidget);
+    expect(find.textContaining('Detection ready'), findsOneWidget);
+    expect(find.textContaining('Shield required'), findsOneWidget);
     expect(find.text(SecurityScreen.revokedTitle), findsNothing);
   });
 
@@ -100,13 +116,27 @@ void main() {
       overlay: true,
     );
 
-    expect(find.text(SecurityScreen.protectionReadyTitle), findsOneWidget);
-    expect(find.text(SecurityScreen.protectionReadyMessage), findsOneWidget);
+    expect(find.text('Capability setup ready'), findsOneWidget);
     expect(find.text(SecurityScreen.setupRequiredTitle), findsNothing);
     expect(find.text(SecurityScreen.revokedTitle), findsNothing);
   });
 
-  testWidgets('previously granted then disabled: revocation, not setup',
+  testWidgets('active protection never also reports incomplete setup',
+      (WidgetTester tester) async {
+    await pumpSecurity(
+      tester,
+      usage: true,
+      accessibility: true,
+      overlay: true,
+      configured: true,
+    );
+
+    expect(find.text('Protection engine active'), findsOneWidget);
+    expect(find.text('Protection is not fully set up'), findsNothing);
+    expect(find.text('Capability setup ready'), findsNothing);
+  });
+
+  testWidgets('losing one detector remains operational through alternative',
       (WidgetTester tester) async {
     final AppContainer container = await pumpSecurity(
       tester,
@@ -114,17 +144,18 @@ void main() {
       accessibility: true,
       overlay: true,
     );
-    expect(find.text(SecurityScreen.protectionReadyTitle), findsOneWidget);
+    expect(find.text('Capability setup ready'), findsOneWidget);
 
     (container.installedAppsService as StaticInstalledAppsService)
         .usageAccessGranted = false;
     await resumeFromSettings(tester);
 
-    expect(find.text(SecurityScreen.revokedTitle), findsOneWidget);
+    expect(find.text(SecurityScreen.revokedTitle), findsNothing);
+    expect(find.text('Capability setup ready'), findsOneWidget);
     expect(find.text(SecurityScreen.setupRequiredTitle), findsNothing);
   });
 
-  testWidgets('restore all: warning clears and ready state returns',
+  testWidgets('losing both detectors is revoked and restoring one recovers',
       (WidgetTester tester) async {
     final AppContainer container = await pumpSecurity(
       tester,
@@ -134,6 +165,8 @@ void main() {
     );
     (container.installedAppsService as StaticInstalledAppsService)
         .usageAccessGranted = false;
+    (container.accessibility as StaticAccessibilityLockService).enabled =
+        false;
     await resumeFromSettings(tester);
     expect(find.text(SecurityScreen.revokedTitle), findsOneWidget);
 
@@ -142,10 +175,10 @@ void main() {
     await resumeFromSettings(tester);
 
     expect(find.text(SecurityScreen.revokedTitle), findsNothing);
-    expect(find.text(SecurityScreen.protectionReadyTitle), findsOneWidget);
+    expect(find.text('Capability setup ready'), findsOneWidget);
   });
 
-  testWidgets('revocation takes precedence over setup in a mixed state',
+  testWidgets('revoked required shield takes precedence over setup',
       (WidgetTester tester) async {
     final AppContainer container = await pumpSecurity(
       tester,
@@ -153,8 +186,7 @@ void main() {
       accessibility: true,
       overlay: true,
     );
-    (container.accessibility as StaticAccessibilityLockService).enabled =
-        false;
+    (container.overlay as StaticOverlayLockService).overlayGranted = false;
     await resumeFromSettings(tester);
 
     expect(find.text(SecurityScreen.revokedTitle), findsOneWidget);

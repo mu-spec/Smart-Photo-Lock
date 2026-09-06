@@ -22,6 +22,21 @@ import io.flutter.embedding.engine.FlutterEngine
  */
 class MainActivity : FlutterFragmentActivity() {
 
+    override fun onResume() {
+        super.onResume()
+        ProtectionRuntime.activityResumed = true
+    }
+
+    override fun onPause() {
+        ProtectionRuntime.activityResumed = false
+        super.onPause()
+    }
+
+    override fun onDestroy() {
+        ProtectionRuntime.activityResumed = false
+        super.onDestroy()
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         InstalledAppsChannel.register(flutterEngine, this)

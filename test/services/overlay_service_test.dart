@@ -72,12 +72,16 @@ void main() {
         if (call.method == 'hideLockChallenge') {
           return true;
         }
+        if (call.method == 'markChallengeReady') {
+          return true;
+        }
         return null;
       });
       final OverlayLockService service = MethodChannelOverlayLockService();
       expect((await service.showLockChallenge('com.whatsapp')).isSuccess,
           isTrue);
       expect((await service.hideLockChallenge()).isSuccess, isTrue);
+      expect((await service.markChallengeReady()).isSuccess, isTrue);
 
       // A native false reports a failure (the challenge could not be
       // presented) — never a fabricated success.
@@ -85,6 +89,7 @@ void main() {
       expect((await service.showLockChallenge('com.whatsapp')).isFailure,
           isTrue);
       expect((await service.hideLockChallenge()).isFailure, isTrue);
+      expect((await service.markChallengeReady()).isFailure, isTrue);
     });
 
     test('challenge platform errors fail closed', () async {
@@ -95,6 +100,7 @@ void main() {
       expect((await service.showLockChallenge('com.whatsapp')).isFailure,
           isTrue);
       expect((await service.hideLockChallenge()).isFailure, isTrue);
+      expect((await service.markChallengeReady()).isFailure, isTrue);
     });
 
     test('setSecureWindow relays the flag and reports success (Phase 5O)',
@@ -151,6 +157,8 @@ void main() {
 
       expect((await service.hideLockChallenge()).isSuccess, isTrue);
       expect(service.hideLockChallengeCalls, 1);
+      expect((await service.markChallengeReady()).isSuccess, isTrue);
+      expect(service.markChallengeReadyCalls, 1);
 
       service.showLockChallengeSucceeds = false;
       expect(

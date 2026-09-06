@@ -9,6 +9,8 @@ import 'package:smart_app_lock/security/credentials/auth_result.dart';
 import 'package:smart_app_lock/security/credentials/auth_type.dart';
 import 'package:smart_app_lock/security/credentials/biometric_options.dart';
 import 'package:smart_app_lock/security/credentials/credential_manager.dart';
+import 'package:smart_app_lock/security/credentials/credential_hash.dart';
+import 'package:smart_app_lock/security/credentials/credential_hash_policy.dart';
 import 'package:smart_app_lock/security/credentials/credential_state.dart';
 import 'package:smart_app_lock/security/credentials/credential_state_machine.dart';
 import 'package:smart_app_lock/security/credentials/impl/default_credential_manager.dart';
@@ -60,6 +62,56 @@ void main() {
 
     await manager.enrollPin('246810');
     expect((await manager.status()).valueOrNull!.pinLength, 6);
+  });
+
+  test('PIN hash and metadata are persisted in one atomic settings write',
+      () async {
+    final _CountingLocalDatabase database = _CountingLocalDatabase();
+    final SecuritySettingsRepository atomicSettings =
+        SecuritySettingsRepositoryImpl(database);
+    final CredentialManager atomicManager = DefaultCredentialManager(
+      settings: atomicSettings,
+      pinHasher: Pbkdf2PinHasher(iterations: 200),
+    );
+
+    final Result<void> enrolled = await atomicManager.enrollPin('2468');
+
+    expect(enrolled.isSuccess, isTrue);
+    expect(database.settingsWrites, 1);
+    final SecuritySettings stored =
+        (await atomicSettings.getSettings()).valueOrNull!;
+    expect(stored.pinHash, isNotNull);
+    expect(stored.pinLength, 4);
+    expect(stored.primaryAuthType, AuthType.pin);
+    expect(stored.failedAttempts, 0);
+    expect(stored.lockedOutUntil, isNull);
+  });
+
+  test('a weakened stored pattern fails the production hash policy closed',
+      () async {
+    final CredentialHash weak = await Pbkdf2PatternHasher(iterations: 200)
+        .hash(const <int>[1, 2, 3, 6]);
+    await settings.saveSettings(
+      SecuritySettings.defaults.copyWith(
+        patternHash: weak,
+        primaryAuthType: AuthType.pattern,
+      ),
+    );
+    final CredentialManager strictManager = DefaultCredentialManager(
+      settings: settings,
+      patternHasher: Pbkdf2PatternHasher(iterations: 200),
+      patternHashPolicy: CredentialHashPolicy.strict,
+    );
+
+    final Result<AuthAttemptResult> result =
+        await strictManager.authenticatePattern(const <int>[1, 2, 3, 6]);
+
+    expect(result.isFailure, isTrue);
+    expect(result.errorOrNull.toString(), contains('iterationsBelowMinimum'));
+    expect(
+      (await strictManager.status()).valueOrNull!.hasEnrolled(AuthType.pattern),
+      isFalse,
+    );
   });
 
   test('PIN authentication succeeds with the right PIN', () async {
@@ -151,8 +203,8 @@ void main() {
     expect(state.primary, AuthType.pattern);
 
     // PIN still works even when pattern is primary.
-    final AuthAttemptResult pin = (await manager.authenticatePin('1234'))
-        .valueOrNull!;
+    final AuthAttemptResult pin =
+        (await manager.authenticatePin('1234')).valueOrNull!;
     expect(pin, isA<AuthSuccess>());
   });
 
@@ -181,8 +233,8 @@ void main() {
     final AuthAttemptResult result =
         (await manager.authenticatePin('1234')).valueOrNull!;
     expect(result, isA<AuthFailure>());
-    expect((result as AuthFailure).reason,
-        AuthFailureReason.noCredentialEnrolled);
+    expect(
+        (result as AuthFailure).reason, AuthFailureReason.noCredentialEnrolled);
   });
 
   test('clearAll removes every credential and resets counters', () async {
@@ -275,7 +327,8 @@ void main() {
       settings: settings,
       pinHasher: Pbkdf2PinHasher(iterations: 200),
       patternHasher: Pbkdf2PatternHasher(iterations: 200),
-      biometricService: const _FakeBiometricService(supported: true, passes: true),
+      biometricService:
+          const _FakeBiometricService(supported: true, passes: true),
     );
 
     final AuthAttemptResult result =
@@ -291,7 +344,8 @@ void main() {
       settings: settings,
       pinHasher: Pbkdf2PinHasher(iterations: 200),
       patternHasher: Pbkdf2PatternHasher(iterations: 200),
-      biometricService: const _FakeBiometricService(supported: true, passes: true),
+      biometricService:
+          const _FakeBiometricService(supported: true, passes: true),
     );
 
     await bio.authenticatePin('0000');
@@ -371,21 +425,22 @@ void main() {
         maxFailedAttempts: 3,
         lockoutDuration: Duration(seconds: 30),
       ),
-      biometricService: const _FakeBiometricService(supported: true, passes: true),
+      biometricService:
+          const _FakeBiometricService(supported: true, passes: true),
     );
 
     await bio.authenticatePin('0000');
     await bio.authenticatePin('0000');
     await bio.authenticatePin('0000');
-    expect((await bio.status()).valueOrNull!.status, CredentialStatus.lockedOut);
+    expect(
+        (await bio.status()).valueOrNull!.status, CredentialStatus.lockedOut);
 
     final AuthAttemptResult result =
         (await bio.authenticateBiometric()).valueOrNull!;
     expect(result, isA<AuthLockedOut>());
   });
 
-  test('updateBiometricOptions(null) disables biometric enrollment',
-      () async {
+  test('updateBiometricOptions(null) disables biometric enrollment', () async {
     await manager.updateBiometricOptions(BiometricOptions.defaults);
     expect(
       (await manager.status()).valueOrNull!.hasEnrolled(AuthType.biometric),
@@ -422,7 +477,8 @@ void main() {
       () async {
     final DefaultCredentialManager m = await managerWithFailingBio(
       mapBiometricError(
-        const LocalAuthException(code: LocalAuthExceptionCode.noBiometricsEnrolled),
+        const LocalAuthException(
+            code: LocalAuthExceptionCode.noBiometricsEnrolled),
       ),
     );
     final AuthAttemptResult result =
@@ -494,6 +550,16 @@ void main() {
       isTrue,
     );
   });
+}
+
+class _CountingLocalDatabase extends InMemoryLocalDatabase {
+  int settingsWrites = 0;
+
+  @override
+  Future<void> setSetting(String key, String value) async {
+    settingsWrites++;
+    await super.setSetting(key, value);
+  }
 }
 
 /// Test double for the platform biometric bridge.

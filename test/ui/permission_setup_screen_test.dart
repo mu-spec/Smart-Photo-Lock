@@ -47,7 +47,7 @@ void main() {
         matching: find.text(label),
       );
 
-  testWidgets('all capabilities disabled: three Action Required + 0 of 3',
+  testWidgets('disabled capabilities show alternatives and required shield',
       (WidgetTester tester) async {
     await pumpScreen(
       tester,
@@ -61,18 +61,19 @@ void main() {
     expect(find.text(PermissionSetupScreen.headerTitle), findsOneWidget);
     expect(find.text('Usage access'), findsOneWidget);
     expect(find.text('Accessibility service'), findsOneWidget);
-    expect(find.text('Draw over apps'), findsOneWidget);
+    expect(find.text('Background lock shield'), findsOneWidget);
+    expect(find.text('Protection notification'), findsOneWidget);
 
-    expect(pillInRow('perm_row_usage', 'Action Required'), findsOneWidget);
+    expect(pillInRow('perm_row_usage', 'Alternative'), findsOneWidget);
     expect(
-      pillInRow('perm_row_accessibility', 'Action Required'),
+      pillInRow('perm_row_accessibility', 'Alternative'),
       findsOneWidget,
     );
-    expect(pillInRow('perm_row_overlay', 'Action Required'), findsOneWidget);
-    expect(find.text(PermissionSetupScreen.readyCount(0)), findsOneWidget);
+    expect(pillInRow('perm_row_overlay', 'Required'), findsOneWidget);
+    expect(find.text(PermissionSetupScreen.coreMissingLabel), findsOneWidget);
   });
 
-  testWidgets('all capabilities enabled: three Enabled + 3 of 3',
+  testWidgets('all capabilities enabled satisfies core requirements',
       (WidgetTester tester) async {
     await pumpScreen(
       tester,
@@ -86,11 +87,12 @@ void main() {
     expect(pillInRow('perm_row_usage', 'Enabled'), findsOneWidget);
     expect(pillInRow('perm_row_accessibility', 'Enabled'), findsOneWidget);
     expect(pillInRow('perm_row_overlay', 'Enabled'), findsOneWidget);
-    expect(find.text(PermissionSetupScreen.readyCount(3)), findsOneWidget);
-    expect(find.text('Action Required'), findsNothing);
+    expect(pillInRow('perm_row_notification', 'Enabled'), findsOneWidget);
+    expect(find.text(PermissionSetupScreen.coreReadyLabel), findsOneWidget);
   });
 
-  testWidgets('mixed state shows the exact ready count', (WidgetTester tester) async {
+  testWidgets('one detector without the shield is still incomplete',
+      (WidgetTester tester) async {
     await pumpScreen(
       tester,
       container: AppContainer.inMemory(
@@ -100,10 +102,10 @@ void main() {
       ),
     );
 
-    expect(find.text(PermissionSetupScreen.readyCount(1)), findsOneWidget);
+    expect(find.text(PermissionSetupScreen.coreMissingLabel), findsOneWidget);
     expect(pillInRow('perm_row_usage', 'Enabled'), findsOneWidget);
     expect(
-      pillInRow('perm_row_accessibility', 'Action Required'),
+      pillInRow('perm_row_accessibility', 'Alternative'),
       findsOneWidget,
     );
   });
@@ -151,7 +153,7 @@ void main() {
         overlayGranted: false,
       ),
     );
-    expect(find.text(PermissionSetupScreen.readyCount(0)), findsOneWidget);
+    expect(find.text(PermissionSetupScreen.coreMissingLabel), findsOneWidget);
 
     // The user enabled everything (simulated by a fresh container with
     // granted flags) and returns to the screen — a resume re-checks.
@@ -168,11 +170,11 @@ void main() {
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pumpAndSettle();
 
-    expect(find.text(PermissionSetupScreen.readyCount(3)), findsOneWidget);
+    expect(find.text(PermissionSetupScreen.coreReadyLabel), findsOneWidget);
     expect(pillInRow('perm_row_overlay', 'Enabled'), findsOneWidget);
   });
 
-  testWidgets('missing container degrades to Action Required without crashing',
+  testWidgets('missing container shows unavailable core setup without crashing',
       (WidgetTester tester) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -182,8 +184,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text(PermissionSetupScreen.readyCount(0)), findsOneWidget);
-    expect(find.text('Action Required'), findsNWidgets(3));
+    expect(find.text(PermissionSetupScreen.coreMissingLabel), findsOneWidget);
+    expect(find.text('Alternative'), findsNWidgets(2));
+    expect(find.text('Required'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

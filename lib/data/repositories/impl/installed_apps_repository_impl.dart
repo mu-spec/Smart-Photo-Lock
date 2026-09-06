@@ -61,9 +61,15 @@ class InstalledAppsRepositoryImpl implements InstalledAppsRepository {
   @override
   Future<Result<void>> refresh() async {
     _cache.clear();
-    // Best-effort re-fetch so the next read is warm; failures here do not
-    // break the caller (the next getInstalledApps re-fetches anyway).
-    await _service.getInstalledApps(includeSystemApps: true);
+    // Refresh the user-app catalog (the Apps screen's default view) and
+    // actually warm the cache with the normalized result. The previous
+    // implementation fetched and discarded this list, forcing the next
+    // read to hit the platform again while still claiming it was warm.
+    final Result<List<AppEntry>> fetched = await _service.getInstalledApps();
+    if (fetched.isFailure) {
+      return Result.failure(fetched.errorOrNull!);
+    }
+    _cache[false] = _normalize(fetched.valueOrNull!);
     return Result.success(null);
   }
 

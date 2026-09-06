@@ -777,15 +777,16 @@ Large installed-app lists stay responsive:
 engine's Android capabilities — **no manifest changes were made in this
 phase**:
 
-- **Required (user-granted):** Usage Access (foreground detection,
-  primary), Draw-over-other-apps / `SYSTEM_ALERT_WINDOW` (the challenge
-  window), and an Accessibility service (detection fallback) — each
-  with its denial matrix and the system-settings request flow.
-- **Required (normal):** `POST_NOTIFICATIONS` + `FOREGROUND_SERVICE[_SPECIAL_USE]`
-  for the background watcher, plus the existing `<queries>` visibility.
+- **Required enforcement:** Draw-over-other-apps / `SYSTEM_ALERT_WINDOW`
+  provides the native handoff/recovery shield.
+- **Alternative detectors:** either Usage Access or the narrow Accessibility
+  service is sufficient; both provide redundancy.
+- **Required internal:** `FOREGROUND_SERVICE[_SPECIAL_USE]` and
+  `RECEIVE_BOOT_COMPLETED` provide process/reboot recovery. Notification
+  permission is optional and affects notification visibility only.
 - **Explicitly rejected:** device admin (deferred — optional hardening,
   needs a PRD decision), `QUERY_ALL_PACKAGES`, full-screen intents,
-  storage, camera (later intruder-selfie phase only), boot receiver,
+  storage, camera (later intruder-selfie phase only), and
   battery-optimization exemption. (`PACKAGE_USAGE_STATS` IS declared for
   Usage-Access list membership — corrected by Phase 4 device QA: the
   system screen lists only apps that request it; the grant stays
@@ -1284,9 +1285,9 @@ Protected-app state survives the full sleep/wake cycle:
 
 ### Phase 5S ✅ — Reboot Recovery
 
-Protection is restored correctly after a reboot — lazily, the moment
-Smart App Lock runs (Android does not allow boot-time auto-start, and
-`RECEIVE_BOOT_COMPLETED` stays rejected per capabilities.md):
+Configured protection is restored after reboot by `ProtectionBootReceiver`,
+which starts the native watcher only when a credential and protected packages
+were previously synchronized:
 
 - **Everything locks by default** — unlock sessions and grace deadlines
   are in-memory and die with the process: after a reboot the first

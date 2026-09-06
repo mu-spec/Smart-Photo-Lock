@@ -19,9 +19,8 @@ import io.flutter.plugin.common.MethodChannel
  *    settings screen, scoped to this app's package where the platform
  *    supports it, and reports whether the intent resolved.
  *
- * The bridge only surfaces capability state and routes the user to the
- * system settings — the overlay lock window itself lands with the
- * lock-screen phase.
+ * It also coordinates the native touch-blocking recovery shield and the
+ * hand-off to MainActivity. Credential input remains in Flutter.
  */
 object OverlayStatusChannel {
 
@@ -55,14 +54,13 @@ object OverlayStatusChannel {
                     }
                 }
                 "showLockChallenge" -> {
-                    // Phase 5D (basic lock trigger): presents the lock
-                    // challenge by bringing Smart App Lock's own activity
-                    // to the foreground. The TYPE_APPLICATION_OVERLAY
-                    // lock window renders in a later lock-screen phase —
-                    // this is the honest basic form: the user is
-                    // challenged inside the app itself.
                     try {
-                        result.success(launchLockChallenge(activity))
+                        // Cover first, then launch: a blocked/delayed
+                        // background activity start can never expose the
+                        // protected app as usable content.
+                        val shielded = ProtectionOverlayController.show(activity)
+                        val launched = shielded && launchLockChallenge(activity)
+                        result.success(shielded && launched)
                     } catch (e: Exception) {
                         result.error(
                             "overlay_error",
@@ -72,10 +70,15 @@ object OverlayStatusChannel {
                     }
                 }
                 "hideLockChallenge" -> {
-                    // Phase 5D: the basic challenge IS our own activity,
-                    // so dismissal is handled by Flutter navigation; the
-                    // native side has nothing to tear down.
-                    result.success(true)
+                    result.success(ProtectionOverlayController.hide())
+                }
+                "markChallengeReady" -> {
+                    // Never drop the hand-off shield for an off-screen
+                    // Flutter route when Android blocked the activity start.
+                    result.success(
+                        ProtectionRuntime.activityResumed &&
+                            ProtectionOverlayController.hide(),
+                    )
                 }
                 "setSecureWindow" -> {
                     // Phase 5O (recents hardening): FLAG_SECURE keeps the

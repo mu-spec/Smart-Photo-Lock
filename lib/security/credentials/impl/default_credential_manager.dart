@@ -11,6 +11,7 @@ import '../credential_hash.dart';
 import '../credential_state.dart';
 import '../credential_state_machine.dart';
 import '../credential_manager.dart';
+import '../credential_hash_policy.dart';
 import '../pattern_hasher.dart';
 import '../pattern_policy.dart';
 import '../pin_storage.dart';
@@ -35,6 +36,7 @@ class DefaultCredentialManager implements CredentialManager {
     PatternHasher? patternHasher,
     CredentialStateMachine? stateMachine,
     PinCredentialStore? pinStore,
+    CredentialHashPolicy patternHashPolicy = CredentialHashPolicy.lenient,
     BiometricService? biometricService,
     DateTime Function()? now,
   })  : _settings = settings,
@@ -42,6 +44,7 @@ class DefaultCredentialManager implements CredentialManager {
         _patternHasher = patternHasher ?? Pbkdf2PatternHasher(),
         _machine = stateMachine ?? CredentialStateMachine(),
         _pinStore = pinStore ?? DefaultPinCredentialStore(settings),
+        _patternHashPolicy = patternHashPolicy,
         _biometrics = biometricService,
         _now = now ?? DateTime.now;
 
@@ -50,6 +53,7 @@ class DefaultCredentialManager implements CredentialManager {
   final PatternHasher _patternHasher;
   final CredentialStateMachine _machine;
   final PinCredentialStore _pinStore;
+  final CredentialHashPolicy _patternHashPolicy;
 
   /// Platform biometric service; null = not wired (attempts fail with
   /// [AuthFailureReason.notAvailable] — never a fabricated success).
@@ -85,24 +89,15 @@ class DefaultCredentialManager implements CredentialManager {
     }
     final PinHash hash = await _pinHasher.hash(pin);
 
-    // Reset counters/primary first (benign if the credential write fails),
-    // then persist ONLY the derived hash through the secure store.
-    final Result<SecuritySettings> loaded = await _settings.getSettings();
-    if (loaded.isFailure) {
-      return Result.failure(loaded.errorOrNull!);
-    }
-    final Result<void> reset = await _settings.saveSettings(
-      loaded.valueOrNull!.copyWith(
-        primaryAuthType: AuthType.pin,
-        failedAttempts: 0,
-        clearLockout: true,
-        pinLength: pin.length,
-      ),
+    // The hash and all metadata that describes it must land in ONE settings
+    // write. Two writes can leave an old hash paired with a new length or
+    // primary method when the second write fails.
+    return _pinStore.save(
+      hash,
+      pinLength: pin.length,
+      makePrimary: true,
+      resetAttemptState: true,
     );
-    if (reset.isFailure) {
-      return Result.failure(reset.errorOrNull!);
-    }
-    return _pinStore.save(hash);
   }
 
   @override
@@ -222,6 +217,16 @@ class DefaultCredentialManager implements CredentialManager {
         ),
       );
     }
+    final HashPolicyViolation? patternViolation =
+        _patternHashPolicy.validate(patternHash);
+    if (patternViolation != null) {
+      return Result.failure(
+        StateError(
+          'Stored pattern credential failed the storage security policy '
+          '(${patternViolation.name}). Re-enrollment required.',
+        ),
+      );
+    }
 
     final CredentialState state = _stateFrom(s);
     final AuthLockedOut? activeLockout = _activeLockout(state, _now());
@@ -324,9 +329,9 @@ class DefaultCredentialManager implements CredentialManager {
   /// enrolled set so flows treat them as "set up the pattern again" —
   /// re-enrollment overwrites the record with the ordered scheme.
   CredentialState _stateFrom(SecuritySettings s) {
-    final bool patternUsable =
-        s.patternHash != null &&
-            !Pbkdf2PatternHasher.isLegacyHash(s.patternHash!);
+    final bool patternUsable = s.patternHash != null &&
+        !Pbkdf2PatternHasher.isLegacyHash(s.patternHash!) &&
+        _patternHashPolicy.validate(s.patternHash!) == null;
     final Set<AuthType> enrolled = <AuthType>{
       if (s.pinHash != null) AuthType.pin,
       if (patternUsable) AuthType.pattern,

@@ -24,6 +24,7 @@ import '../protection/foreground_app_monitor.dart';
 import '../protection/impl/default_access_controller.dart';
 import '../protection/lock_trigger.dart';
 import '../protection/protected_app_matcher.dart';
+import '../protection/protection_bootstrap.dart';
 import '../security/encryption/settings_cipher.dart';
 import '../security/encryption/settings_cipher_impl.dart';
 import '../security/credentials/credential_manager.dart';
@@ -106,6 +107,7 @@ class AppContainer {
     foregroundMonitor = ForegroundAppMonitor(
       installedApps: installedAppsService,
       accessibility: accessibilityService,
+      now: _accessClock,
       ownPackage: ForegroundAppMonitor.defaultOwnPackage,
     );
     // Phase 5C: matching a detected foreground package against the
@@ -141,7 +143,13 @@ class AppContainer {
         maxFailedAttempts: 3,
         lockoutDuration: const Duration(seconds: 30),
       ),
+      patternHashPolicy: CredentialHashPolicy.strict,
       biometricService: biometrics,
+    );
+    protectionBootstrap = ProtectionBootstrap(
+      protectedApps: protectedApps,
+      credentials: auth,
+      watcher: watcherService,
     );
     // Phase 5D: the access decision pipeline (protected -> challenge ->
     // session) and the trigger that drives it from foreground changes.
@@ -176,8 +184,7 @@ class AppContainer {
         MethodChannelInstalledAppsService();
     final AccessibilityLockService accessibilityService =
         MethodChannelAccessibilityLockService();
-    final OverlayLockService overlayService =
-        MethodChannelOverlayLockService();
+    final OverlayLockService overlayService = MethodChannelOverlayLockService();
     // The monitor records grant history through the SAME preferences
     // store the UI reads — built first so both share one instance.
     final PreferencesStore preferences =
@@ -262,8 +269,8 @@ class AppContainer {
   final KeyValueStore _keyValueStore;
   final LocalDatabase _database;
 
-  /// The access-controller clock seam (Phase 5H/5L/5Q tests): injected
-  /// in memory, real wall-clock in production (null).
+  /// Shared protection clock seam for access sessions and foreground-source
+  /// arbitration: injected in memory, real wall-clock in production (null).
   final DateTime Function()? _accessClock;
 
   /// Sensitive values (master key, future tokens) — Keystore-backed in
@@ -288,6 +295,10 @@ class AppContainer {
   /// Credential lifecycle (Phase 2A): enroll / status / authenticate /
   /// clear for PIN, pattern and biometric.
   late final CredentialManager auth;
+
+  /// Keeps the native reboot/process-death bootstrap state synchronized with
+  /// the encrypted credential state and protected-app repository.
+  late final ProtectionBootstrap protectionBootstrap;
 
   /// Platform biometric bridge (Phase 2J): capability checks + prompt.
   late final BiometricService biometrics;

@@ -9,6 +9,7 @@ import 'package:smart_app_lock/app/app_container.dart';
 import 'package:smart_app_lock/app/theme/app_theme.dart';
 import 'package:smart_app_lock/data/models/app_entry.dart';
 import 'package:smart_app_lock/data/models/protected_app.dart';
+import 'package:smart_app_lock/data/storage/impl/in_memory_local_database.dart';
 import 'package:smart_app_lock/ui/screens/apps/apps_screen.dart';
 
 /// Phase 3B: the Apps tab lists installed apps with icon, name and
@@ -94,7 +95,8 @@ void main() {
     expect(find.byIcon(Icons.android), findsOneWidget); // Instagram fallback
   });
 
-  testWidgets('empty catalog shows the empty state', (WidgetTester tester) async {
+  testWidgets('empty catalog shows the empty state',
+      (WidgetTester tester) async {
     await pumpApps(tester, apps: const <AppEntry>[]);
 
     expect(find.text(AppsScreen.emptyTitle), findsOneWidget);
@@ -121,6 +123,20 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('a protected-list read failure never renders apps as unlocked',
+      (WidgetTester tester) async {
+    final AppContainer container = AppContainer.inMemory(
+      apps: seed,
+      database: _FailingProtectedAppsDatabase(),
+    );
+
+    await pumpApps(tester, container: container);
+
+    expect(find.text(AppsScreen.errorTitle), findsOneWidget);
+    expect(find.text(AppsScreen.unlockedLabel), findsNothing);
+    expect(find.text(AppsScreen.protectedLabel), findsNothing);
+  });
+
   testWidgets('protection status reflects the protected-apps repository',
       (WidgetTester tester) async {
     final AppContainer container = await pumpApps(tester);
@@ -143,4 +159,11 @@ void main() {
     expect(find.text(AppsScreen.protectedLabel), findsOneWidget);
     expect(find.text(AppsScreen.unlockedLabel), findsOneWidget);
   });
+}
+
+class _FailingProtectedAppsDatabase extends InMemoryLocalDatabase {
+  @override
+  Future<List<ProtectedApp>> getProtectedApps() async {
+    throw StateError('simulated protected-list read failure');
+  }
 }

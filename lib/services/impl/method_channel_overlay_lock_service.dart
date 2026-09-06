@@ -52,8 +52,10 @@ class MethodChannelOverlayLockService implements OverlayLockService {
   @override
   Future<Result<void>> showLockChallenge(String packageName) async {
     try {
-      final bool? shown =
-          await _channel.invokeMethod<bool>('showLockChallenge');
+      final bool? shown = await _channel.invokeMethod<bool>(
+        'showLockChallenge',
+        <String, dynamic>{'packageName': packageName},
+      );
       if (shown == true) {
         return Result.success(null);
       }
@@ -77,6 +79,24 @@ class MethodChannelOverlayLockService implements OverlayLockService {
       }
       return Result.failure(
         StateError('Could not dismiss the lock challenge.'),
+      );
+    } on PlatformException catch (e) {
+      return Result.failure(e);
+    } on MissingPluginException catch (e) {
+      return Result.failure(e);
+    }
+  }
+
+  @override
+  Future<Result<void>> markChallengeReady() async {
+    try {
+      final bool? ready =
+          await _channel.invokeMethod<bool>('markChallengeReady');
+      if (ready == true) {
+        return Result.success(null);
+      }
+      return Result.failure(
+        StateError('Challenge activity is not ready.'),
       );
     } on PlatformException catch (e) {
       return Result.failure(e);

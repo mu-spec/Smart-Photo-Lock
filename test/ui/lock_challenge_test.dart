@@ -71,23 +71,27 @@ void main() {
           .sessionFor(package);
 
   testWidgets(
-      'the lock host starts the watcher foreground service with the '
-      'trigger and stops it on teardown (Phase 5 mobile-QA fix)',
+      'configured protection keeps native recovery alive across teardown',
       (WidgetTester tester) async {
-    final AppContainer container = await pumpApp(tester);
+    final AppContainer container = AppContainer.inMemory();
+    await container.auth.enrollPin('2468');
+    await protect(container, 'com.example.private');
+    await pumpApp(tester, container: container);
     final StaticWatcherService watcher =
         container.watcher as StaticWatcherService;
 
-    // The watcher anchors the process in the background: it must start
-    // together with the lock engine.
+    // Configured protection starts both native recovery and Dart liveness.
     expect(watcher.startCalls, 1);
     expect(watcher.running, isTrue);
+    expect(watcher.engineAvailable, isTrue);
 
-    // Tearing the app root down stops it (the host owns the lifecycle).
+    // Tearing down Flutter hands off to native recovery; it must not stop
+    // desired protection or leave a stale healthy marker.
     await tester.pumpWidget(const SizedBox());
     await tester.pumpAndSettle();
-    expect(watcher.stopCalls, 1);
-    expect(watcher.running, isFalse);
+    expect(watcher.stopCalls, 0);
+    expect(watcher.running, isTrue);
+    expect(watcher.engineAvailable, isFalse);
   });
   /// Draws [nodes] on the unlock screen's pattern grid: bounds-derived
   /// node centers, a small horizontal arena-winning move first, then
@@ -1337,7 +1341,11 @@ void main() {
       'a stale usage-stats report never dismisses the challenge or '
       'creates a second one (Phase 5 mobile-QA fix #4)',
       (WidgetTester tester) async {
-    final AppContainer container = await pumpApp(tester);
+    final DateTime clock = DateTime(2026, 8, 21, 9);
+    final AppContainer container = await pumpApp(
+      tester,
+      accessClock: () => clock,
+    );
     await container.auth.enrollPin('1234');
     await protect(container, 'com.whatsapp');
     final StaticOverlayLockService overlay =

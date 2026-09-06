@@ -2,6 +2,7 @@ import '../../../data/models/security_settings.dart';
 import '../../../data/repositories/security_settings_repository.dart';
 import '../../../utilities/result.dart';
 import '../../pin_hasher.dart';
+import '../auth_type.dart';
 import '../credential_hash_policy.dart';
 import '../pin_storage.dart';
 
@@ -28,7 +29,12 @@ class DefaultPinCredentialStore implements PinCredentialStore {
   final CredentialHashPolicy _policy;
 
   @override
-  Future<Result<void>> save(PinHash hash) async {
+  Future<Result<void>> save(
+    PinHash hash, {
+    int? pinLength,
+    bool makePrimary = false,
+    bool resetAttemptState = false,
+  }) async {
     // Refuse to persist credential material below the storage policy.
     final HashPolicyViolation? violation = _policy.validate(hash);
     if (violation != null) {
@@ -43,7 +49,14 @@ class DefaultPinCredentialStore implements PinCredentialStore {
     final Result<SecuritySettings> loaded = await _settings.getSettings();
     return loaded.fold(
       (SecuritySettings s) => _settings.saveSettings(
-        s.copyWith(pinHash: hash),
+        s.copyWith(
+          pinHash: hash,
+          pinLength: pinLength,
+          primaryAuthType: makePrimary ? AuthType.pin : null,
+          failedAttempts: resetAttemptState ? 0 : null,
+          clearLockout: resetAttemptState,
+          lockoutStreak: resetAttemptState ? 0 : null,
+        ),
       ),
       Result.failure,
     );

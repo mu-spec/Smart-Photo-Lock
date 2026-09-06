@@ -131,8 +131,7 @@ class _LockChallengeHostState extends State<LockChallengeHost>
   /// own-presentation suppression window is considered settled and a
   /// leave is treated as a REAL user leave again (a Home press after
   /// the transition has settled still dismisses — 5M).
-  static const Duration _presentationSettleWindow =
-      Duration(milliseconds: 500);
+  static const Duration _presentationSettleWindow = Duration(milliseconds: 500);
 
   /// Phase 5 mobile-QA fix #3A: the settle timer that ends the
   /// own-presentation suppression window. A one-shot [Timer] is safe to
@@ -146,6 +145,11 @@ class _LockChallengeHostState extends State<LockChallengeHost>
   /// every resume so a trailing leave fired by the launch transition
   /// shortly after ANY resume is suppressed.
   Timer? _settleTimer;
+
+  /// Liveness lease consumed by the native recovery watcher. If these
+  /// heartbeats stop, native detection takes over without trusting a stale
+  /// "engine active" flag.
+  Timer? _heartbeatTimer;
 
   /// Phase 5M: whether the app is currently in the foreground (drives
   /// the pending re-presentation; tracked explicitly so tests and
@@ -188,24 +192,45 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     _trigger = _container?.lockTrigger;
     _subscription = _trigger?.lockRequired.listen(_onLockRequired);
     _trigger?.start();
-    _startWatcher();
+    unawaited(_bootstrapProtection());
     _applyPersistedGracePeriod();
   }
 
-  /// Phase 5 mobile-QA fix: the watcher foreground service anchors the
-  /// process in the background — without it, Android freezes/kills the
-  /// isolate when the app is backgrounded and protected apps open with
-  /// no challenge. Started and stopped with the lock engine itself.
-  Future<void> _startWatcher() async {
+  /// Synchronizes the encrypted Dart-side source of truth into the minimal
+  /// non-secret native bootstrap store, then consumes any challenge queued
+  /// while Android was recovering from process death or reboot.
+  Future<void> _bootstrapProtection() async {
     final AppContainer? container = _container;
     if (container == null) {
       return;
     }
-    final Result<bool> started = await container.watcher.start();
+    final bootstrap = await container.protectionBootstrap.synchronize();
     if (kDebugMode) {
       debugPrint(
-        '🔒 LockChallengeHost: watcher start -> ${started.isSuccess}',
+        'LockChallengeHost: protection bootstrap -> ${bootstrap.isSuccess}',
       );
+    }
+    if (!mounted || bootstrap.isFailure ||
+        bootstrap.valueOrNull?.configured != true) {
+      return;
+    }
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = Timer.periodic(
+      const Duration(seconds: 2),
+      (_) => unawaited(container.watcher.heartbeat()),
+    );
+    final pending = await container.watcher.takePendingChallenge();
+    final String? packageName = pending.valueOrNull;
+    if (!mounted || packageName == null || packageName.isEmpty) {
+      return;
+    }
+    final AccessDecision decision =
+        await container.accessController.evaluate(packageName);
+    if (decision == AccessDecision.challenge ||
+        decision == AccessDecision.deny) {
+      await _presentChallenge(packageName);
+    } else {
+      await container.overlay.hideLockChallenge();
     }
   }
 
@@ -226,18 +251,20 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     if (container.accessController.gracePeriod != Duration.zero) {
       return; // already configured — do not override
     }
-    final Result<Duration> result = await container.lockSettings.getGracePeriod();
+    final Result<Duration> result =
+        await container.lockSettings.getGracePeriod();
     if (!mounted || result.isFailure) {
       return;
     }
-    container.accessController.setGracePeriod(result.valueOrNull ?? Duration.zero);
+    container.accessController
+        .setGracePeriod(result.valueOrNull ?? Duration.zero);
   }
 
   @override
   void dispose() {
-    // Stop exactly what this host started: the subscription, the
-    // trigger (which stops the monitor's polling timer) and the watcher
-    // foreground service. Uses ONLY the cached container — a
+    // Stop the Dart-owned subscription and trigger (which stops the
+    // monitor's polling timer), then surrender its heartbeat lease to the
+    // native recovery watcher. Uses ONLY the cached container — a
     // deactivated widget's element can never be walked. The trigger
     // stop is deliberately unawaited: its periodic-timer cancel is
     // synchronous (LockTrigger.stop cancels the monitor FIRST), so the
@@ -250,9 +277,13 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     // flutter_test's pending-timer check happy at teardown).
     _settleTimer?.cancel();
     _settleTimer = null;
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
     final AppContainer? container = _container;
     if (container != null) {
-      unawaited(container.watcher.stop());
+      // Desired protection must outlive this widget/Activity. Hand liveness
+      // back to native recovery instead of stopping the service.
+      unawaited(container.watcher.markEngineUnavailable());
     }
     super.dispose();
   }
@@ -397,6 +428,7 @@ class _LockChallengeHostState extends State<LockChallengeHost>
       final AppContainer? container = AppScope.read(context);
       if (container != null) {
         await container.overlay.setSecureWindow(true);
+        await container.overlay.markChallengeReady();
       }
       return;
     }
@@ -566,8 +598,15 @@ class _LockChallengeHostState extends State<LockChallengeHost>
         } else {
           route = RouteNames.patternUnlock; // pattern-only user
         }
-        final bool? unlocked =
-            await widget.navigatorKey.currentState?.pushNamed<bool>(route);
+        final Future<bool?>? unlockFuture =
+            widget.navigatorKey.currentState?.pushNamed<bool>(route);
+        // Keep the native overlay shield until the Flutter challenge has
+        // reached a rendered frame. Native also verifies that MainActivity
+        // is resumed; if a background launch was blocked, the shield stays.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          unawaited(container.overlay.markChallengeReady());
+        });
+        final bool? unlocked = await unlockFuture;
         // Phase 5I: the unlock session is granted ONLY on an explicit
         // authentication success. The unlock screens pop `true` exclusively
         // from their `AuthSuccess` branches (wrong credential, lockout,
@@ -771,7 +810,7 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     if (target == null) {
       return;
     }
-    _diag('schedule-re-challenge target=$target (pending=${_pendingPackage})');
+    _diag('schedule-re-challenge target=$target (pending=$_pendingPackage)');
     _pendingPackage = null;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && !_presenting && !_challenging && _pendingPackage == null) {

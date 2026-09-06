@@ -30,19 +30,23 @@
         android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions" />
 
-    <!-- Phase 4D: lets the lock screen appear over protected apps
-         (draw over other apps). The grant is made exclusively through the
-         system overlay-permission settings screen. -->
+    <!-- Required presentation capability. A short-lived opaque
+         TYPE_APPLICATION_OVERLAY shield blocks interaction while the
+         activity-hosted PIN/pattern/biometric challenge is starting or the
+         Flutter engine is recovering. -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
-    <!-- Phase 5 mobile-QA fix: the watcher foreground service keeps the
-         lock engine's process alive while Smart App Lock is backgrounded,
-         so foreground detection and the challenge keep working. -->
+    <!-- Native recovery watcher for background detection and challenge
+         reconstruction after Dart isolate/process loss. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <!-- API 33+: shows the watcher notification. The service runs even
          without it (the notification is simply hidden). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Restarts previously configured protection after an unlocked boot.
+         No credential data is read by the receiver. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <!-- Phase 3A: package visibility (Android 11+). Declaring the launcher
          intent lets us discover launchable apps for App Lock selection
@@ -104,9 +108,9 @@
                 android:resource="@xml/accessibility_service_config" />
         </service>
 
-        <!-- Phase 5 mobile-QA fix: lifecycle anchor for the background
-             lock pipeline (specialUse per the capabilities document;
-             the required Play special-use property declares why). -->
+        <!-- Phase 5 recovery watcher: detects protected apps after a Dart
+             isolate/process loss and keeps the native shield active while
+             Flutter authentication is reconstructed. -->
         <service
             android:name=".WatcherService"
             android:exported="false"
@@ -115,6 +119,15 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Keeps foreground detection alive while Smart App Lock is backgrounded so protected apps are locked the moment they open." />
         </service>
+
+        <receiver
+            android:name=".ProtectionBootReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

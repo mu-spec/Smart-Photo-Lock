@@ -25,8 +25,8 @@ class CapabilityChange {
       'CapabilityChange(${kind.name} -> ${state.name} at ${at.toIso8601String()})';
 }
 
-/// Watches the three required capabilities and emits a [CapabilityChange]
-/// the moment a previously-granted capability becomes **revoked**.
+/// Watches the two alternative detectors plus the required overlay and emits
+/// a [CapabilityChange] when a previously-granted capability is revoked.
 ///
 /// Design (Phase 4F):
 ///  * a baseline probe on [start] (no change events for the initial
@@ -120,7 +120,7 @@ class CapabilityMonitor {
     _started = false;
   }
 
-  /// Probes all three capabilities and emits transitions. This is the
+  /// Probes both detectors and the overlay, and emits transitions. This is the
   /// SINGLE canonical transition evaluator — the periodic timer, the
   /// resume hook and manual test refreshes all go through here.
   ///

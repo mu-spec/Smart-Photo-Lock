@@ -41,11 +41,11 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text(SecurityScreen.revokedTitle), findsNothing);
 
-    // The user revokes usage access in the system settings; the shared
-    // services report it on the next probe.
-    final StaticInstalledAppsService appsService = container
-        .installedAppsService as StaticInstalledAppsService;
-    appsService.usageAccessGranted = false;
+    // Overlay is a required capability, unlike the two alternative
+    // detectors, so revoking it must raise the warning.
+    final StaticOverlayLockService overlay =
+        container.overlay as StaticOverlayLockService;
+    overlay.overlayGranted = false;
     await container.capabilityMonitor.probe();
     await tester.pumpAndSettle();
 
@@ -148,9 +148,8 @@ void main() {
 
     expect(find.text(SecurityScreen.revokedTitle), findsNothing);
 
-    // And a NEW revocation after recovery is detected again.
-    (container.installedAppsService as StaticInstalledAppsService)
-        .usageAccessGranted = false;
+    // And a NEW required-capability revocation after recovery is detected.
+    (container.overlay as StaticOverlayLockService).overlayGranted = false;
     await container.capabilityMonitor.probe();
     await tester.pumpAndSettle();
     expect(find.text(SecurityScreen.revokedTitle), findsOneWidget);
@@ -159,8 +158,8 @@ void main() {
   });
 
   testWidgets(
-      'restoring only ONE revoked capability keeps the warning until all '
-      'are healthy', (WidgetTester tester) async {
+      'restoring only the shield keeps the warning until a detector returns',
+      (WidgetTester tester) async {
     useTallViewport(tester);
     final AppContainer container = AppContainer.inMemory(
       usageAccessGranted: true,
@@ -172,22 +171,24 @@ void main() {
     await tester.tap(find.byKey(const Key('nav_security')));
     await tester.pumpAndSettle();
 
-    // Revoke usage access AND overlay.
+    // Revoke both alternative detectors AND the required overlay.
     (container.installedAppsService as StaticInstalledAppsService)
         .usageAccessGranted = false;
+    (container.accessibility as StaticAccessibilityLockService).enabled =
+        false;
     (container.overlay as StaticOverlayLockService).overlayGranted = false;
     await container.capabilityMonitor.probe();
     await tester.pumpAndSettle();
     expect(find.text(SecurityScreen.revokedTitle), findsOneWidget);
 
-    // Restore ONLY usage access: the warning MUST remain.
-    (container.installedAppsService as StaticInstalledAppsService)
-        .usageAccessGranted = true;
+    // Restore ONLY overlay: detection is still unavailable.
+    (container.overlay as StaticOverlayLockService).overlayGranted = true;
     await resumeFromSettings(tester);
     expect(find.text(SecurityScreen.revokedTitle), findsOneWidget);
 
-    // Restore overlay too: now everything is healthy -> clears.
-    (container.overlay as StaticOverlayLockService).overlayGranted = true;
+    // Restore either detector: minimum capability health is recovered.
+    (container.installedAppsService as StaticInstalledAppsService)
+        .usageAccessGranted = true;
     await resumeFromSettings(tester);
     expect(find.text(SecurityScreen.revokedTitle), findsNothing);
 

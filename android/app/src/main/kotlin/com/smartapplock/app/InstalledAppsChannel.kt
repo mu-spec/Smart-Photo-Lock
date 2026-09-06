@@ -1,11 +1,11 @@
 package com.smartapplock.app
 
 import android.app.AppOpsManager
+import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
-import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -137,33 +137,42 @@ object InstalledAppsChannel {
         includeSystemApps: Boolean,
     ): List<Map<String, Any?>> {
         val results = mutableListOf<Map<String, Any?>>()
-        val packages: List<PackageInfo> = packageManager.getInstalledPackages(0)
+        val seenPackages = mutableSetOf<String>()
+        val launcherIntent = Intent(Intent.ACTION_MAIN).apply {
+            addCategory(Intent.CATEGORY_LAUNCHER)
+        }
+        val activities = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            packageManager.queryIntentActivities(
+                launcherIntent,
+                PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_ALL.toLong()),
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            packageManager.queryIntentActivities(launcherIntent, PackageManager.MATCH_ALL)
+        }
 
-        for (packageInfo in packages) {
-            if (packageInfo.packageName == ownPackageName) {
+        for (resolveInfo in activities) {
+            val activityInfo = resolveInfo.activityInfo ?: continue
+            val packageName = activityInfo.packageName
+            if (packageName == ownPackageName || !seenPackages.add(packageName)) {
                 continue
             }
-            // Launchable only: an app you can actually open (and lock).
-            if (packageManager.getLaunchIntentForPackage(packageInfo.packageName) == null) {
-                continue
-            }
-            // The SDK types this as nullable: a package with no resolvable
-            // ApplicationInfo cannot be labeled or classified — skip it
-            // safely instead of risking a null crash.
-            val applicationInfo: ApplicationInfo? = packageInfo.applicationInfo
-            if (applicationInfo == null) {
-                continue
-            }
+            val applicationInfo: ApplicationInfo = activityInfo.applicationInfo
             val isSystemApp: Boolean =
                 (applicationInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
             if (isSystemApp && !includeSystemApps) {
                 continue
             }
             val label: String = applicationInfo.loadLabel(packageManager).toString()
-            val versionName: String? = packageInfo.versionName
+            @Suppress("DEPRECATION")
+            val versionName: String? = try {
+                packageManager.getPackageInfo(packageName, 0).versionName
+            } catch (e: PackageManager.NameNotFoundException) {
+                null
+            }
             results.add(
                 mapOf(
-                    "packageName" to packageInfo.packageName,
+                    "packageName" to packageName,
                     "label" to label,
                     "isSystemApp" to isSystemApp,
                     "versionName" to versionName,
@@ -171,10 +180,12 @@ object InstalledAppsChannel {
             )
         }
 
-        results.sortBy { entry ->
-            val label = entry["label"] as String
-            label.lowercase()
-        }
+        results.sortWith(
+            compareBy<Map<String, Any?>>(
+                { entry -> (entry["label"] as String).lowercase() },
+                { entry -> entry["packageName"] as String },
+            ),
+        )
         return results
     }
 
@@ -238,16 +249,16 @@ object InstalledAppsChannel {
      * Phase 5A: the currently-foreground app, resolved from the
      * usage-stats backend (UsageStatsManager).
      *
-     * The selected Play-compliant architecture polls the most recently
-     * used launchable app over a short lookback window. The method is
+     * Polls activity-transition events over a short lookback window and
+     * selects the latest genuine foreground transition. It deliberately
+     * does not use UsageStats.lastTimeUsed: background services can update
+     * that field and masquerade as the foreground app. The method is
      * TOTAL and fail-closed:
      *  * no Usage Access grant      -> null (the caller simply detects
      *    nothing; it must never fabricate a foreground app);
      *  * backend failure / empty    -> null;
      *  * this app's own package is never reported.
      *
-     * The platform types queryUsageStats as a non-null list, but the
-     * loop still guards defensively so OEM variants cannot crash it.
      */
     fun getForegroundPackage(context: Context): String? {
         if (!hasUsageAccess(context)) {
@@ -259,27 +270,34 @@ object InstalledAppsChannel {
                     as UsageStatsManager
             val end = System.currentTimeMillis()
             val begin = end - FOREGROUND_LOOKBACK_WINDOW_MS
-            val stats = usageStats.queryUsageStats(
-                UsageStatsManager.INTERVAL_DAILY,
-                begin,
-                end,
-            )
-            var bestPackage: String? = null
+            val events = usageStats.queryEvents(begin, end)
+            val event = UsageEvents.Event()
+            var foregroundPackage: String? = null
             var bestTime = 0L
-            for (stat in stats) {
-                if (stat.packageName == context.packageName) {
+            while (events.hasNextEvent()) {
+                events.getNextEvent(event)
+                val isForeground = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    event.eventType == UsageEvents.Event.ACTIVITY_RESUMED
+                } else {
+                    @Suppress("DEPRECATION")
+                    event.eventType == UsageEvents.Event.MOVE_TO_FOREGROUND
+                }
+                if (!isForeground || event.timeStamp <= 0L) {
                     continue
                 }
-                if (stat.lastTimeUsed <= 0L) {
-                    continue
-                }
-                if (stat.lastTimeUsed > bestTime) {
-                    bestTime = stat.lastTimeUsed
-                    bestPackage = stat.packageName
+                if (event.timeStamp >= bestTime) {
+                    bestTime = event.timeStamp
+                    foregroundPackage = event.packageName
                 }
             }
+            // Observe our own activity as the latest transition, then return
+            // unknown. Skipping it while selecting would incorrectly report
+            // the protected app underneath the challenge as foreground.
+            val bestPackage = foregroundPackage?.takeUnless {
+                it == context.packageName
+            }
             // Mobile-QA diagnostics: trace the real-device pipeline.
-            Log.d("SmartAppLock", "usage stats foreground -> $bestPackage")
+            Log.d("SmartAppLock", "usage events foreground -> $bestPackage")
             bestPackage
         } catch (e: Exception) {
             null

@@ -6,73 +6,67 @@ import android.os.Build
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
-/**
- * MethodChannel bridge for the watcher foreground service
- * (Phase 5 mobile-QA fix).
- *
- *  * `start` — requests POST_NOTIFICATIONS on API 33+ (the system shows
- *    the watcher notification only with it; the service itself runs
- *    either way), then starts the foreground watcher;
- *  * `stop` — stops the watcher;
- *  * `isRunning` — the watcher's running state.
- */
+/** Flutter bridge for protection bootstrap, liveness, and native health. */
 object WatcherChannel {
-
-    /** Must match the Dart side of the bridge. */
     const val CHANNEL = "smart_app_lock/watcher"
 
-    private const val NOTIFICATION_PERMISSION_REQUEST = 1001
-
     fun register(engine: FlutterEngine, activity: MainActivity) {
-        val channel = MethodChannel(engine.dartExecutor.binaryMessenger, CHANNEL)
-        channel.setMethodCallHandler { call, result ->
-            when (call.method) {
-                "start" -> {
-                    try {
-                        requestNotificationPermission(activity)
-                        result.success(WatcherService.start(activity))
-                    } catch (e: Exception) {
-                        result.error(
-                            "watcher_error",
-                            "Failed to start the watcher: ${e.message}",
-                            null,
+        MethodChannel(engine.dartExecutor.binaryMessenger, CHANNEL)
+            .setMethodCallHandler { call, result ->
+                try {
+                    when (call.method) {
+                        "start" -> result.success(WatcherService.start(activity))
+                        "stop" -> result.success(WatcherService.stop(activity))
+                        "isRunning" -> result.success(WatcherService.isRunning())
+                        "configureProtection" -> {
+                            val enabled = call.argument<Boolean>("enabled") ?: false
+                            val packages = call.argument<List<String>>("protectedPackages")
+                                ?.toSet() ?: emptySet()
+                            ProtectionStateStore.configure(activity, enabled, packages)
+                            if (!enabled) {
+                                ProtectionStateStore.clearPendingChallenge(activity)
+                                ProtectionOverlayController.hide()
+                            }
+                            result.success(true)
+                        }
+                        "heartbeat" -> {
+                            WatcherService.heartbeat()
+                            result.success(true)
+                        }
+                        "markEngineUnavailable" -> {
+                            WatcherService.markEngineUnavailable()
+                            result.success(true)
+                        }
+                        "takePendingChallenge" -> result.success(
+                            ProtectionStateStore.takePendingChallenge(activity),
                         )
+                        "getHealth" -> result.success(health(activity))
+                        else -> result.notImplemented()
                     }
+                } catch (e: Exception) {
+                    ProtectionStateStore.setLastError(activity, e.message)
+                    result.error("watcher_error", e.message, null)
                 }
-                "stop" -> {
-                    try {
-                        result.success(WatcherService.stop(activity))
-                    } catch (e: Exception) {
-                        result.error(
-                            "watcher_error",
-                            "Failed to stop the watcher: ${e.message}",
-                            null,
-                        )
-                    }
-                }
-                "isRunning" -> {
-                    result.success(WatcherService.isRunning())
-                }
-                else -> result.notImplemented()
             }
-        }
     }
 
-    /** The foreground service runs without POST_NOTIFICATIONS (its
-     * notification is simply hidden); request it once so the protection
-     * indicator is visible on API 33+. */
-    private fun requestNotificationPermission(activity: MainActivity) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-            return
+    private fun health(activity: MainActivity): Map<String, Any?> {
+        val configured = ProtectionStateStore.isEnabled(activity)
+        val engineState = when {
+            !configured -> "inactive"
+            ProtectionRuntime.isEngineHealthy() -> "healthy"
+            WatcherService.isRunning() -> "recovering"
+            else -> "unavailable"
         }
-        val granted = activity.checkSelfPermission(
-            Manifest.permission.POST_NOTIFICATIONS,
-        ) == PackageManager.PERMISSION_GRANTED
-        if (!granted) {
-            activity.requestPermissions(
-                arrayOf(Manifest.permission.POST_NOTIFICATIONS),
-                NOTIFICATION_PERMISSION_REQUEST,
-            )
-        }
+        val notificationGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            activity.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+        return mapOf(
+            "protectionConfigured" to configured,
+            "serviceRunning" to WatcherService.isRunning(),
+            "engineState" to engineState,
+            "notificationPermissionGranted" to notificationGranted,
+            "lastError" to ProtectionStateStore.lastError(activity),
+        )
     }
 }

@@ -24,6 +24,9 @@ class AccessibilityLockService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        if (ProtectionStateStore.isEnabled(this) && !WatcherService.isRunning()) {
+            WatcherService.start(this)
+        }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -35,6 +38,9 @@ class AccessibilityLockService : AccessibilityService() {
         if (packageName == applicationContext.packageName) {
             return // never report our own app
         }
+        // Native recovery receives the same narrowly scoped package-only
+        // signal even when no Flutter EventChannel listener exists.
+        WatcherService.reportForeground(this, packageName)
         val sink = eventSink ?: return
         // Mobile-QA diagnostics: trace the real-device pipeline.
         Log.d("SmartAppLock", "a11y foreground -> $packageName")

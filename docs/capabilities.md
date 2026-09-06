@@ -1,127 +1,113 @@
-# Phase 4A — Capability Requirements
+# Android protection capabilities
 
-**Status:** Architecture definition (no implementation in this phase).
+**Baseline:** C0 / Phases 1–5
 
-This document defines *exactly* which Android capabilities the selected
-protection architecture requires, what each is for, what it does NOT
-grant, and how it is requested. It is the single source of truth for all
-later phases; any manifest or permission change must reference it.
+This file is the source of truth for Android capabilities used by the current
+lock engine. It describes the implementation that exists, not future phases.
 
----
+## Enforcement architecture
 
-## 1. Protection architecture being served
+Smart App Lock uses a hybrid design:
 
-```
-Foreground-app detection ──► Lock decision ──► PIN challenge on top of
-(usage access, primary)     (rules +         the protected app
-(accessibility, fallback)    protection set)  (overlay window)
-                                                    │
-                                          unlock → app opens
-```
+1. While Dart is healthy, Flutter evaluates foreground-package events and owns
+   authentication, sessions, grace periods, and navigation.
+2. A native foreground service holds a minimal, non-secret copy of the desired
+   protection state and receives a Dart heartbeat.
+3. If the heartbeat expires after process/isolate loss or reboot, native usage
+   polling or accessibility events detect a protected package.
+4. Native code first raises an opaque, touch-blocking
+   `TYPE_APPLICATION_OVERLAY` shield, persists a pending package, and then
+   launches `MainActivity` to reconstruct the Flutter challenge.
+5. The shield is removed only after the Flutter challenge route is ready and
+   the activity is resumed.
 
-| Stage | Mechanism (selected) | Capability |
-| ----- | -------------------- | ---------- |
-| Detect the foreground app | Usage-stats polling (primary) | **Usage Access** (user grant) |
-| Detect the foreground app | Accessibility events (fallback) | **Accessibility Service** (user grant) |
-| Draw the lock screen over any app | Overlay window (`TYPE_APPLICATION_OVERLAY`) | **Draw over other apps** (user grant) |
-| Stop casual uninstall while locks are active | Device admin watchdog (optional hardening) | **Device admin** (user grant) |
-| Read the installed-app catalog | `<queries>` launcher visibility (already shipped, 3A) | No permission |
-| Keep the watcher alive in the background | Foreground service (NOTIFICATION + FOREGROUND_SERVICE) | Normal permissions |
+No PIN, password, pattern, hash, salt, or biometric material is copied into the
+native recovery preferences.
 
----
+## Capability model
 
-## 2. Capability inventory — what IS required, what is NOT
+| Capability | Classification | Current use | Behavior when unavailable |
+| --- | --- | --- | --- |
+| Draw over other apps (`SYSTEM_ALERT_WINDOW`) | **Required** | Opaque touch-blocking recovery/handoff shield and background-activity-launch exemption | Protection is unavailable; the UI must not claim it is active |
+| Usage Access (`PACKAGE_USAGE_STATS`) | **Alternative detector** | Dart and native foreground-app polling | Accessibility can provide detection |
+| Accessibility service (`BIND_ACCESSIBILITY_SERVICE`) | **Alternative detector** | Narrow window-state package events; no content retrieval | Usage Access can provide detection |
+| Foreground service (`FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_SPECIAL_USE`) | **Required internal capability** | Native recovery watcher | Protection cannot survive Dart/process loss |
+| Notifications (`POST_NOTIFICATIONS`, API 33+) | **Optional** | Makes the ongoing service notification visible in the notification drawer | Service may run but health is degraded and notification visibility is reduced |
+| Boot completed (`RECEIVE_BOOT_COMPLETED`) | **Required internal capability** | Restarts only previously configured protection after boot | Reboot recovery is unavailable |
+| Launcher `<queries>` | **Required package visibility declaration** | Installed, launchable application discovery | App selection cannot be populated correctly |
+| Biometrics (`USE_BIOMETRIC`) | **Optional authentication method** | Local biometric challenge when enabled by the user | Primary PIN/pattern remains available |
 
-### Required (runtime, user-granted)
+Minimum protection readiness is:
 
-| # | Capability | Manifest element | Used for | Can the user deny it? | App behavior when denied |
-| - | ---------- | ---------------- | -------- | --------------------- | ------------------------ |
-| 1 | **Usage Access** | `<uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions"/>` (list membership only) | Foreground-app detection (primary). The GRANT is made exclusively through the system Usage Access screen (`Settings.ACTION_USAGE_ACCESS_SETTINGS` → AppOps `OPSTR_GET_USAGE_STATS`). The manifest declaration grants nothing — but Android's Usage Access screen lists ONLY apps that request the permission, so the declaration is what makes Smart App Lock selectable there (corrected by Phase 4 real-device QA). | Yes | Lock engine falls back to accessibility detection; prompts guide re-enabling |
-| 2 | **Draw over other apps** | `SYSTEM_ALERT_WINDOW` | The lock screen must be able to appear **on top of any protected app** — this is the entire enforcement surface. | Yes | Locking cannot show the challenge; prompts guide enabling |
-| 3 | **Accessibility service** | `<service android:permission="BIND_ACCESSIBILITY_SERVICE">` + `accessibilityservice` intent filter + XML config | Fallback foreground detection + the "close app when locked" gesture | Yes | Usage-access path (if granted) covers detection; prompts guide enabling |
-
-### Required (normal, install-time — cannot be denied individually)
-
-| # | Capability | Purpose |
-| - | ---------- | ------- |
-| 4 | `POST_NOTIFICATIONS` (API 33+) ✅ landed | Required to *start* the foreground-service watcher |
-| 5 | `FOREGROUND_SERVICE` ✅ landed | Permission class for the watcher service |
-| 6 | `FOREGROUND_SERVICE_SPECIAL_USE` ✅ landed | The watcher has no camera/mic/data/media type — the special-use type applies, with the required `<property>` declaration (Play policy) |
-| 7 | `<queries>` MAIN/LAUNCHER (already present, 3A) | Installed-app visibility — no permission |
-
-### Already present (carried from earlier phases — NOT re-added)
-
-| Capability | Phase | Purpose |
-| ---------- | ----- | ------- |
-| `USE_BIOMETRIC` | 2J | BiometricPrompt on API < 28 |
-| `INTERNET` (debug/profile only) | 1A | Hot reload / profiling |
-
-### Explicitly NOT required — and why
-
-| Rejected capability | Reason it stays out |
-| ------------------- | ------------------- |
-| **Device admin** (optional hardening only) | The PRD's protection architecture is *app-level* (detect → overlay → unlock). Device admin is listed as an optional hardening stage, and Phase 4A does not activate it: it is the most user-alarming grant and Play-restricts it to enterprise/lock/wipe uses. Adding it later requires a separate PRD decision. |
-| `QUERY_ALL_PACKAGES` | Play-restricted, broad package visibility. The `<queries>` launcher declaration (3A) already provides what the app-list needs. |
-| **Full-screen intent** (`USE_FULL_SCREEN_INTENT`) | The lock surface is an overlay window, not a notification-triggered activity. |
-| `MANAGE_EXTERNAL_STORAGE` / storage permissions | Nothing in the architecture touches shared storage. |
-| `RECEIVE_BOOT_COMPLETED` | The watcher restarts lazily (app open or foreground-service reconnect); boot persistence is not part of the design. |
-| Camera permission | Reserved for the later intruder-selfie feature — **not** part of the protection architecture; not requested now. |
-| `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` | Battery optimization may shorten polling; the design degrades gracefully to accessibility detection. Not required at this stage. |
-| Root / ADB / `BIND_DEVICE_ADMIN` + `USES_POLICY_FORCE_LOCK` | Out of scope for an app-level locker. |
-
----
-
-## 3. Manifest changes planned (future phases; NONE in 4A)
-
-| Manifest change | When it lands | Notes |
-| --------------- | ------------- | ----- |
-| `SYSTEM_ALERT_WINDOW` | ✅ **Landed in 4D** | Capability + grant flow shipped; the overlay lock window itself lands with the lock-screen phase |
-| Overlay service (`<service>` for the challenge window) | Lock-screen phase | The overlay is Flutter-rendered via a service/activity with `TYPE_APPLICATION_OVERLAY` |
-| Watcher foreground service + `FOREGROUND_SERVICE[_SPECIAL_USE]` + `POST_NOTIFICATIONS` | Watcher phase | Includes the `PROPERTY_SPECIAL_USE_FGS_SUBTYPE` declaration |
-| Accessibility `<service>` + `res/xml/accessibility_service_config.xml` | ✅ **Landed in 4C** | `android:canRetrieveWindowContent="false"` + `typeWindowStateChanged` only — detection-only, no content capture; detection wiring itself ships with the lock engine |
-| (Optional, future PRD) Device-admin receiver | Only if hardening activates it | Requires an explicit decision; not part of this phase |
-
----
-
-## 4. Request flow each capability follows
-
-Every runtime capability uses the same pattern (matching the Phase 1B
-service contracts):
-
-```
-Feature opens → service.isAvailable() →
-  granted      → proceed
-  denied       → service.requestX() opens the SYSTEM settings screen
-                 (never an in-app fake toggle)
-                 → on return, isAvailable() is re-checked
+```text
+overlay granted
+AND (usage access granted OR accessibility enabled)
+AND native recovery service available
+AND credential configured
+AND at least one protected package configured
 ```
 
-- The app never blocks forever on a denial — every path has a
-  user-safe "continue without" or "re-check later" state.
-- Settings screens are opened via `Settings.ACTION_*` intents: the user
-  makes the final choice in the system UI, which is the only way these
-  special grants are legally surfaced.
+Both detectors being present adds redundancy. One detector missing is a
+degraded-but-available state, not a total failure. Notification denial is also
+reported as degraded, not as proof that the service failed to start.
 
----
+## Explicitly excluded capabilities
 
-## 5. Denial matrix (the "avoid unnecessary permissions" proof)
+| Capability | Reason |
+| --- | --- |
+| `QUERY_ALL_PACKAGES` | Launcher `<queries>` is sufficient and less invasive |
+| `USE_FULL_SCREEN_INTENT` | The handoff shield is an application overlay, not an alarm/call notification |
+| Device administrator | Not necessary for the Phases 1–5 app-level lock architecture |
+| Storage permissions / `MANAGE_EXTERNAL_STORAGE` | The app does not need shared-storage access |
+| Camera | Intruder photography is outside the C0/Phases 1–5 baseline |
+| `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` | Not requested; OEM power restrictions remain a documented physical-device risk |
+| Root/ADB privileges | Outside the application security model |
 
-| Denied | What still works |
-| ------ | ---------------- |
-| Usage access | App list, protection selection, PIN/pattern/biometric setup; locking runs on the accessibility path if enabled, otherwise locking is off with clear prompts |
-| Overlay | Everything except the challenge window itself; the engine reports "not available" instead of crashing |
-| Accessibility | Locking runs on usage-access detection alone |
-| Both detection paths | App management fully works; locking is disabled with a setup wizard |
-| Notifications (API 33+) | The watcher cannot run in the background → detection uses accessibility only (same as a denial) |
+## Request and denial behavior
 
----
+- Usage Access, Accessibility, and Draw Over Other Apps are enabled only in
+  Android system settings and re-checked when the app resumes.
+- The app does not silently enable special access or present an in-app switch
+  as though it were the Android grant.
+- Notification permission is not requested as a prerequisite for starting the
+  protection watcher.
+- If overlay or both detection paths are missing/revoked, protection health is
+  unavailable and setup/recovery guidance is shown.
+- If one detector or notification visibility is missing, protection health is
+  degraded and the remaining enforcement path stays active.
+- A capability probe/storage failure never converts protection to a healthy
+  state and never clears the last known native desired-protection state.
 
-## 6. Test / verification contract (implemented in later phases)
+## Manifest inventory
 
-For each capability, the implementing phase must ship:
+The release manifest contains only the capabilities needed by this baseline:
 
-1. `isAvailable()` returns the true OS state (probed, not assumed).
-2. `requestX()` opens the correct system settings screen.
-3. Re-check after return from settings.
-4. Denied-state UI message per the matrix above.
-5. No capability is declared in the manifest before its phase.
+- `PACKAGE_USAGE_STATS`
+- `SYSTEM_ALERT_WINDOW`
+- `POST_NOTIFICATIONS`
+- `FOREGROUND_SERVICE`
+- `FOREGROUND_SERVICE_SPECIAL_USE`
+- `RECEIVE_BOOT_COMPLETED`
+- `USE_BIOMETRIC`
+- launcher `<queries>`
+- the detection-only accessibility service
+- the non-exported special-use watcher service
+- the boot receiver
+
+`INTERNET` is confined to Flutter's debug/profile manifests for development
+tooling; it is not a release capability.
+
+## Verification contract
+
+Changes to this architecture must retain automated checks for:
+
+1. alternative-detector capability combinations and truthful health states;
+2. no native recovery enablement without both a credential and protected app;
+3. fail-closed persistence/bootstrap errors;
+4. recovery configuration surviving Flutter teardown;
+5. watcher/overlay method-channel serialization;
+6. authentication failure never granting a session;
+7. release-manifest permission scope; and
+8. process-recreation, reboot, screen, Home, Back, and task-switching behavior,
+   followed by physical-device QA for Android lifecycle behavior that cannot be
+   proven by a Dart unit test.

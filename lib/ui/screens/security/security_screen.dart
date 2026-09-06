@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../../app/app_container.dart';
@@ -6,6 +8,7 @@ import '../../../app/router.dart';
 import '../../../data/repositories/lock_settings_repository.dart';
 import '../../../data/storage/preferences_store.dart';
 import '../../../design_system/design_system.dart';
+import '../../../protection/protection_health.dart';
 import '../../../security/credentials/auth_type.dart';
 import '../../../security/credentials/biometric_options.dart';
 import '../../../security/credentials/credential_manager.dart';
@@ -13,6 +16,7 @@ import '../../../services/accessibility_lock_service.dart';
 import '../../../services/capability_monitor.dart';
 import '../../../services/installed_apps_service.dart';
 import '../../../services/overlay_lock_service.dart';
+import '../../../services/watcher_service.dart';
 import '../../../utilities/result.dart';
 
 /// Security tab — the authentication settings surface (Phase 2K).
@@ -71,6 +75,8 @@ class SecurityScreen extends StatefulWidget {
 
 class _SecurityScreenState extends State<SecurityScreen>
     with WidgetsBindingObserver {
+  StreamSubscription<CapabilityChange>? _capabilitySubscription;
+
   /// Cached settings (null while loading).
   bool? _randomized;
   bool? _patternVisible;
@@ -87,6 +93,9 @@ class _SecurityScreenState extends State<SecurityScreen>
   /// Phase 4D: overlay (draw-over-apps) capability state (false until
   /// loaded).
   bool _overlayGranted = false;
+  ProtectionEngineHealth _engineHealth =
+      const ProtectionEngineHealth.inactive();
+  bool _bootstrapFailed = false;
 
   /// Phase 4 UX: persisted grant history per capability (false until the
   /// capability has been observed granted at least once). Combined with
@@ -101,8 +110,7 @@ class _SecurityScreenState extends State<SecurityScreen>
   int? _graceSeconds;
 
   /// The grace options offered by the Re-lock section.
-  static const List<(String, Duration)> graceOptions =
-      <(String, Duration)>[
+  static const List<(String, Duration)> graceOptions = <(String, Duration)>[
     ('Immediate', Duration.zero),
     ('30 seconds', Duration(seconds: 30)),
     ('1 minute', Duration(minutes: 1)),
@@ -124,26 +132,29 @@ class _SecurityScreenState extends State<SecurityScreen>
   }
 
   /// A capability that was granted before and is now missing.
+  bool get _detectionReady =>
+      _usageAccessGranted || _accessibilityEnabled;
+
   bool get _hasRevokedCapability =>
-      (!_usageAccessGranted && _usageAccessEverGranted) ||
-      (!_accessibilityEnabled && _accessibilityEverGranted) ||
-      (!_overlayGranted && _overlayEverGranted);
+      (!_overlayGranted && _overlayEverGranted) ||
+      (!_detectionReady &&
+          (_usageAccessEverGranted || _accessibilityEverGranted));
 
   /// At least one capability has NEVER been granted (fresh install or
   /// incomplete first-time setup).
-  bool get _setupIncomplete =>
-      (!_usageAccessGranted && !_usageAccessEverGranted) ||
-      (!_accessibilityEnabled && !_accessibilityEverGranted) ||
-      (!_overlayGranted && !_overlayEverGranted);
+  bool get _setupIncomplete => !_overlayGranted || !_detectionReady;
 
-  /// All three required capabilities are currently granted.
-  bool get _protectionReady =>
-      _usageAccessGranted && _accessibilityEnabled && _overlayGranted;
+  /// The required shield and at least one detector are currently available.
+  bool get _protectionReady => _detectionReady && _overlayGranted;
 
-  int get _readyCount =>
-      (_usageAccessGranted ? 1 : 0) +
-      (_accessibilityEnabled ? 1 : 0) +
-      (_overlayGranted ? 1 : 0);
+  ProtectionCapabilityEvaluation get _protectionEvaluation =>
+      ProtectionCapabilityEvaluation.evaluate(
+        protectionConfigured: _engineHealth.protectionConfigured,
+        usageAccess: _usageAccessGranted,
+        accessibility: _accessibilityEnabled,
+        overlay: _overlayGranted,
+        engine: _engineHealth,
+      );
 
   @override
   void initState() {
@@ -152,8 +163,9 @@ class _SecurityScreenState extends State<SecurityScreen>
     _loadStatus();
     // Phase 4F: a revoked capability (detected anywhere) marks the tab
     // and the next status reload reflects it.
-    AppScope.read(context)?.capabilityMonitor.changes.listen(
-          (change) {
+    _capabilitySubscription =
+        AppScope.read(context)?.capabilityMonitor.changes.listen(
+      (change) {
         if (!mounted || change.state != CapabilityState.revoked) {
           return;
         }
@@ -166,6 +178,7 @@ class _SecurityScreenState extends State<SecurityScreen>
 
   @override
   void dispose() {
+    _capabilitySubscription?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -249,6 +262,17 @@ class _SecurityScreenState extends State<SecurityScreen>
       graceSeconds = period.isNegative ? 0 : period.inSeconds;
     }
 
+    final bootstrap = await container.protectionBootstrap.synchronize();
+    final ProtectionEngineHealth engineHealth = bootstrap.isSuccess
+        ? bootstrap.valueOrNull!.health
+        : ProtectionEngineHealth(
+            protectionConfigured: true,
+            serviceRunning: false,
+            engineState: ProtectionEngineState.unavailable,
+            notificationPermissionGranted: false,
+            lastError: bootstrap.errorOrNull.toString(),
+          );
+
     if (!mounted) {
       return;
     }
@@ -264,6 +288,8 @@ class _SecurityScreenState extends State<SecurityScreen>
       _usageAccessEverGranted = usageEver;
       _accessibilityEverGranted = accessibilityEver;
       _overlayEverGranted = overlayEver;
+      _engineHealth = engineHealth;
+      _bootstrapFailed = bootstrap.isFailure;
       if (graceSeconds != null) {
         _graceSeconds = graceSeconds;
       }
@@ -420,13 +446,14 @@ class _SecurityScreenState extends State<SecurityScreen>
   /// Persists the selected grace period and applies it to the shared
   /// access controller immediately — no restart needed.
   Future<void> _setGrace(Duration period) async {
+    final int previousSeconds = _graceSeconds ?? 0;
     final int seconds = period.isNegative ? 0 : period.inSeconds;
     setState(() => _graceSeconds = seconds); // optimistic
     final AppContainer? container = AppScope.read(context);
     if (container == null) {
+      setState(() => _graceSeconds = previousSeconds);
       return;
     }
-    container.accessController.setGracePeriod(Duration(seconds: seconds));
     final result = await container.lockSettings.setGracePeriod(
       Duration(seconds: seconds),
     );
@@ -434,10 +461,15 @@ class _SecurityScreenState extends State<SecurityScreen>
       return;
     }
     if (result.isFailure) {
+      setState(() => _graceSeconds = previousSeconds);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text(SecurityScreen.couldNotSaveMessage)),
       );
+      return;
     }
+    // Runtime and persisted policy advance together. A failed disk write
+    // must not silently activate a grace period that disappears on restart.
+    container.accessController.setGracePeriod(Duration(seconds: seconds));
   }
 
   // -- biometric (Phase 2J) -------------------------------------------------
@@ -451,8 +483,15 @@ class _SecurityScreenState extends State<SecurityScreen>
     final service = container.biometrics;
 
     if (_biometricEnrolled) {
-      await auth.updateBiometricOptions(null); // disable
+      final Result<void> disabled =
+          await auth.updateBiometricOptions(null); // disable
       if (!mounted) {
+        return;
+      }
+      if (disabled.isFailure) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text(SecurityScreen.couldNotSaveMessage)),
+        );
         return;
       }
       setState(() => _biometricEnrolled = false);
@@ -487,19 +526,32 @@ class _SecurityScreenState extends State<SecurityScreen>
       return;
     }
 
-    final Set<BiometricKind> kinds =
-        (await service.availableKinds()).valueOrNull ??
-            const <BiometricKind>{};
+    final Result<Set<BiometricKind>> available = await service.availableKinds();
     if (!mounted) {
       return;
     }
+    if (available.isFailure || available.valueOrNull!.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No biometric or device credential is enrolled.'),
+        ),
+      );
+      return;
+    }
+    final Set<BiometricKind> kinds = available.valueOrNull!;
     final BiometricOptions options = BiometricOptions(
       allowStrongBiometrics: kinds.contains(BiometricKind.strong),
       allowDeviceCredential: kinds.contains(BiometricKind.deviceCredential),
       requireConfirmation: true,
     );
-    await auth.updateBiometricOptions(options);
+    final Result<void> saved = await auth.updateBiometricOptions(options);
     if (!mounted) {
+      return;
+    }
+    if (saved.isFailure) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text(SecurityScreen.couldNotSaveMessage)),
+      );
       return;
     }
     setState(() => _biometricEnrolled = true);
@@ -518,7 +570,32 @@ class _SecurityScreenState extends State<SecurityScreen>
         children: <Widget>[
           const DsSectionTitle('Security status'),
           const SizedBox(height: DsSpacing.md),
-          if (_hasRevokedCapability) ...<Widget>[
+          if (_bootstrapFailed ||
+              _protectionEvaluation.status ==
+                  ProtectionHealthStatus.unavailable) ...<Widget>[
+            SecurityStatusBanner(
+              level: SecurityLevel.vulnerable,
+              title: 'Protection engine unavailable',
+              message: _engineHealth.lastError ??
+                  'Smart App Lock cannot currently guarantee enforcement.',
+              actionLabel: 'Review permissions',
+              onAction: _onPermissionSetupTap,
+            ),
+            const SizedBox(height: DsSpacing.md),
+          ],
+          if (!_bootstrapFailed &&
+              _protectionEvaluation.status ==
+                  ProtectionHealthStatus.recovering) ...<Widget>[
+            const SecurityStatusBanner(
+              level: SecurityLevel.atRisk,
+              title: 'Protection engine recovering',
+              message: 'Native detection is active while the secure unlock '
+                  'engine is being restored.',
+            ),
+            const SizedBox(height: DsSpacing.md),
+          ],
+          if (!_engineHealth.protectionConfigured &&
+              _hasRevokedCapability) ...<Widget>[
             SecurityStatusBanner(
               level: SecurityLevel.vulnerable,
               title: SecurityScreen.revokedTitle,
@@ -531,7 +608,9 @@ class _SecurityScreenState extends State<SecurityScreen>
           // Phase 4 UX: first-install / incomplete setup — capabilities
           // that have NEVER been granted. Distinct from the revocation
           // banner above (previously granted, now missing).
-          if (!_hasRevokedCapability && _setupIncomplete) ...<Widget>[
+          if (!_engineHealth.protectionConfigured &&
+              !_hasRevokedCapability &&
+              _setupIncomplete) ...<Widget>[
             SecurityStatusBanner(
               level: SecurityLevel.atRisk,
               title: SecurityScreen.setupRequiredTitle,
@@ -539,7 +618,8 @@ class _SecurityScreenState extends State<SecurityScreen>
               actionLabel: 'Set up',
               onAction: _onPermissionSetupTap,
               footer: Text(
-                SecurityScreen.readyCount(_readyCount),
+                '${_detectionReady ? 'Detection ready' : 'Choose a detection method'} · '
+                '${_overlayGranted ? 'Shield ready' : 'Shield required'}',
                 style: theme.textTheme.labelLarge?.copyWith(
                   fontWeight: FontWeight.w700,
                 ),
@@ -547,25 +627,61 @@ class _SecurityScreenState extends State<SecurityScreen>
             ),
             const SizedBox(height: DsSpacing.md),
           ],
-          // Phase 4 UX: healthy state — all three required capabilities
-          // granted.
-          if (!_hasRevokedCapability && _protectionReady) ...<Widget>[
+          // Capability setup is complete, but protection is not active until
+          // a credential and at least one protected app are configured.
+          if (!_engineHealth.protectionConfigured &&
+              !_hasRevokedCapability &&
+              _protectionReady) ...<Widget>[
             SecurityStatusBanner(
               level: SecurityLevel.secured,
-              title: SecurityScreen.protectionReadyTitle,
-              message: SecurityScreen.protectionReadyMessage,
+              title: 'Capability setup ready',
+              message: 'Required presentation and detection capabilities '
+                  'are available. Protection activates after a credential '
+                  'and at least one app are configured.',
             ),
             const SizedBox(height: DsSpacing.md),
           ],
-          SecurityStatusBanner(
-            level: SecurityLevel.atRisk,
-            title: 'Protection is not fully set up',
-            message: SecurityScreen.description,
-            actionLabel: 'Set up PIN',
-            onAction: () =>
-                Navigator.of(context).pushNamed(RouteNames.pinSetup),
-          ),
-          const SizedBox(height: DsSpacing.xl),
+          if (_engineHealth.protectionConfigured &&
+              (_protectionEvaluation.status ==
+                      ProtectionHealthStatus.healthy ||
+                  _protectionEvaluation.status ==
+                      ProtectionHealthStatus.degraded)) ...<Widget>[
+            SecurityStatusBanner(
+              level: _protectionEvaluation.status ==
+                      ProtectionHealthStatus.healthy
+                  ? SecurityLevel.secured
+                  : SecurityLevel.atRisk,
+              title: _protectionEvaluation.status ==
+                      ProtectionHealthStatus.healthy
+                  ? 'Protection engine active'
+                  : 'Protection active with reduced resilience',
+              message: _protectionEvaluation.status ==
+                      ProtectionHealthStatus.healthy
+                  ? 'Native recovery and both detection paths are available.'
+                  : 'Core enforcement is active, but only one detection path '
+                      'or no visible notification is available.',
+              actionLabel: _protectionEvaluation.status ==
+                      ProtectionHealthStatus.degraded
+                  ? 'Review'
+                  : null,
+              onAction: _protectionEvaluation.status ==
+                      ProtectionHealthStatus.degraded
+                  ? _onPermissionSetupTap
+                  : null,
+            ),
+            const SizedBox(height: DsSpacing.md),
+          ],
+          if (!_hasPin && !_hasPattern) ...<Widget>[
+            SecurityStatusBanner(
+              level: SecurityLevel.atRisk,
+              title: 'Protection is not fully set up',
+              message: SecurityScreen.description,
+              actionLabel: 'Set up PIN',
+              onAction: () =>
+                  Navigator.of(context).pushNamed(RouteNames.pinSetup),
+            ),
+            const SizedBox(height: DsSpacing.xl),
+          ],
           const DsSectionTitle('Authentication'),
           const SizedBox(height: DsSpacing.md),
           DsCard(
@@ -578,9 +694,7 @@ class _SecurityScreenState extends State<SecurityScreen>
                       ? SecurityScreen.changePinTitle
                       : SecurityScreen.setPinTitle,
                   subtitle: 'Required to open protected apps',
-                  level: _hasPin
-                      ? SecurityLevel.secured
-                      : SecurityLevel.notSet,
+                  level: _hasPin ? SecurityLevel.secured : SecurityLevel.notSet,
                   statusLabel: _hasPin ? 'Set' : null,
                   onTap: _onPinTap,
                 ),
@@ -654,30 +768,34 @@ class _SecurityScreenState extends State<SecurityScreen>
                   subtitle: 'Detect which app you open so it can be locked',
                   level: _usageAccessGranted
                       ? SecurityLevel.secured
-                      : SecurityLevel.atRisk,
-                  statusLabel: _usageAccessGranted ? 'Granted' : 'Needed',
+                      : _accessibilityEnabled
+                          ? SecurityLevel.notSet
+                          : SecurityLevel.atRisk,
+                  statusLabel:
+                      _usageAccessGranted ? 'Enabled' : 'Alternative',
                   onTap: _onUsageAccessTap,
                 ),
                 const Divider(),
                 SecurityStatusItem(
                   icon: Icons.accessibility_new,
                   title: 'Accessibility service',
-                  subtitle: 'Detection fallback if usage access is off',
+                  subtitle: 'Real-time alternative to usage access',
                   level: _accessibilityEnabled
                       ? SecurityLevel.secured
                       : SecurityLevel.notSet,
-                  statusLabel: _accessibilityEnabled ? 'Enabled' : 'Needed',
+                  statusLabel:
+                      _accessibilityEnabled ? 'Enabled' : 'Alternative',
                   onTap: _onAccessibilityTap,
                 ),
                 const Divider(),
                 SecurityStatusItem(
                   icon: Icons.layers,
-                  title: 'Draw over apps',
-                  subtitle: 'Shows the lock screen over protected apps',
+                  title: 'Background lock shield',
+                  subtitle: 'Blocks protected content during secure hand-off',
                   level: _overlayGranted
                       ? SecurityLevel.secured
                       : SecurityLevel.notSet,
-                  statusLabel: _overlayGranted ? 'Enabled' : 'Needed',
+                  statusLabel: _overlayGranted ? 'Enabled' : 'Required',
                   onTap: _onOverlayTap,
                 ),
               ],

@@ -899,18 +899,23 @@ isolate; when Smart App Lock was backgrounded, Android froze or killed
 the isolate — usage-stats polling stopped, the accessibility
 EventChannel listener detached, and nothing presented a challenge.
 
-Fix: the watcher foreground service (specialUse, per capabilities.md)
-now anchors the process for the whole time the lock engine runs:
+Superseded by the C0 hybrid recovery fix. The watcher foreground service
+(`specialUse`, per capabilities.md) is now an enforcement fallback, not only a
+process anchor:
 
 - Native `WatcherService` (START_STICKY, low-importance notification,
-  API-gated startForeground) + `WatcherChannel` (start/stop/isRunning,
-  POST_NOTIFICATIONS request on API 33+).
+  usage polling and accessibility reports) + `WatcherChannel`
+  (configuration, heartbeat, pending challenge, and health).
 - Manifest: FOREGROUND_SERVICE + FOREGROUND_SERVICE_SPECIAL_USE +
   POST_NOTIFICATIONS, `<service android:foregroundServiceType=
   "specialUse">` with the Play special-use property.
-- `LockChallengeHost` starts the watcher with the trigger and stops it
-  on teardown; `AppContainer.watcher` wires MethodChannel in production
-  and static in memory.
+- `ProtectionBootstrap` persists only enabled state and protected package
+  names; `LockChallengeHost` heartbeats while Dart is healthy and hands back
+  to native recovery on teardown without disabling desired protection.
+- A native opaque overlay shield blocks touches before `MainActivity` is
+  launched and remains until the Flutter challenge is ready.
+- Notification permission is optional; Usage Access and Accessibility are
+  alternative detectors.
 - Diagnostics: logcat tag `SmartAppLock` (native probes + a11y events);
   assert-based Dart prints (monitor/trigger) and kDebugMode prints
   (challenge host) — stripped in release.
@@ -922,9 +927,10 @@ Device verification (logcat):
 Then: open Smart App Lock (watcher notification appears) -> Home ->
 open a protected app -> expect `a11y foreground -> <pkg>` or
 `usage stats foreground -> <pkg>` then `LockTrigger: <pkg> ->
-challenge` and the challenge screen. If the process is force-stopped
-or swiped away, protection resumes the moment Smart App Lock is opened
-again (documented boundary until nothing else can run).
+challenge` and the challenge screen. Force-stop remains an Android platform
+boundary: Android suppresses app components until the user launches the app
+again. Ordinary process death and task removal are covered by native recovery
+and must be device-tested.
 
 ---
 

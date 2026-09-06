@@ -18,7 +18,16 @@ import '../pin_hasher.dart';
 abstract interface class PinCredentialStore {
   /// Persists ONLY the derived [PinHash]. A hash that violates the storage
   /// policy is refused with a [Failure].
-  Future<Result<void>> save(PinHash hash);
+  /// Persists a PIN replacement atomically with the credential metadata
+  /// needed by authentication. Implementations must not expose an
+  /// intermediate state where the new PIN length/primary method is saved
+  /// while the old hash is still active (or vice versa).
+  Future<Result<void>> save(
+    PinHash hash, {
+    int? pinLength,
+    bool makePrimary = false,
+    bool resetAttemptState = false,
+  });
 
   /// Loads the stored hash for verification.
   ///

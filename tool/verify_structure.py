@@ -44,6 +44,12 @@ FAILURES: list[str] = []
 PASSES = 0
 
 
+def read_text(path: str) -> str:
+    """Read repository sources deterministically on every host locale."""
+    with open(path, encoding="utf-8") as source:
+        return source.read()
+
+
 def check(name: str, ok: bool, detail: str = ""):
     global PASSES
     if ok:
@@ -111,7 +117,7 @@ def run():
     n = 0
     for base in ("lib", "test"):
         for path in dart_files(base):
-            src = open(path).read()
+            src = read_text(path)
             for m in re.finditer(r"import\s+'([^']+)'", src):
                 imp = m.group(1)
                 if imp.startswith(("package:", "dart:")):
@@ -126,13 +132,13 @@ def run():
     bad = []
     for base in ("lib", "test"):
         for path in dart_files(base):
-            s = strip_comments_and_strings(open(path).read())
+            s = strip_comments_and_strings(read_text(path))
             if s.count("{") != s.count("}") or s.count("(") != s.count(")"):
                 bad.append(os.path.relpath(path, ROOT))
     check("brace/paren balance in all Dart files", not bad, "; ".join(bad))
 
     # 3. pubspec
-    pub = open(os.path.join(ROOT, "pubspec.yaml")).read()
+    pub = read_text(os.path.join(ROOT, "pubspec.yaml"))
     check("pubspec name", "name: smart_app_lock" in pub)
     vm = re.search(r"version:\s*(\d+)\.(\d+)\.(\d+)\+(\d+)", pub)
     check("pubspec version format", vm is not None)
@@ -148,9 +154,9 @@ def run():
         for mf in ("main", "debug", "profile"):
             p = os.path.join(ROOT, "android/app/src", mf, "AndroidManifest.xml")
             md.parse(p)
-        main_manifest = open(
+        main_manifest = read_text(
             os.path.join(ROOT, "android/app/src/main/AndroidManifest.xml")
-        ).read()
+        )
         check("android manifests parse (main/debug/profile)", True)
         check(
             "main manifest: allowBackup=false",
@@ -172,15 +178,13 @@ def run():
         removed_anywhere = []
         for mf in ("main", "debug", "profile"):
             p = os.path.join(ROOT, "android/app/src", mf, "AndroidManifest.xml")
-            src = open(p).read()
+            src = read_text(p)
             if 'PACKAGE_USAGE_STATS' in src and 'tools:node="remove"' in src:
                 removed_anywhere.append(mf)
         check("no manifest variant removes PACKAGE_USAGE_STATS",
               not removed_anywhere, ", ".join(removed_anywhere))
-        # Phase 5 mobile-QA guard: the watcher foreground service must be
-        # declared with the specialUse type + its Play special-use
-        # property, and the three watcher permissions must be present —
-        # without the watcher the background lock pipeline dies.
+        # C0 lifecycle guard: the watcher foreground service must be declared
+        # with the specialUse type and its Play special-use property.
         watcher_declared = (
             'android.permission.FOREGROUND_SERVICE' in main_manifest
             and 'android.permission.FOREGROUND_SERVICE_SPECIAL_USE'
@@ -192,6 +196,13 @@ def run():
         )
         check("watcher foreground service declared (specialUse + "
               "permissions + special-use property)", watcher_declared)
+        recovery_manifest = (
+            'android.permission.SYSTEM_ALERT_WINDOW' in main_manifest
+            and 'android.permission.RECEIVE_BOOT_COMPLETED' in main_manifest
+            and 'android:name=".ProtectionBootReceiver"' in main_manifest
+            and 'android.intent.action.BOOT_COMPLETED' in main_manifest
+        )
+        check("recovery shield and boot receiver declared", recovery_manifest)
     except Exception as e:  # pragma: no cover
         check("android manifests parse (main/debug/profile)", False, str(e))
 
@@ -210,7 +221,7 @@ def run():
         ROOT, "android/app/src/main/kotlin/com/smartapplock/app/MainActivity.kt"
     )
     if os.path.exists(main_activity_path):
-        activity_src = open(main_activity_path).read()
+        activity_src = read_text(main_activity_path)
         check(
             "MainActivity extends FlutterFragmentActivity (biometric host)",
             "FlutterFragmentActivity" in activity_src,
@@ -237,9 +248,9 @@ def run():
     else:
         check("MainActivity extends FlutterFragmentActivity (biometric host)",
               False, "MainActivity.kt missing")
-    manifest_text = open(
+    manifest_text = read_text(
         os.path.join(ROOT, "android/app/src/main/AndroidManifest.xml")
-    ).read()
+    )
     check(
         "manifest declares USE_BIOMETRIC",
         'android.permission.USE_BIOMETRIC' in manifest_text,
@@ -253,13 +264,13 @@ def run():
     # 6. Version consistency
     if vm:
         vname, vcode = f"{vm.group(1)}.{vm.group(2)}.{vm.group(3)}", vm.group(4)
-        readme = open(os.path.join(ROOT, "README.md")).read()
+        readme = read_text(os.path.join(ROOT, "README.md"))
         check("README version table matches pubspec",
               f"`{vname}` / `{vcode}`" in readme,
               f"expected {vname}/{vcode}")
-        gradle = open(
+        gradle = read_text(
             os.path.join(ROOT, "android/app/build.gradle.kts")
-        ).read()
+        )
         check("gradle consumes flutter.versionCode/Name",
               "flutter.versionCode" in gradle and "flutter.versionName" in gradle)
 
@@ -267,7 +278,7 @@ def run():
     stale = []
     for base in ("lib", "test"):
         for path in dart_files(base):
-            s = open(path).read()
+            s = read_text(path)
             if "ModuleCard" in s or "ModuleInfo" in s:
                 stale.append(os.path.relpath(path, ROOT))
     check("no stale Phase 1B widget references", not stale, "; ".join(stale))
@@ -299,9 +310,9 @@ def run():
           "; ".join(missing_tests))
 
     # 9. Barrel export coverage
-    barrel = open(
+    barrel = read_text(
         os.path.join(ROOT, "lib/design_system/design_system.dart")
-    ).read()
+    )
     uncovered = []
     for sub in ("widgets", "security"):
         for f in sorted(os.listdir(os.path.join(ROOT, "lib/design_system", sub))):
@@ -316,7 +327,7 @@ def run():
         for path in dart_files(base):
             if path.endswith("pin_policy.dart") or path.endswith("pin_hasher.dart"):
                 continue  # these files handle PINs by design
-            s = open(path).read()
+            s = read_text(path)
             for m in re.finditer(r"'(?=\d{4,6}')", s):  # heuristic only
                 pass
     check("PIN handling confined to security module (manual review)", True)
@@ -352,8 +363,8 @@ def run():
         if not os.path.exists(kt_path):
             missing_wiring.append(f"{kt_name}: file missing")
             continue
-        dart_src = open(os.path.join(ROOT, dart_rel)).read()
-        kt_src = open(kt_path).read()
+        dart_src = read_text(os.path.join(ROOT, dart_rel))
+        kt_src = read_text(kt_path)
         invoked = set(
             re.findall(r"invokeMethod<[^>]*>\(\s*'([A-Za-z0-9_]+)'", dart_src)
         )
@@ -372,6 +383,58 @@ def run():
     check("native channel handlers wire every Dart-invoked method",
           not missing_wiring, "; ".join(missing_wiring))
 
+    # 11b. C0 hybrid recovery invariants. These structural checks complement
+    # Dart behavior tests and Android compilation; the final lifecycle proof
+    # remains physical-device QA.
+    recovery_sources = {
+        name: os.path.join(kotlin_dir, name)
+        for name in (
+            "ProtectionStateStore.kt",
+            "ProtectionOverlayController.kt",
+            "ProtectionBootReceiver.kt",
+            "WatcherService.kt",
+        )
+    }
+    missing_recovery = [
+        name for name, path in recovery_sources.items() if not os.path.exists(path)
+    ]
+    check("native recovery sources present", not missing_recovery,
+          "; ".join(missing_recovery))
+    if not missing_recovery:
+        overlay_src = read_text(recovery_sources["ProtectionOverlayController.kt"])
+        watcher_src = read_text(recovery_sources["WatcherService.kt"])
+        boot_src = read_text(recovery_sources["ProtectionBootReceiver.kt"])
+        store_src = read_text(recovery_sources["ProtectionStateStore.kt"])
+        shield_blocks = (
+            "TYPE_APPLICATION_OVERLAY" in overlay_src
+            and overlay_src.count("MATCH_PARENT") >= 2
+            and "FLAG_SECURE" in overlay_src
+            and "FLAG_NOT_TOUCHABLE" not in overlay_src
+        )
+        check("native overlay is opaque, full-screen, touch-blocking, secure",
+              shield_blocks)
+        shield_first = (
+            watcher_src.find("ProtectionOverlayController.show") >= 0
+            and watcher_src.find("OverlayStatusChannel.launchLockChallenge") >= 0
+            and watcher_src.find("ProtectionOverlayController.show")
+            < watcher_src.find("OverlayStatusChannel.launchLockChallenge")
+            and "START_STICKY" in watcher_src
+            and "ProtectionRuntime.isEngineHealthy" in watcher_src
+        )
+        check("watcher recovery shields before activity hand-off", shield_first)
+        boot_is_conditional = (
+            "ProtectionStateStore.isEnabled" in boot_src
+            and "WatcherService.start" in boot_src
+        )
+        check("boot recovery requires persisted enabled state", boot_is_conditional)
+        store_is_minimal = (
+            "protected_packages" in store_src
+            and "pending_challenge" in store_src
+            and not re.search(r"KEY_(PIN|PASSWORD|PATTERN|HASH|SALT)", store_src)
+        )
+        check("native recovery store contains no credential fields",
+              store_is_minimal)
+
     # 12. Built-in Kotlin + toolchain alignment (Flutter 3.47):
     #  * builtInKotlin=true (Kotlin via AGP's built-in support, no KGP
     #    application/pin anywhere);
@@ -381,21 +444,21 @@ def run():
     #  * newDsl=false (the Flutter Gradle Plugin still requires the legacy
     #    AGP DSL surface);
     #  * AGP >= 9.2.1 with the matching Gradle wrapper 9.4.1.
-    gradle_props = open(
+    gradle_props = read_text(
         os.path.join(ROOT, "android/gradle.properties")
-    ).read()
-    app_gradle = open(
+    )
+    app_gradle = read_text(
         os.path.join(ROOT, "android/app/build.gradle.kts")
-    ).read()
-    settings_gradle = open(
+    )
+    settings_gradle = read_text(
         os.path.join(ROOT, "android/settings.gradle.kts")
-    ).read()
-    root_gradle = open(
+    )
+    root_gradle = read_text(
         os.path.join(ROOT, "android/build.gradle.kts")
-    ).read()
-    wrapper_props = open(
+    )
+    wrapper_props = read_text(
         os.path.join(ROOT, "android/gradle/wrapper/gradle-wrapper.properties")
-    ).read()
+    )
     built_in_problems = []
     if "android.builtInKotlin=true" not in gradle_props:
         built_in_problems.append("gradle.properties: android.builtInKotlin=true missing")

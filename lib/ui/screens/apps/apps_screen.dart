@@ -46,11 +46,9 @@ class AppsScreen extends StatefulWidget {
   static const String noMatchMessage = 'Try a different name.';
   static const String clearSearchLabel = 'Clear search';
   static const String noProtectedTitle = 'No protected apps';
-  static const String noProtectedMessage =
-      'Protect apps to see them here.';
+  static const String noProtectedMessage = 'Protect apps to see them here.';
   static const String allProtectedTitle = 'All apps are protected';
-  static const String allProtectedMessage =
-      'Nothing is left unlocked.';
+  static const String allProtectedMessage = 'Nothing is left unlocked.';
   static const String showAllLabel = 'Show all';
   static const String protectedSnack = ' protected ✓';
   static const String unprotectedSnack = ' unprotected';
@@ -130,9 +128,7 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
       return;
     }
     setState(() {
-      _protected = result.valueOrNull!
-          .map((app) => app.packageName)
-          .toSet();
+      _protected = result.valueOrNull!.map((app) => app.packageName).toSet();
       _recomputeVisible();
     });
   }
@@ -210,6 +206,7 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
 
     int changed = 0;
     final Set<String> failed = <String>{};
+    final Set<String> succeeded = <String>{};
     for (final String packageName in _selected) {
       if (_protected.contains(packageName)) {
         continue; // already protected — sensible no-op
@@ -234,9 +231,14 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
       );
       if (result.isSuccess) {
         changed++;
+        succeeded.add(packageName);
       } else {
         failed.add(packageName);
       }
+    }
+
+    if (changed > 0) {
+      await container.protectionBootstrap.synchronize();
     }
 
     if (!mounted) {
@@ -244,6 +246,8 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
     }
     if (failed.isNotEmpty) {
       setState(() {
+        _protected = <String>{..._protected, ...succeeded};
+        _recomputeVisible();
         _bulkBusy = false;
         _selected = failed; // keep only the failed ones selected
       });
@@ -279,6 +283,7 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
 
     int changed = 0;
     final Set<String> failed = <String>{};
+    final Set<String> succeeded = <String>{};
     for (final String packageName in _selected) {
       if (!_protected.contains(packageName)) {
         continue; // already unprotected — sensible no-op
@@ -286,9 +291,14 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
       final result = await container.protectedApps.remove(packageName);
       if (result.isSuccess) {
         changed++;
+        succeeded.add(packageName);
       } else {
         failed.add(packageName);
       }
+    }
+
+    if (changed > 0) {
+      await container.protectionBootstrap.synchronize();
     }
 
     if (!mounted) {
@@ -296,6 +306,8 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
     }
     if (failed.isNotEmpty) {
       setState(() {
+        _protected = _protected.difference(succeeded);
+        _recomputeVisible();
         _bulkBusy = false;
         _selected = failed;
       });
@@ -357,6 +369,10 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text(AppsScreen.updateFailedMessage)),
       );
+      return;
+    }
+    await container.protectionBootstrap.synchronize();
+    if (!mounted) {
       return;
     }
     ScaffoldMessenger.of(context).showSnackBar(
@@ -440,12 +456,15 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
     if (!mounted || generation != _fetchGeneration) {
       return;
     }
-    final Set<String> protected = protectedResult.isSuccess
-        ? protectedResult
-            .valueOrNull!
-            .map((app) => app.packageName)
-            .toSet()
-        : <String>{};
+    if (protectedResult.isFailure) {
+      // Never render an unknown protection set as "nothing protected".
+      // That misrepresents persisted security state and lets subsequent
+      // optimistic actions build on a false baseline.
+      setState(() => _state = _LoadState.error);
+      return;
+    }
+    final Set<String> protected =
+        protectedResult.valueOrNull!.map((app) => app.packageName).toSet();
 
     setState(() {
       _apps = appsResult.valueOrNull!;
@@ -556,8 +575,7 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
               ),
             ),
           Expanded(child: _buildBody()),
-          if (_selectionMode && _state == _LoadState.ready)
-            _buildBulkBar(),
+          if (_selectionMode && _state == _LoadState.ready) _buildBulkBar(),
         ],
       ),
     );
@@ -612,8 +630,7 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
               label: AppsScreen.unprotectBulkLabel,
               variant: DsButtonVariant.outline,
               size: DsButtonSize.small,
-              onPressed:
-                  (nothingSelected || _bulkBusy) ? null : _bulkUnprotect,
+              onPressed: (nothingSelected || _bulkBusy) ? null : _bulkUnprotect,
             ),
             const SizedBox(width: DsSpacing.sm),
             DsButton(
@@ -726,9 +743,8 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
                 key: Key('app_toggle_${app.packageName}'),
                 value: isProtected,
                 activeThumbColor: context.dsColors.primary,
-                onChanged: container == null
-                    ? null
-                    : (_) => _toggleProtection(app),
+                onChanged:
+                    container == null ? null : (_) => _toggleProtection(app),
               ),
             );
           },

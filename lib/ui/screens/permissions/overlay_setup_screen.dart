@@ -31,11 +31,12 @@ class OverlaySetupScreen extends StatefulWidget {
   static const String disclosureTitle =
       'Why Smart App Lock needs Draw over apps';
   static const String disclosureBody =
-      'Smart App Lock shows its lock screen on top of the app you open. '
-      'To do that, Android requires the draw-over-other-apps permission.';
+      'Smart App Lock immediately covers a protected app with an opaque '
+      'shield while the secure PIN, pattern or biometric screen opens. '
+      'Android requires Draw over apps for that fail-closed hand-off.';
   static const String disclosureNever =
-      'It is used only to display the lock screen — never to cover or '
-      'change anything else on your device.';
+      'The shield contains no credential input and is removed when the '
+      'Smart App Lock authentication activity is ready.';
   static const String notUsedElsewhere = 'Used only for the lock screen.';
   static const String openSettingsLabel = 'Open Settings';
   /// Granted-state secondary action: reopen the same system settings

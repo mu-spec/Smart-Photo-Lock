@@ -1237,8 +1237,7 @@ resume (host):
 
 ## 5S. Reboot recovery
 
-Protection restores correctly after reboot, lazily (Android allows no
-boot auto-start; RECEIVE_BOOT_COMPLETED stays rejected):
+Configured protection restores after reboot through the native boot receiver:
 
 ```
 process death / reboot:
@@ -1246,6 +1245,17 @@ process death / reboot:
              (fail-closed: everything locks)
   database: protected list, credentials, lockout timestamp,
             grace setting -> RESTORED on next run
+  native bootstrap: enabled flag + protected package names -> RESTORED
+                    (contains no credential material)
+
+BOOT_COMPLETED:
+  configured == false -> no service start
+  configured == true  -> start native recovery watcher
+
+native recovery:
+  protected foreground -> opaque touch-blocking shield
+                       -> pending challenge package
+                       -> rebuild MainActivity / Flutter authentication
 
 LockTrigger.start():
   monitor.start()            // baseline probe (emits nothing)
@@ -1307,38 +1317,37 @@ no-credential fail-safe
 - The checkpoint holds: every navigation surface is covered by a
   scenario that asserts no-session + no-launch before the credential
   passes.
-- Remaining later-phase work (documented, not defects): the overlay
-  lock window (TYPE_APPLICATION_OVERLAY) and the watcher foreground
-  service.
+- Native lifecycle recovery is now part of the C0/Phase 5 baseline; its
+  OS-specific behavior still requires the physical-device matrix.
 
-## Phase 5 mobile-QA fix — the watcher foreground service
+## C0 lifecycle recovery — hybrid watcher and lock shield
 
-Why the device failed: the whole lock pipeline (usage-stats polling,
-the accessibility event listener, the lock trigger, the challenge host)
-lives in the Flutter isolate. Backgrounding the app lets Android freeze
-or kill that isolate — detection stops and protected apps open with no
-challenge.
+Normal enforcement stays in Dart while a heartbeat proves the isolate is
+healthy. The native layer takes over detection and presentation after isolate
+loss, process recreation, or reboot.
 
 ```
-WatcherChannel (smart_app_lock/watcher)
-  ├─ start  -> POST_NOTIFICATIONS request (API 33+) + startForegroundService
-  ├─ stop   -> stopService
-  └─ isRunning
-WatcherService (native, specialUse)
-  └─ lifecycle anchor only: keeps the process alive so the Dart timers
-     keep polling, the accessibility EventChannel listener stays
-     attached, and presenting the challenge is exempt from Android 10+
-     background-activity-launch restrictions (SYSTEM_ALERT_WINDOW
-     granted).
-LockChallengeHost owns it: start with the trigger, stop on dispose.
+ProtectionBootstrap
+  ├─ sync credential-present + protected package names (no secrets)
+  ├─ start/stop recovery watcher only when desired state changes
+  └─ heartbeat while Dart owns enforcement
+WatcherService (native, specialUse, START_STICKY)
+  ├─ usage polling + accessibility package reports
+  ├─ heartbeat lease decides Dart-authoritative vs native-recovery mode
+  └─ shield first -> persist pending package -> launch MainActivity
+ProtectionBootReceiver
+  └─ starts only when persisted desired protection is enabled
+LockChallengeHost
+  └─ consumes pending challenge and releases the shield only after the
+     Flutter challenge is rendered in a resumed activity
 ```
 
-- Diagnostics (logcat): `SmartAppLock` tag on the native usage-stats
-  probe and accessibility events; Dart-side assert-based prints in
-  ForegroundAppMonitor/LockTrigger (stripped in release) and
-  kDebugMode prints in the challenge host.
-- The in-memory container wires a static watcher so tests assert the
-  host lifecycle without any platform.
+- Notification permission is optional: denial degrades notification
+  visibility but is not treated as watcher startup failure.
+- Usage Access and Accessibility are alternative detectors; overlay is the
+  required enforcement shield.
+- The in-memory container wires a static watcher for deterministic lifecycle,
+  bootstrap, health, and pending-challenge tests.
 
 ## Phase 5 mobile-QA fix #2 — challenge flicker / re-entry
 
