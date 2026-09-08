@@ -59,8 +59,7 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets(
-      'fresh install shows required shield and detector setup',
+  testWidgets('fresh install shows required shield and detector setup',
       (WidgetTester tester) async {
     await pumpSecurity(
       tester,
@@ -71,7 +70,7 @@ void main() {
 
     expect(find.text(SecurityScreen.setupRequiredTitle), findsOneWidget);
     expect(find.text(SecurityScreen.setupRequiredMessage), findsOneWidget);
-    expect(find.textContaining('Choose a detection method'), findsOneWidget);
+    expect(find.textContaining('Accessibility required'), findsOneWidget);
     expect(find.textContaining('Shield required'), findsOneWidget);
     expect(find.text(SecurityScreen.revokedTitle), findsNothing);
     expect(find.text(SecurityScreen.protectionReadyTitle), findsNothing);
@@ -87,7 +86,7 @@ void main() {
     );
 
     expect(find.text(SecurityScreen.setupRequiredTitle), findsOneWidget);
-    expect(find.textContaining('Detection ready'), findsOneWidget);
+    expect(find.textContaining('Accessibility required'), findsOneWidget);
     expect(find.textContaining('Shield required'), findsOneWidget);
     expect(find.text(SecurityScreen.revokedTitle), findsNothing);
   });
@@ -102,7 +101,7 @@ void main() {
     );
 
     expect(find.text(SecurityScreen.setupRequiredTitle), findsOneWidget);
-    expect(find.textContaining('Detection ready'), findsOneWidget);
+    expect(find.textContaining('Early detection ready'), findsOneWidget);
     expect(find.textContaining('Shield required'), findsOneWidget);
     expect(find.text(SecurityScreen.revokedTitle), findsNothing);
   });
@@ -136,7 +135,25 @@ void main() {
     expect(find.text('Capability setup ready'), findsNothing);
   });
 
-  testWidgets('losing one detector remains operational through alternative',
+  testWidgets('configured usage-only protection reports delayed detection',
+      (WidgetTester tester) async {
+    await pumpSecurity(
+      tester,
+      usage: true,
+      accessibility: false,
+      overlay: true,
+      configured: true,
+    );
+
+    expect(
+      find.text('Protection limited by delayed detection'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('cannot guarantee flash-free'), findsOneWidget);
+    expect(find.text('Protection engine active'), findsNothing);
+  });
+
+  testWidgets('losing Usage recovery remains protected by Accessibility',
       (WidgetTester tester) async {
     final AppContainer container = await pumpSecurity(
       tester,
@@ -155,7 +172,8 @@ void main() {
     expect(find.text(SecurityScreen.setupRequiredTitle), findsNothing);
   });
 
-  testWidgets('losing both detectors is revoked and restoring one recovers',
+  testWidgets(
+      'usage-only restoration stays limited until Accessibility returns',
       (WidgetTester tester) async {
     final AppContainer container = await pumpSecurity(
       tester,
@@ -165,13 +183,18 @@ void main() {
     );
     (container.installedAppsService as StaticInstalledAppsService)
         .usageAccessGranted = false;
-    (container.accessibility as StaticAccessibilityLockService).enabled =
-        false;
+    (container.accessibility as StaticAccessibilityLockService).enabled = false;
     await resumeFromSettings(tester);
     expect(find.text(SecurityScreen.revokedTitle), findsOneWidget);
 
     (container.installedAppsService as StaticInstalledAppsService)
         .usageAccessGranted = true;
+    await resumeFromSettings(tester);
+
+    expect(find.text(SecurityScreen.revokedTitle), findsOneWidget);
+    expect(find.text('Capability setup ready'), findsNothing);
+
+    (container.accessibility as StaticAccessibilityLockService).enabled = true;
     await resumeFromSettings(tester);
 
     expect(find.text(SecurityScreen.revokedTitle), findsNothing);

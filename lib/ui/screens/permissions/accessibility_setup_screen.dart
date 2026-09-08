@@ -6,7 +6,7 @@ import '../../../services/accessibility_lock_service.dart';
 
 /// Accessibility setup screen (Phase 4C).
 ///
-/// Accessibility is used for ONE purpose only — the detection fallback —
+/// Accessibility is used for ONE purpose only — early app-window detection —
 /// and this screen says so prominently before asking the user for
 /// anything:
 ///
@@ -32,14 +32,15 @@ class AccessibilitySetupScreen extends StatefulWidget {
   static const String disclosureTitle = 'Why Smart App Lock uses Accessibility';
   static const String disclosureBody =
       'Smart App Lock uses the accessibility service for one purpose '
-      'only: to detect which app you are currently opening, so that '
-      'protected apps can be locked. It is the fallback when usage access '
-      'is unavailable.';
+      'only: to receive the package name when an app window opens, so the '
+      'native protection shield can react before slower usage-history '
+      'polling. This is required for the strongest available protection.';
   static const String disclosureNever =
       'It never reads your screen content, never clicks or types for you, '
       'and never collects or sends any data.';
   static const String notUsedElsewhere = 'Not used for anything else.';
   static const String openSettingsLabel = 'Open Settings';
+
   /// Granted-state secondary action: reopen the same system settings
   /// destination so the user can always manage (or revoke) the service.
   static const String manageSettingsLabel = 'Manage Settings';
@@ -48,7 +49,7 @@ class AccessibilitySetupScreen extends StatefulWidget {
       'Lock in the list, enable it, then come back.';
   static const String enabledTitle = 'Accessibility enabled';
   static const String enabledMessage =
-      'The detection fallback is active.';
+      'Early event-driven protection detection is active.';
   static const String doneLabel = 'Done';
   static const String unavailableTitle = 'Could not check accessibility';
   static const String unavailableMessage =
@@ -63,8 +64,8 @@ class AccessibilitySetupScreen extends StatefulWidget {
 
 enum _ServiceState { checking, enabled, notEnabled, unavailable }
 
-class _AccessibilitySetupScreenState
-    extends State<AccessibilitySetupScreen> with WidgetsBindingObserver {
+class _AccessibilitySetupScreenState extends State<AccessibilitySetupScreen>
+    with WidgetsBindingObserver {
   _ServiceState _state = _ServiceState.checking;
 
   @override
@@ -227,7 +228,8 @@ class _AccessibilitySetupScreenState
                 color: palette.warning.withValues(alpha: 0.4),
               ),
             ),
-            child: Icon(Icons.accessibility_new, size: 40, color: palette.warning),
+            child:
+                Icon(Icons.accessibility_new, size: 40, color: palette.warning),
           ),
         ),
         const SizedBox(height: DsSpacing.xl),

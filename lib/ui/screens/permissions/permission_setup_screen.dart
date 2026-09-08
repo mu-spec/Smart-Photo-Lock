@@ -27,7 +27,7 @@ class _Capability {
 /// Centralized permission setup (Phase 4E).
 ///
 /// Shows every capability the protection architecture requires — Usage
-/// Access, Accessibility (detection fallback), Draw over apps — each with
+/// Access (recovery), Accessibility (early detection), Draw over apps — each with
 /// an **Enabled** or **Action Required** status. Tapping a row opens that
 /// capability's dedicated setup flow (4B/4C/4D); returning re-checks the
 /// capability state. App resume also re-checks (the user may have enabled
@@ -39,7 +39,8 @@ class PermissionSetupScreen extends StatefulWidget {
 
   static const String headerTitle = 'App lock permissions';
   static const String headerSubtitle =
-      'Enable background presentation and at least one detection method.';
+      'Enable the shield and Accessibility for the earliest native lock. '
+      'Usage access is a slower recovery fallback.';
   static const String enabledLabel = 'Enabled';
   static const String actionRequiredLabel = 'Action Required';
   static String readyCount(int n) => '$n of 3 ready';
@@ -55,19 +56,19 @@ class _PermissionSetupScreenState extends State<PermissionSetupScreen>
   static const List<_Capability> _capabilities = <_Capability>[
     _Capability(
       name: 'Usage access',
-      description: 'Detects which app you open so it can be locked',
+      description: 'Recommended recovery fallback; polling may react late',
       route: RouteNames.usageAccess,
       icon: Icons.insights,
       rowKey: 'perm_row_usage',
-      requirement: CapabilityRequirement.alternative,
+      requirement: CapabilityRequirement.recommended,
     ),
     _Capability(
       name: 'Accessibility service',
-      description: 'Detection fallback if usage access is off',
+      description: 'Required for the earliest event-driven native shield',
       route: RouteNames.accessibilitySetup,
       icon: Icons.accessibility_new,
       rowKey: 'perm_row_accessibility',
-      requirement: CapabilityRequirement.alternative,
+      requirement: CapabilityRequirement.required,
     ),
     _Capability(
       name: 'Background lock shield',
@@ -116,10 +117,7 @@ class _PermissionSetupScreenState extends State<PermissionSetupScreen>
     }
   }
 
-  bool get _detectionReady =>
-      _granted['usage']! || _granted['accessibility']!;
-
-  bool get _coreReady => _detectionReady && _granted['overlay']!;
+  bool get _coreReady => _granted['accessibility']! && _granted['overlay']!;
 
   Future<void> _refresh() async {
     final container = AppScope.read(context);
@@ -143,8 +141,8 @@ class _PermissionSetupScreenState extends State<PermissionSetupScreen>
       _granted['accessibility'] =
           accessibility.isSuccess && accessibility.valueOrNull == true;
       _granted['overlay'] = overlay.isSuccess && overlay.valueOrNull == true;
-      _granted['notification'] = health.isFailure ||
-          health.valueOrNull!.notificationPermissionGranted;
+      _granted['notification'] =
+          health.isFailure || health.valueOrNull!.notificationPermissionGranted;
       _probing = false;
     });
   }
@@ -167,9 +165,10 @@ class _PermissionSetupScreenState extends State<PermissionSetupScreen>
         _ => _granted['notification']!,
       };
 
-  String _missingLabel(_Capability capability) => switch (capability.requirement) {
+  String _missingLabel(_Capability capability) =>
+      switch (capability.requirement) {
         CapabilityRequirement.required => 'Required',
-        CapabilityRequirement.alternative => 'Alternative',
+        CapabilityRequirement.recommended => 'Recommended',
         CapabilityRequirement.optional => 'Optional',
         CapabilityRequirement.internal => 'Unavailable',
       };
@@ -203,9 +202,7 @@ class _PermissionSetupScreenState extends State<PermissionSetupScreen>
                   : _coreReady
                       ? PermissionSetupScreen.coreReadyLabel
                       : PermissionSetupScreen.coreMissingLabel,
-              tone: _probing || !_coreReady
-                  ? DsTone.warning
-                  : DsTone.success,
+              tone: _probing || !_coreReady ? DsTone.warning : DsTone.success,
               showDot: !_probing,
             ),
             const SizedBox(height: DsSpacing.xl),
@@ -213,7 +210,8 @@ class _PermissionSetupScreenState extends State<PermissionSetupScreen>
               padding: const EdgeInsets.symmetric(vertical: DsSpacing.xs),
               child: Column(
                 children: <Widget>[
-                  for (final _Capability capability in _capabilities) ...<Widget>[
+                  for (final _Capability capability
+                      in _capabilities) ...<Widget>[
                     SecurityStatusItem(
                       key: Key(capability.rowKey),
                       icon: capability.icon,
@@ -229,8 +227,7 @@ class _PermissionSetupScreenState extends State<PermissionSetupScreen>
                           ? null
                           : () => _openCapability(capability),
                     ),
-                    if (capability != _capabilities.last)
-                      const Divider(),
+                    if (capability != _capabilities.last) const Divider(),
                   ],
                 ],
               ),

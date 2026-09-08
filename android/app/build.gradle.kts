@@ -102,3 +102,9 @@ android {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // JVM-only deterministic tests for the process-local authorization state.
+    // JUnit is test-scoped and already present in the project's offline cache.
+    testImplementation("junit:junit:4.13.2")
+}

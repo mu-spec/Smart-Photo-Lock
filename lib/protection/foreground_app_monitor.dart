@@ -6,10 +6,10 @@ import '../utilities/result.dart';
 
 /// Which detection path reported a foreground transition.
 enum ForegroundDetectionSource {
-  /// The UsageStatsManager backend (primary path, requires Usage Access).
+  /// The UsageStatsManager backend (slower fallback, requires Usage Access).
   usageStats,
 
-  /// The detection-only accessibility service (fallback path).
+  /// The detection-only accessibility service (earliest native path).
   accessibility,
 }
 
@@ -29,18 +29,17 @@ class ForegroundAppChange {
   final DateTime at;
 
   @override
-  String toString() =>
-      'ForegroundAppChange($packageName via ${source.name} at '
+  String toString() => 'ForegroundAppChange($packageName via ${source.name} at '
       '${at.toIso8601String()})';
 }
 
 /// Phase 5A: detects which app is currently in the foreground by merging
 /// the two Play-compliant detection paths:
 ///
-///  * **Usage Access** (primary) — the native UsageStatsManager backend
-///    polled on [pollInterval];
-///  * **Accessibility** (fallback) — window-state events relayed by the
-///    detection-only accessibility service.
+///  * **Accessibility** (early path) — window-state events relayed by the
+///    detection-only accessibility service and enforced natively first;
+///  * **Usage Access** (recovery fallback) — the native UsageStatsManager
+///    history backend polled on [pollInterval].
 ///
 /// Emits a [ForegroundAppChange] only when the foreground package
 /// CHANGES (deduplicated across sources: the same package reported by
@@ -122,8 +121,7 @@ class ForegroundAppMonitor {
   /// (its 60s lookback can return a background/VPN package used before
   /// the actual foreground). After this window (or with no
   /// accessibility data at all) usage stats is the fallback again.
-  static const Duration accessibilityAuthorityWindow =
-      Duration(seconds: 5);
+  static const Duration accessibilityAuthorityWindow = Duration(seconds: 5);
 
   /// Phase 5 mobile-QA fix #4: when the last accessibility window-state
   /// event was received (null = none yet). Refreshed by EVERY
@@ -179,8 +177,7 @@ class ForegroundAppMonitor {
   /// One immediate usage-stats pass (also used on app resume).
   Future<void> probe() async {
     probeCount++;
-    final Result<String?> result =
-        await _installedApps.getForegroundPackage();
+    final Result<String?> result = await _installedApps.getForegroundPackage();
     if (result.isFailure) {
       failureCount++;
       return; // fail-quiet

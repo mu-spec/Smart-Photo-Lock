@@ -8,7 +8,8 @@ void main() {
     bool running = true,
     ProtectionEngineState state = ProtectionEngineState.healthy,
     bool notification = true,
-  }) => ProtectionEngineHealth(
+  }) =>
+      ProtectionEngineHealth(
         protectionConfigured: configured,
         serviceRunning: running,
         engineState: state,
@@ -26,7 +27,7 @@ void main() {
     expect(result.status, ProtectionHealthStatus.inactive);
   });
 
-  test('usage and accessibility are alternatives', () {
+  test('single detector is degraded, never reported fully healthy', () {
     for (final pair in <(bool, bool)>[(true, false), (false, true)]) {
       final result = ProtectionCapabilityEvaluation.evaluate(
         protectionConfigured: true,
@@ -37,6 +38,7 @@ void main() {
       );
       expect(result.detectionAvailable, isTrue);
       expect(result.status, ProtectionHealthStatus.degraded);
+      expect(result.flashResistantDetectionAvailable, pair.$2);
     }
   });
 
@@ -97,6 +99,7 @@ void main() {
     );
     expect(result.status, ProtectionHealthStatus.healthy);
     expect(result.detectionRedundant, isTrue);
+    expect(result.flashResistantDetectionAvailable, isTrue);
   });
 
   test('hidden optional notification reports degraded, not unavailable', () {

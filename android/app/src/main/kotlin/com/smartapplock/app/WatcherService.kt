@@ -5,8 +5,10 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.Handler
@@ -15,18 +17,44 @@ import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 
+enum class ForegroundSource { ACCESSIBILITY, USAGE_EVENTS }
+
 /**
- * Native lifecycle/recovery watcher.
+ * Native foreground detector and fail-closed presentation coordinator.
  *
- * Dart remains authoritative while its heartbeat is healthy. After process
- * death, isolate failure, or reboot, this service polls UsageEvents and also
- * accepts accessibility reports. A protected foreground package is covered
- * by the native shield before MainActivity rebuilds Flutter authentication.
+ * Accessibility reports are enforced synchronously even while Dart is
+ * healthy. UsageEvents remains a slower recovery fallback. Dart owns the
+ * credential challenge and is the only component allowed to grant a native
+ * package authorization after explicit authentication success.
  */
 class WatcherService : Service() {
     private val handler = Handler(Looper.getMainLooper())
-    private var lastLaunchAttemptElapsedMs = 0L
-    private var lastRecoveryPackage: String? = null
+
+    private val screenReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent?) {
+            when (intent?.action) {
+                Intent.ACTION_SCREEN_OFF -> {
+                    ProtectionAccessState.revokeAll()
+                    val foreground = ProtectionAccessState.currentForegroundPackage()
+                    if (foreground != null &&
+                        ProtectionStateStore.isProtected(context, foreground)
+                    ) {
+                        resetRecovery(foreground)
+                        ProtectionStateStore.setPendingChallenge(context, foreground)
+                        ProtectionOverlayController.show(context)
+                    }
+                }
+                Intent.ACTION_SCREEN_ON -> {
+                    val pending = ProtectionStateStore.pendingChallenge(context)
+                    if (pending != null &&
+                        ProtectionStateStore.isProtected(context, pending)
+                    ) {
+                        recoverProtected(context, pending)
+                    }
+                }
+            }
+        }
+    }
 
     private val poll = object : Runnable {
         override fun run() {
@@ -35,7 +63,13 @@ class WatcherService : Service() {
                 return
             }
             InstalledAppsChannel.getForegroundPackage(this@WatcherService)
-                ?.let { handleForegroundPackage(it) }
+                ?.let {
+                    reportForeground(
+                        this@WatcherService,
+                        it,
+                        ForegroundSource.USAGE_EVENTS,
+                    )
+                }
             handler.postDelayed(this, POLL_INTERVAL_MS)
         }
     }
@@ -46,6 +80,16 @@ class WatcherService : Service() {
         super.onCreate()
         running = true
         activeInstance = this
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_OFF)
+            addAction(Intent.ACTION_SCREEN_ON)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(screenReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            registerReceiver(screenReceiver, filter)
+        }
         Log.d(TAG, "WatcherService.onCreate")
     }
 
@@ -60,6 +104,10 @@ class WatcherService : Service() {
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
+        // Keep an invisible, full-size overlay attached. Making it opaque on
+        // the first Accessibility callback is shorter than adding/resizing a
+        // new window after the protected activity is already drawing.
+        ProtectionOverlayController.arm(this)
         handler.removeCallbacks(poll)
         handler.post(poll)
         Log.d(TAG, "Native protection watcher started")
@@ -68,48 +116,18 @@ class WatcherService : Service() {
 
     override fun onDestroy() {
         handler.removeCallbacks(poll)
+        try {
+            unregisterReceiver(screenReceiver)
+        } catch (_: IllegalArgumentException) {
+            // Already unregistered during teardown.
+        }
         activeInstance = null
         running = false
         if (!ProtectionStateStore.isEnabled(this)) {
-            ProtectionOverlayController.hide()
+            ProtectionOverlayController.disarm()
         }
         Log.d(TAG, "WatcherService destroyed")
         super.onDestroy()
-    }
-
-    private fun handleForegroundPackage(packageName: String) {
-        if (packageName == applicationContext.packageName) return
-        if (!ProtectionStateStore.isProtected(this, packageName)) {
-            lastRecoveryPackage = null
-            ProtectionStateStore.clearPendingChallenge(this)
-            if (!ProtectionRuntime.isEngineHealthy()) {
-                ProtectionOverlayController.hide()
-            }
-            return
-        }
-        if (ProtectionRuntime.isEngineHealthy()) return
-
-        val now = SystemClock.elapsedRealtime()
-        val retryDue = packageName != lastRecoveryPackage ||
-            now - lastLaunchAttemptElapsedMs >= RECOVERY_RETRY_MS
-        if (!retryDue) return
-        lastRecoveryPackage = packageName
-        lastLaunchAttemptElapsedMs = now
-        ProtectionStateStore.setPendingChallenge(this, packageName)
-
-        val shielded = ProtectionOverlayController.show(this)
-        val launched = OverlayStatusChannel.launchLockChallenge(this)
-        when {
-            !shielded -> ProtectionStateStore.setLastError(
-                this,
-                "Overlay permission is unavailable; lock presentation is unavailable.",
-            )
-            !launched -> ProtectionStateStore.setLastError(
-                this,
-                "Android blocked the challenge activity; recovery shield remains active.",
-            )
-            else -> ProtectionStateStore.setLastError(this, null)
-        }
     }
 
     private fun buildNotification(): Notification {
@@ -160,12 +178,16 @@ class WatcherService : Service() {
         private const val TAG = "SmartAppLockWatcher"
         private const val POLL_INTERVAL_MS = 1_000L
         private const val RECOVERY_RETRY_MS = 3_000L
+        private const val ACCESSIBILITY_AUTHORITY_MS = 5_000L
         const val CHANNEL_ID = "smart_app_lock_watcher"
         const val NOTIFICATION_ID = 7
 
         @Volatile var running = false
             private set
         @Volatile private var activeInstance: WatcherService? = null
+        @Volatile private var lastAccessibilityElapsedMs = 0L
+        @Volatile private var lastLaunchAttemptElapsedMs = 0L
+        @Volatile private var lastRecoveryPackage: String? = null
 
         fun start(context: Context): Boolean = try {
             val intent = Intent(context, WatcherService::class.java)
@@ -182,7 +204,8 @@ class WatcherService : Service() {
         }
 
         fun stop(context: Context): Boolean = try {
-            ProtectionOverlayController.hide()
+            ProtectionAccessState.revokeAll()
+            ProtectionOverlayController.disarm()
             context.stopService(Intent(context, WatcherService::class.java))
             true
         } catch (e: Exception) {
@@ -202,34 +225,109 @@ class WatcherService : Service() {
             activeInstance?.refreshNotification()
         }
 
-        fun reportForeground(context: Context, packageName: String) {
-            val instance = activeInstance
-            if (instance != null) {
-                instance.handleForegroundPackage(packageName)
-            } else if (ProtectionStateStore.isEnabled(context)) {
-                // Accessibility may be the only enabled detector. Do not drop
-                // its first event while the sticky service is being recreated:
-                // cover a protected app synchronously, persist the hand-off,
-                // and then start the watcher for retries and health reporting.
-                if (ProtectionStateStore.isProtected(context, packageName) &&
-                    !ProtectionRuntime.isEngineHealthy()
-                ) {
-                    ProtectionStateStore.setPendingChallenge(context, packageName)
-                    val shielded = ProtectionOverlayController.show(context)
-                    val launched = OverlayStatusChannel.launchLockChallenge(context)
-                    when {
-                        !shielded -> ProtectionStateStore.setLastError(
-                            context,
-                            "Overlay permission is unavailable; lock presentation is unavailable.",
-                        )
-                        !launched -> ProtectionStateStore.setLastError(
-                            context,
-                            "Android blocked the challenge activity; recovery shield remains active.",
-                        )
-                        else -> ProtectionStateStore.setLastError(context, null)
-                    }
+        fun reportForeground(
+            context: Context,
+            packageName: String,
+            source: ForegroundSource = ForegroundSource.ACCESSIBILITY,
+        ) {
+            if (!ProtectionStateStore.isEnabled(context) ||
+                packageName == context.packageName
+            ) {
+                return
+            }
+            val now = SystemClock.elapsedRealtime()
+            if (source == ForegroundSource.ACCESSIBILITY) {
+                lastAccessibilityElapsedMs = now
+            } else if (lastAccessibilityElapsedMs > 0L &&
+                now - lastAccessibilityElapsedMs < ACCESSIBILITY_AUTHORITY_MS
+            ) {
+                // A UsageEvents result is historical. It must never override
+                // or hide a shield raised by a fresh Accessibility event.
+                return
+            }
+
+            val protected = ProtectionStateStore.isProtected(context, packageName)
+            val decision = ProtectionAccessState.observeForeground(
+                packageName = packageName,
+                protected = protected,
+                nowElapsedMs = now,
+            )
+            if (!protected || decision == ProtectionAccessState.Decision.ALLOW) {
+                resetRecovery()
+                // Pending is also the overlay's fail-closed latch. Only the
+                // rendered challenge hand-off or explicit authorization may
+                // clear it.
+                if (ProtectionStateStore.pendingChallenge(context) == null) {
+                    ProtectionOverlayController.hide()
                 }
-                start(context)
+            } else {
+                // Do not trust a healthy heartbeat for presentation timing:
+                // a healthy isolate can still be backgrounded behind the app
+                // Android is currently drawing.
+                recoverProtected(context, packageName)
+            }
+
+            if (!isRunning()) start(context)
+        }
+
+        fun setGracePeriod(milliseconds: Long) {
+            ProtectionAccessState.setGracePeriod(milliseconds)
+        }
+
+        fun authorizePackage(
+            context: Context,
+            packageName: String,
+            sessionWindowMs: Long,
+        ): Boolean {
+            if (!ProtectionStateStore.isProtected(context, packageName)) return false
+            val pending = ProtectionStateStore.pendingChallenge(context)
+            if (pending != null && pending != packageName) {
+                // A newer protected foreground replaced this challenge. An
+                // older route completing successfully must not authorize or
+                // launch the package that is no longer being challenged.
+                return false
+            }
+            ProtectionAccessState.authorize(packageName, sessionWindowMs)
+            ProtectionStateStore.clearPendingChallenge(context, packageName)
+            resetRecovery(packageName)
+            return true
+        }
+
+        fun revokeAllAuthorizations() {
+            ProtectionAccessState.revokeAll()
+        }
+
+        @Synchronized
+        private fun recoverProtected(context: Context, packageName: String) {
+            val now = SystemClock.elapsedRealtime()
+            val retryDue = packageName != lastRecoveryPackage ||
+                now - lastLaunchAttemptElapsedMs >= RECOVERY_RETRY_MS
+            if (!retryDue) return
+            lastRecoveryPackage = packageName
+            lastLaunchAttemptElapsedMs = now
+            ProtectionStateStore.setPendingChallenge(context, packageName)
+
+            // Security-critical order: shield first, activity hand-off second.
+            val shielded = ProtectionOverlayController.show(context)
+            val launched = shielded && OverlayStatusChannel.launchLockChallenge(context)
+            when {
+                !shielded -> ProtectionStateStore.setLastError(
+                    context,
+                    "Overlay permission is unavailable; lock presentation is unavailable.",
+                )
+                !launched -> ProtectionStateStore.setLastError(
+                    context,
+                    "Android blocked the challenge activity; recovery shield remains active.",
+                )
+                else -> ProtectionStateStore.setLastError(context, null)
+            }
+        }
+
+        @Synchronized
+        private fun resetRecovery(packageName: String? = null) {
+            if (packageName == null || packageName == lastRecoveryPackage) {
+                lastRecoveryPackage = null
+                lastLaunchAttemptElapsedMs = 0L
             }
         }
     }

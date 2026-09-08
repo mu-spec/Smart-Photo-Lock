@@ -13,6 +13,10 @@ object ProtectionStateStore {
 
     fun configure(context: Context, enabled: Boolean, packages: Set<String>) {
         val normalized = packages.filter { it.isNotBlank() }.toSet()
+        ProtectionAccessState.retainProtectedPackages(normalized)
+        if (!enabled || normalized.isEmpty()) {
+            ProtectionAccessState.revokeAll()
+        }
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putBoolean(KEY_ENABLED, enabled && normalized.isNotEmpty())
             .putStringSet(KEY_PACKAGES, normalized)
@@ -36,15 +40,27 @@ object ProtectionStateStore {
     }
 
     fun takePendingChallenge(context: Context): String? {
-        val preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val value = preferences.getString(KEY_PENDING, null)
-        preferences.edit().remove(KEY_PENDING).apply()
-        return value
+        // The pending package is also the native shield's fail-closed latch.
+        // Reading it during Flutter reconstruction must not clear it. The
+        // latch is cleared only after a resumed, rendered challenge confirms
+        // the hand-off through markChallengeReady, or after authentication
+        // explicitly authorizes the same package.
+        return pendingChallenge(context)
     }
 
-    fun clearPendingChallenge(context: Context) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .remove(KEY_PENDING).apply()
+    fun pendingChallenge(context: Context): String? =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(KEY_PENDING, null)
+
+    fun clearPendingChallenge(context: Context, expectedPackage: String? = null): Boolean {
+        val preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        if (expectedPackage != null &&
+            preferences.getString(KEY_PENDING, null) != expectedPackage
+        ) {
+            return false
+        }
+        preferences.edit().remove(KEY_PENDING).apply()
+        return true
     }
 
     fun setLastError(context: Context, message: String?) {

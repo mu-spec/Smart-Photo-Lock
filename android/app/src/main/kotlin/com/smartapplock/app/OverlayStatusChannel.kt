@@ -55,11 +55,20 @@ object OverlayStatusChannel {
                 }
                 "showLockChallenge" -> {
                     try {
+                        val packageName = call.argument<String>("packageName")
+                        if (!packageName.isNullOrBlank()) {
+                            ProtectionStateStore.setPendingChallenge(
+                                activity,
+                                packageName,
+                            )
+                        }
                         // Cover first, then launch: a blocked/delayed
                         // background activity start can never expose the
                         // protected app as usable content.
                         val shielded = ProtectionOverlayController.show(activity)
-                        val launched = shielded && launchLockChallenge(activity)
+                        val launched = shielded &&
+                            (ProtectionRuntime.activityResumed ||
+                                launchLockChallenge(activity))
                         result.success(shielded && launched)
                     } catch (e: Exception) {
                         result.error(
@@ -74,11 +83,24 @@ object OverlayStatusChannel {
                 }
                 "markChallengeReady" -> {
                     // Never drop the hand-off shield for an off-screen
-                    // Flutter route when Android blocked the activity start.
-                    result.success(
-                        ProtectionRuntime.activityResumed &&
-                            ProtectionOverlayController.hide(),
-                    )
+                    // Flutter route, or clear a newer package's latch with a
+                    // stale post-frame callback from an older challenge.
+                    val packageName = call.argument<String>("packageName")
+                    if (ProtectionRuntime.activityResumed &&
+                        !packageName.isNullOrBlank()
+                    ) {
+                        // Clear only this package. If a newer package replaced
+                        // the latch, its pending recovery survives; the
+                        // already-rendered Flutter challenge is nevertheless
+                        // a safe opaque hand-off surface for the shield.
+                        ProtectionStateStore.clearPendingChallenge(
+                            activity,
+                            packageName,
+                        )
+                        result.success(ProtectionOverlayController.hide())
+                    } else {
+                        result.success(false)
+                    }
                 }
                 "setSecureWindow" -> {
                     // Phase 5O (recents hardening): FLAG_SECURE keeps the

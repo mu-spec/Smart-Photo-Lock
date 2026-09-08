@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import '../services/screen_state_service.dart';
+import '../services/watcher_service.dart';
 import '../utilities/result.dart';
 import 'access_controller.dart';
 import 'foreground_app_monitor.dart';
@@ -13,8 +14,7 @@ class LockRequired {
   final DateTime at;
 
   @override
-  String toString() =>
-      'LockRequired($packageName at ${at.toIso8601String()})';
+  String toString() => 'LockRequired($packageName at ${at.toIso8601String()})';
 }
 
 /// Phase 5D/5E/5J: the lock trigger.
@@ -45,15 +45,18 @@ class LockTrigger {
     required ForegroundAppMonitor monitor,
     required AccessController controller,
     required ScreenStateService screenState,
+    required WatcherService watcher,
     DateTime Function()? now,
   })  : _monitor = monitor,
         _controller = controller,
         _screenState = screenState,
+        _watcher = watcher,
         _now = now ?? DateTime.now;
 
   final ForegroundAppMonitor _monitor;
   final AccessController _controller;
   final ScreenStateService _screenState;
+  final WatcherService _watcher;
   final DateTime Function() _now;
 
   final StreamController<LockRequired> _lockRequired =
@@ -104,9 +107,8 @@ class LockTrigger {
     // restart with a valid session stays quiet. The baseline runs on
     // the SAME ordered queue as transitions, so a transition arriving
     // during startup can never interleave with (or duplicate) it.
-    _processing = _processing
-        .then((_) => _enforceBaseline())
-        .catchError((Object _) {});
+    _processing =
+        _processing.then((_) => _enforceBaseline()).catchError((Object _) {});
     await _processing;
   }
 
@@ -260,6 +262,7 @@ class LockTrigger {
       // resume, so returning to a protected app challenges immediately.
       _screenOffPending = true;
       await _controller.revokeAllAccess();
+      await _watcher.revokeAllAuthorizations();
       // Phase 5 mobile-QA diagnostics #1 (temporary): screen-off.
       assert(() {
         // ignore: avoid_print

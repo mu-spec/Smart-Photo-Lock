@@ -101,7 +101,6 @@ class _SecurityScreenState extends State<SecurityScreen>
   /// capability has been observed granted at least once). Combined with
   /// the LIVE state this distinguishes first-install setup (never
   /// granted) from revocation (previously granted, now missing).
-  bool _usageAccessEverGranted = false;
   bool _accessibilityEverGranted = false;
   bool _overlayEverGranted = false;
 
@@ -132,20 +131,16 @@ class _SecurityScreenState extends State<SecurityScreen>
   }
 
   /// A capability that was granted before and is now missing.
-  bool get _detectionReady =>
-      _usageAccessGranted || _accessibilityEnabled;
-
   bool get _hasRevokedCapability =>
       (!_overlayGranted && _overlayEverGranted) ||
-      (!_detectionReady &&
-          (_usageAccessEverGranted || _accessibilityEverGranted));
+      (!_accessibilityEnabled && _accessibilityEverGranted);
 
   /// At least one capability has NEVER been granted (fresh install or
   /// incomplete first-time setup).
-  bool get _setupIncomplete => !_overlayGranted || !_detectionReady;
+  bool get _setupIncomplete => !_overlayGranted || !_accessibilityEnabled;
 
   /// The required shield and at least one detector are currently available.
-  bool get _protectionReady => _detectionReady && _overlayGranted;
+  bool get _protectionReady => _accessibilityEnabled && _overlayGranted;
 
   ProtectionCapabilityEvaluation get _protectionEvaluation =>
       ProtectionCapabilityEvaluation.evaluate(
@@ -233,11 +228,8 @@ class _SecurityScreenState extends State<SecurityScreen>
     // recorded (idempotent) and counted as ever-granted; a missing
     // capability reads its persisted history to classify setup vs
     // revocation.
-    bool usageEver = usageAccessGranted;
     if (usageAccessGranted) {
       await preferences.markCapabilityEverGranted('usageAccess');
-    } else {
-      usageEver = await preferences.wasCapabilityEverGranted('usageAccess');
     }
     bool accessibilityEver = accessibilityEnabled;
     if (accessibilityEnabled) {
@@ -285,7 +277,6 @@ class _SecurityScreenState extends State<SecurityScreen>
       _usageAccessGranted = usageAccessGranted;
       _accessibilityEnabled = accessibilityEnabled;
       _overlayGranted = overlayGranted;
-      _usageAccessEverGranted = usageEver;
       _accessibilityEverGranted = accessibilityEver;
       _overlayEverGranted = overlayEver;
       _engineHealth = engineHealth;
@@ -469,7 +460,25 @@ class _SecurityScreenState extends State<SecurityScreen>
     }
     // Runtime and persisted policy advance together. A failed disk write
     // must not silently activate a grace period that disappears on restart.
-    container.accessController.setGracePeriod(Duration(seconds: seconds));
+    final Duration applied = Duration(seconds: seconds);
+    container.accessController.setGracePeriod(applied);
+    final nativeResult = await container.watcher.setGracePeriod(applied);
+    if (!mounted) {
+      return;
+    }
+    if (nativeResult.isFailure) {
+      // Native early enforcement and Dart policy must never silently differ.
+      final Duration previous = Duration(seconds: previousSeconds);
+      container.accessController.setGracePeriod(previous);
+      await container.lockSettings.setGracePeriod(previous);
+      if (!mounted) {
+        return;
+      }
+      setState(() => _graceSeconds = previousSeconds);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text(SecurityScreen.couldNotSaveMessage)),
+      );
+    }
   }
 
   // -- biometric (Phase 2J) -------------------------------------------------
@@ -618,7 +627,7 @@ class _SecurityScreenState extends State<SecurityScreen>
               actionLabel: 'Set up',
               onAction: _onPermissionSetupTap,
               footer: Text(
-                '${_detectionReady ? 'Detection ready' : 'Choose a detection method'} · '
+                '${_accessibilityEnabled ? 'Early detection ready' : 'Accessibility required'} · '
                 '${_overlayGranted ? 'Shield ready' : 'Shield required'}',
                 style: theme.textTheme.labelLarge?.copyWith(
                   fontWeight: FontWeight.w700,
@@ -642,24 +651,29 @@ class _SecurityScreenState extends State<SecurityScreen>
             const SizedBox(height: DsSpacing.md),
           ],
           if (_engineHealth.protectionConfigured &&
-              (_protectionEvaluation.status ==
-                      ProtectionHealthStatus.healthy ||
+              (_protectionEvaluation.status == ProtectionHealthStatus.healthy ||
                   _protectionEvaluation.status ==
                       ProtectionHealthStatus.degraded)) ...<Widget>[
             SecurityStatusBanner(
-              level: _protectionEvaluation.status ==
-                      ProtectionHealthStatus.healthy
-                  ? SecurityLevel.secured
-                  : SecurityLevel.atRisk,
-              title: _protectionEvaluation.status ==
-                      ProtectionHealthStatus.healthy
-                  ? 'Protection engine active'
-                  : 'Protection active with reduced resilience',
+              level:
+                  _protectionEvaluation.status == ProtectionHealthStatus.healthy
+                      ? SecurityLevel.secured
+                      : SecurityLevel.atRisk,
+              title:
+                  _protectionEvaluation.status == ProtectionHealthStatus.healthy
+                      ? 'Protection engine active'
+                      : _accessibilityEnabled
+                          ? 'Protection active with reduced resilience'
+                          : 'Protection limited by delayed detection',
               message: _protectionEvaluation.status ==
                       ProtectionHealthStatus.healthy
                   ? 'Native recovery and both detection paths are available.'
-                  : 'Core enforcement is active, but only one detection path '
-                      'or no visible notification is available.',
+                  : !_accessibilityEnabled
+                      ? 'Usage access polls after foreground transitions and '
+                          'cannot guarantee flash-free presentation. Enable '
+                          'Accessibility for the earliest native shield.'
+                      : 'Early enforcement is active, but usage fallback or '
+                          'notification visibility is unavailable.',
               actionLabel: _protectionEvaluation.status ==
                       ProtectionHealthStatus.degraded
                   ? 'Review'
@@ -765,26 +779,22 @@ class _SecurityScreenState extends State<SecurityScreen>
                 SecurityStatusItem(
                   icon: Icons.insights,
                   title: 'Usage access',
-                  subtitle: 'Detect which app you open so it can be locked',
+                  subtitle: 'Slower polling fallback for recovery',
                   level: _usageAccessGranted
                       ? SecurityLevel.secured
-                      : _accessibilityEnabled
-                          ? SecurityLevel.notSet
-                          : SecurityLevel.atRisk,
-                  statusLabel:
-                      _usageAccessGranted ? 'Enabled' : 'Alternative',
+                      : SecurityLevel.notSet,
+                  statusLabel: _usageAccessGranted ? 'Enabled' : 'Recommended',
                   onTap: _onUsageAccessTap,
                 ),
                 const Divider(),
                 SecurityStatusItem(
                   icon: Icons.accessibility_new,
                   title: 'Accessibility service',
-                  subtitle: 'Real-time alternative to usage access',
+                  subtitle: 'Earliest event-driven native detection',
                   level: _accessibilityEnabled
                       ? SecurityLevel.secured
-                      : SecurityLevel.notSet,
-                  statusLabel:
-                      _accessibilityEnabled ? 'Enabled' : 'Alternative',
+                      : SecurityLevel.atRisk,
+                  statusLabel: _accessibilityEnabled ? 'Enabled' : 'Required',
                   onTap: _onAccessibilityTap,
                 ),
                 const Divider(),

@@ -367,7 +367,7 @@ void main() {
   // -------------------------------------------------------------------
   // Usage access row (Phase 4B)
   // -------------------------------------------------------------------
-  testWidgets('usage access row reports Alternative when the grant is missing',
+  testWidgets('usage access row reports Recommended when the grant is missing',
       (WidgetTester tester) async {
     final AppContainer container =
         AppContainer.inMemory(usageAccessGranted: false);
@@ -377,7 +377,7 @@ void main() {
     expect(
       find.descendant(
         of: find.widgetWithText(SecurityStatusItem, 'Usage access'),
-        matching: find.text('Alternative'),
+        matching: find.text('Recommended'),
       ),
       findsOneWidget,
     );
@@ -407,7 +407,7 @@ void main() {
     expect(
       find.descendant(
         of: find.widgetWithText(SecurityStatusItem, 'Usage access'),
-        matching: find.text('Alternative'),
+        matching: find.text('Recommended'),
       ),
       findsNothing,
     );
@@ -432,7 +432,7 @@ void main() {
   // -------------------------------------------------------------------
   // Accessibility row (Phase 4C)
   // -------------------------------------------------------------------
-  testWidgets('accessibility row reports Alternative when the service is off',
+  testWidgets('accessibility row reports Required when the service is off',
       (WidgetTester tester) async {
     final AppContainer container =
         AppContainer.inMemory(accessibilityEnabled: false);
@@ -442,7 +442,7 @@ void main() {
     expect(
       find.descendant(
         of: find.widgetWithText(SecurityStatusItem, 'Accessibility service'),
-        matching: find.text('Alternative'),
+        matching: find.text('Required'),
       ),
       findsOneWidget,
     );

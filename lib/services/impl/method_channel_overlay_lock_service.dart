@@ -88,10 +88,12 @@ class MethodChannelOverlayLockService implements OverlayLockService {
   }
 
   @override
-  Future<Result<void>> markChallengeReady() async {
+  Future<Result<void>> markChallengeReady(String packageName) async {
     try {
-      final bool? ready =
-          await _channel.invokeMethod<bool>('markChallengeReady');
+      final bool? ready = await _channel.invokeMethod<bool>(
+        'markChallengeReady',
+        <String, dynamic>{'packageName': packageName},
+      );
       if (ready == true) {
         return Result.success(null);
       }

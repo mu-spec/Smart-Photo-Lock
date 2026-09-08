@@ -25,6 +25,7 @@ class StaticOverlayLockService implements OverlayLockService {
   int showLockChallengeCalls = 0;
   int hideLockChallengeCalls = 0;
   int markChallengeReadyCalls = 0;
+  String? lastReadyPackage;
 
   /// The most recently challenged package, or null.
   String? lastLockPackage;
@@ -59,8 +60,9 @@ class StaticOverlayLockService implements OverlayLockService {
   }
 
   @override
-  Future<Result<void>> markChallengeReady() async {
+  Future<Result<void>> markChallengeReady(String packageName) async {
     markChallengeReadyCalls++;
+    lastReadyPackage = packageName;
     return Result.success(null);
   }
 

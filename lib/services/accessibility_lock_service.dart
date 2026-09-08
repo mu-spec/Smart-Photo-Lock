@@ -1,10 +1,9 @@
 import '../utilities/result.dart';
 
-/// Bridge to the Android Accessibility API — the launch-detection fallback.
+/// Bridge to Android's earliest available launch-detection signal.
 ///
 /// Implemented in the lock phases: an `AccessibilityService` that reports
-/// foreground package changes, used when usage-stats polling is disabled or
-/// throttled by the OS.
+/// foreground package changes before the slower usage-history fallback.
 abstract interface class AccessibilityLockService {
   /// True when the user has enabled our accessibility service.
   Future<Result<bool>> isServiceEnabled();

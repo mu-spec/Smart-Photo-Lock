@@ -11,13 +11,22 @@ import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.TextView
 
-/** Opaque touch-blocking shield used until Flutter authentication is ready. */
+/**
+ * Opaque touch/key-blocking shield used until Flutter authentication is ready.
+ *
+ * While protection is configured, a full-size, invisible, non-interactive
+ * overlay window stays attached. A protected Accessibility event can then
+ * make that already-owned and already-sized window opaque and touch-blocking
+ * instead of adding/resizing a window after the protected activity draws.
+ */
 object ProtectionOverlayController {
     private var windowManager: WindowManager? = null
     private var shield: View? = null
+    private var layoutParams: WindowManager.LayoutParams? = null
+    private var showing = false
 
     @Synchronized
-    fun show(context: Context): Boolean {
+    fun arm(context: Context): Boolean {
         if (!Settings.canDrawOverlays(context)) return false
         if (shield != null) return true
         return try {
@@ -52,40 +61,105 @@ object ProtectionOverlayController {
                 WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.MATCH_PARENT,
                 type,
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
-                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_SECURE,
+                standbyFlags(),
                 PixelFormat.OPAQUE,
             ).apply {
                 gravity = Gravity.TOP or Gravity.START
+                alpha = 0f
                 title = "Smart App Lock protection shield"
             }
+            root.visibility = View.INVISIBLE
             manager.addView(root, params)
             windowManager = manager
             shield = root
+            layoutParams = params
+            showing = false
             true
         } catch (_: Exception) {
             shield = null
             windowManager = null
+            layoutParams = null
+            showing = false
             false
         }
     }
 
     @Synchronized
-    fun hide(): Boolean {
-        val active = shield ?: return true
+    fun show(context: Context): Boolean {
+        if (!arm(context)) return false
+        if (showing) return true
+        val active = shield ?: return false
+        val manager = windowManager ?: return false
+        val params = layoutParams ?: return false
         return try {
-            windowManager?.removeViewImmediate(active)
-            shield = null
-            windowManager = null
+            params.width = WindowManager.LayoutParams.MATCH_PARENT
+            params.height = WindowManager.LayoutParams.MATCH_PARENT
+            params.flags = shieldFlags()
+            params.alpha = 1f
+            active.visibility = View.VISIBLE
+            manager.updateViewLayout(active, params)
+            showing = true
             true
         } catch (_: Exception) {
-            shield = null
-            windowManager = null
+            disarm()
             false
         }
     }
 
-    fun isShowing(): Boolean = shield != null
+    /** Makes the shield inert but retains the full-size pre-armed window. */
+    @Synchronized
+    fun hide(): Boolean {
+        val active = shield ?: return true
+        val manager = windowManager ?: return false
+        val params = layoutParams ?: return false
+        return try {
+            params.width = WindowManager.LayoutParams.MATCH_PARENT
+            params.height = WindowManager.LayoutParams.MATCH_PARENT
+            params.flags = standbyFlags()
+            params.alpha = 0f
+            active.visibility = View.INVISIBLE
+            manager.updateViewLayout(active, params)
+            showing = false
+            true
+        } catch (_: Exception) {
+            disarm()
+            false
+        }
+    }
+
+    /** Removes the window entirely when protection is disabled. */
+    @Synchronized
+    fun disarm(): Boolean {
+        val active = shield ?: return true
+        return try {
+            windowManager?.removeViewImmediate(active)
+            clearState()
+            true
+        } catch (_: Exception) {
+            clearState()
+            false
+        }
+    }
+
+    @Synchronized
+    fun isShowing(): Boolean = showing
+
+    private fun standbyFlags(): Int =
+        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+            WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+            WindowManager.LayoutParams.FLAG_SECURE
+
+    private fun shieldFlags(): Int =
+        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+            WindowManager.LayoutParams.FLAG_SECURE
+
+    private fun clearState() {
+        shield = null
+        windowManager = null
+        layoutParams = null
+        showing = false
+    }
 }

@@ -7,8 +7,7 @@ import '../watcher_service.dart';
 /// channel (Phase 5 mobile-QA fix).
 class MethodChannelWatcherService implements WatcherService {
   MethodChannelWatcherService({MethodChannel? channel})
-      : _channel = channel ??
-            const MethodChannel('smart_app_lock/watcher');
+      : _channel = channel ?? const MethodChannel('smart_app_lock/watcher');
 
   final MethodChannel _channel;
 
@@ -52,13 +51,35 @@ class MethodChannelWatcherService implements WatcherService {
   Future<Result<void>> configureProtection({
     required bool enabled,
     required Set<String> protectedPackages,
-  }) => _invokeVoid('configureProtection', <String, dynamic>{
+  }) =>
+      _invokeVoid('configureProtection', <String, dynamic>{
         'enabled': enabled,
         'protectedPackages': protectedPackages.toList(growable: false),
       });
 
   @override
   Future<Result<void>> heartbeat() => _invokeVoid('heartbeat');
+
+  @override
+  Future<Result<void>> setGracePeriod(Duration period) =>
+      _invokeVoid('setGracePeriod', <String, dynamic>{
+        'milliseconds': period.isNegative ? 0 : period.inMilliseconds,
+      });
+
+  @override
+  Future<Result<void>> authorizePackage(
+    String packageName, {
+    Duration sessionWindow = const Duration(minutes: 2),
+  }) =>
+      _invokeVoid('authorizePackage', <String, dynamic>{
+        'packageName': packageName,
+        'sessionWindowMilliseconds':
+            sessionWindow.isNegative ? 0 : sessionWindow.inMilliseconds,
+      });
+
+  @override
+  Future<Result<void>> revokeAllAuthorizations() =>
+      _invokeVoid('revokeAllAuthorizations');
 
   @override
   Future<Result<void>> markEngineUnavailable() =>

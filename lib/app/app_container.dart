@@ -167,6 +167,7 @@ class AppContainer {
       monitor: foregroundMonitor,
       controller: accessController,
       screenState: screenStateService,
+      watcher: watcher,
     );
   }
 

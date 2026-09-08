@@ -99,8 +99,8 @@ void main() {
       final AppContainer container = await pumpApp(tester);
       await openSecurity(tester);
 
-      expectSecurityLabel(tester, 'Usage access', 'Alternative');
-      expectSecurityLabel(tester, 'Accessibility service', 'Alternative');
+      expectSecurityLabel(tester, 'Usage access', 'Recommended');
+      expectSecurityLabel(tester, 'Accessibility service', 'Required');
       expectSecurityLabel(tester, 'Background lock shield', 'Required');
       expect(find.text(SecurityScreen.revokedTitle), findsNothing);
 
@@ -117,9 +117,8 @@ void main() {
         find.text(PermissionSetupScreen.coreMissingLabel),
         findsOneWidget,
       );
-      expectPermRowLabel(tester, 'perm_row_usage', 'Alternative');
-      expectPermRowLabel(
-          tester, 'perm_row_accessibility', 'Alternative');
+      expectPermRowLabel(tester, 'perm_row_usage', 'Recommended');
+      expectPermRowLabel(tester, 'perm_row_accessibility', 'Required');
       expectPermRowLabel(tester, 'perm_row_overlay', 'Required');
 
       await container.capabilityMonitor.dispose();
@@ -148,7 +147,7 @@ void main() {
 
       await tester.pageBack();
       await tester.pumpAndSettle();
-      expectPermRowLabel(tester, 'perm_row_usage', 'Alternative');
+      expectPermRowLabel(tester, 'perm_row_usage', 'Recommended');
       expect(
         find.text(PermissionSetupScreen.coreMissingLabel),
         findsOneWidget,
@@ -178,8 +177,7 @@ void main() {
         findsOneWidget,
       );
 
-      await tester
-          .tap(find.byKey(const Key('accessibility_open_settings')));
+      await tester.tap(find.byKey(const Key('accessibility_open_settings')));
       await tester.pumpAndSettle();
       final StaticAccessibilityLockService service =
           container.accessibility as StaticAccessibilityLockService;
@@ -193,8 +191,7 @@ void main() {
       );
       await tester.pageBack();
       await tester.pumpAndSettle();
-      expectPermRowLabel(
-          tester, 'perm_row_accessibility', 'Alternative');
+      expectPermRowLabel(tester, 'perm_row_accessibility', 'Required');
 
       await container.capabilityMonitor.dispose();
     });
@@ -236,8 +233,8 @@ void main() {
         'ready and Granted/Enabled everywhere', (WidgetTester tester) async {
       final AppContainer container = await pumpApp(tester);
       await openSecurity(tester);
-      expectSecurityLabel(tester, 'Usage access', 'Alternative');
-      expectSecurityLabel(tester, 'Accessibility service', 'Alternative');
+      expectSecurityLabel(tester, 'Usage access', 'Recommended');
+      expectSecurityLabel(tester, 'Accessibility service', 'Required');
       expectSecurityLabel(tester, 'Background lock shield', 'Required');
 
       // The user enables every capability in Android settings.
@@ -279,8 +276,8 @@ void main() {
         (WidgetTester tester) async {
       final AppContainer container = await pumpApp(tester);
       await openSecurity(tester);
-      expectSecurityLabel(tester, 'Usage access', 'Alternative');
-      expectSecurityLabel(tester, 'Accessibility service', 'Alternative');
+      expectSecurityLabel(tester, 'Usage access', 'Recommended');
+      expectSecurityLabel(tester, 'Accessibility service', 'Required');
       expectSecurityLabel(tester, 'Background lock shield', 'Required');
 
       // The user grants every capability in Android settings while the
@@ -359,8 +356,7 @@ void main() {
       await container.capabilityMonitor.dispose();
     });
 
-    testWidgets(
-        'granting overlay inside its flow flips the row to Enabled',
+    testWidgets('granting overlay inside its flow flips the row to Enabled',
         (WidgetTester tester) async {
       final AppContainer container = await pumpApp(tester);
       await openPermissionSetup(tester);
@@ -387,7 +383,7 @@ void main() {
 
   group('revoke paths', () {
     testWidgets(
-        'revoking usage access keeps the accessibility alternative active',
+        'revoking usage access keeps the Accessibility early path active',
         (WidgetTester tester) async {
       final AppContainer container = await pumpApp(
         tester,
@@ -406,7 +402,7 @@ void main() {
 
       expect(find.text(SecurityScreen.revokedTitle), findsNothing);
       expect(find.byType(DsDotBadge), findsWidgets);
-      expectSecurityLabel(tester, 'Usage access', 'Alternative');
+      expectSecurityLabel(tester, 'Usage access', 'Recommended');
       expectSecurityLabel(tester, 'Accessibility service', 'Enabled');
       expectSecurityLabel(tester, 'Background lock shield', 'Enabled');
 
@@ -428,8 +424,8 @@ void main() {
       await container.capabilityMonitor.probe();
       await tester.pumpAndSettle();
 
-      expect(find.text(SecurityScreen.revokedTitle), findsNothing);
-      expectSecurityLabel(tester, 'Accessibility service', 'Alternative');
+      expect(find.text(SecurityScreen.revokedTitle), findsOneWidget);
+      expectSecurityLabel(tester, 'Accessibility service', 'Required');
       expectSecurityLabel(tester, 'Usage access', 'Enabled');
 
       await container.capabilityMonitor.dispose();
@@ -457,7 +453,7 @@ void main() {
     });
 
     testWidgets(
-        'one revocation leaves the other two ready (2 of 3) in the setup '
+        'Accessibility revocation leaves early protection incomplete in setup '
         'screen', (WidgetTester tester) async {
       final AppContainer container = await pumpApp(
         tester,
@@ -480,12 +476,11 @@ void main() {
       await tester.tap(setUp);
       await tester.pumpAndSettle();
       expect(
-        find.text(PermissionSetupScreen.coreReadyLabel),
+        find.text(PermissionSetupScreen.coreMissingLabel),
         findsOneWidget,
       );
       expectPermRowLabel(tester, 'perm_row_usage', 'Enabled');
-      expectPermRowLabel(
-          tester, 'perm_row_accessibility', 'Alternative');
+      expectPermRowLabel(tester, 'perm_row_accessibility', 'Required');
       expectPermRowLabel(tester, 'perm_row_overlay', 'Enabled');
 
       await container.capabilityMonitor.dispose();
@@ -506,13 +501,12 @@ void main() {
           false;
       await container.capabilityMonitor.probe();
       await tester.pumpAndSettle();
-      expect(find.text(SecurityScreen.revokedTitle), findsNothing);
+      expect(find.text(SecurityScreen.revokedTitle), findsOneWidget);
 
-      // The user re-enables the service; the next probes emit nothing new.
+      // The user re-enables the required service and returns from Settings.
       (container.accessibility as StaticAccessibilityLockService).enabled =
           true;
-      await container.capabilityMonitor.probe();
-      await tester.pumpAndSettle();
+      await resume(tester);
       expect(find.text(SecurityScreen.revokedTitle), findsNothing);
 
       // The setup screen proves the recovered state.
@@ -532,8 +526,7 @@ void main() {
       await container.capabilityMonitor.dispose();
     });
 
-    testWidgets(
-        'a revocation made while backgrounded is detected on return',
+    testWidgets('a revocation made while backgrounded is detected on return',
         (WidgetTester tester) async {
       final AppContainer container = await pumpApp(
         tester,

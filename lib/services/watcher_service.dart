@@ -42,9 +42,9 @@ class ProtectionEngineHealth {
 
 /// Bridge to the native lifecycle and recovery watcher.
 ///
-/// Dart owns normal enforcement while its heartbeat is healthy. If the
-/// isolate stops, the native watcher detects protected packages, raises a
-/// touch-blocking shield, and rebuilds the Flutter authentication activity.
+/// Native code owns the earliest detector-to-shield transition even while
+/// Dart is healthy. Dart owns credential decisions and grants only the
+/// short-lived package authorization produced by successful authentication.
 abstract interface class WatcherService {
   /// Starts the watcher foreground service. Notification permission is
   /// optional on API 33+: denial affects visibility, not service startup.
@@ -68,11 +68,27 @@ abstract interface class WatcherService {
   /// falls back to recovery detection when heartbeats stop.
   Future<Result<void>> heartbeat();
 
+  /// Synchronizes the immediate/grace re-lock policy used by native early
+  /// enforcement. No credential material crosses this boundary.
+  Future<Result<void>> setGracePeriod(Duration period);
+
+  /// Mirrors a temporary package authorization after explicit successful
+  /// authentication. Native state is process-local and disappears on reboot
+  /// or process death, preserving fail-closed recovery.
+  Future<Result<void>> authorizePackage(
+    String packageName, {
+    Duration sessionWindow = const Duration(minutes: 2),
+  });
+
+  /// Immediately invalidates every native authorization (screen-off path).
+  Future<Result<void>> revokeAllAuthorizations();
+
   /// Marks an orderly Flutter-engine teardown. This never disables desired
   /// protection; it hands enforcement back to the native recovery watcher.
   Future<Result<void>> markEngineUnavailable();
 
-  /// Consumes a package queued by native recovery after process death/reboot.
+  /// Reads a package queued by native recovery after process death/reboot.
+  /// The native shield latch remains set until the rendered challenge handoff.
   Future<Result<String?>> takePendingChallenge();
 
   /// Current native enforcement health for truthful baseline UI.

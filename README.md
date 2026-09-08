@@ -55,12 +55,12 @@ top of the protected app) remains for a later phase.
 | 3H | Apps management QA (large-list responsiveness) | ✅ |
 | 4A | Capability requirements (exact Android capabilities for locking) | ✅ |
 | 4B | Usage Access setup (detect → explain → settings → recheck) | ✅ |
-| 4C | Accessibility setup (detection-only fallback + prominent disclosure) | ✅ |
+| 4C | Accessibility setup (early detection only + prominent disclosure) | ✅ |
 | 4D | Overlay setup (draw-over-apps capability, required by the architecture) | ✅ |
 | 4E | Permission setup screen (centralized Enabled / Action Required) | ✅ |
 | 4F | Capability revocation detection (granted → revoked monitoring) | ✅ |
 | 4G | Permission regression (grant / deny / revoke paths) | ✅ |
-| 5A | Foreground app detection (usage-stats primary + accessibility fallback) | ✅ |
+| 5A | Foreground app detection (Accessibility early path + UsageEvents recovery) | ✅ |
 | 5B | Detection diagnostics (on-device verification of foreground transitions) | ✅ |
 | 5C | Protected-app matching (foreground package ↔ protected list) | ✅ |
 | 5D | Basic lock trigger (protected app active → authentication challenge) | ✅ |
@@ -813,7 +813,7 @@ The first capability flow, end to end:
 
 ### Phase 4C ✅ — Accessibility Setup
 
-Accessibility is used for **one purpose only** — the detection fallback —
+Accessibility is used for **one purpose only** — early app-window detection —
 and the UI says so prominently:
 
 - **Detection-only service** — declared with `canRetrieveWindowContent="false"`
@@ -1338,16 +1338,15 @@ production wiring:
   allows quick returns then re-locks; pattern gate blocks wrong
   drawings and opens on the correct one; process death mid-challenge
   recovers locked; no-credential fail-safe never bricks the device.
-- **CRITICAL CHECKPOINT PASSED** — ordinary protected-app access
-  cannot reproducibly bypass authentication: every navigation surface
-  (Back, Home, recents, gestures, rapid switching, screen off/on,
-  process recreation) re-presents or re-challenges, never grants.
-- Phase 5 (5A–5U) is COMPLETE. Remaining for later phases: the
-  overlay lock window (TYPE_APPLICATION_OVERLAY challenge on top of
-  the protected app) and the watcher foreground service.
+- Automated checkpoint: authentication and navigation regressions remain
+  covered, but physical-device C0 verification is still required.
+- The C0 baseline now includes a native foreground watcher, an opaque
+  `TYPE_APPLICATION_OVERLAY` handoff shield, boot/process recovery, and
+  process-local native authorization synchronized only after successful
+  authentication.
 
 ## Next phases
 
-Phase 5 continues: the lock engine — the overlay lock challenge (5B+),
-the watcher foreground service, and wiring `ForegroundAppMonitor` into
-enforcement. Each capability is pre-defined in `docs/capabilities.md`.
+C1/Phase 6 must not begin until the C0 physical-device matrix passes. The
+current capability and enforcement contract is defined in
+`docs/capabilities.md`.

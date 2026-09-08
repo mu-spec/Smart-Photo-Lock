@@ -25,8 +25,8 @@ class CapabilityChange {
       'CapabilityChange(${kind.name} -> ${state.name} at ${at.toIso8601String()})';
 }
 
-/// Watches the two alternative detectors plus the required overlay and emits
-/// a [CapabilityChange] when a previously-granted capability is revoked.
+/// Watches the early Accessibility detector, UsageEvents recovery detector,
+/// and required overlay, and emits a [CapabilityChange] on revocation.
 ///
 /// Design (Phase 4F):
 ///  * a baseline probe on [start] (no change events for the initial
@@ -184,7 +184,8 @@ class CapabilityMonitor {
     }
     if (previous && !current) {
       _controller.add(
-        CapabilityChange(kind: kind, state: CapabilityState.revoked, at: _now()),
+        CapabilityChange(
+            kind: kind, state: CapabilityState.revoked, at: _now()),
       );
       _previousGranted[kind] = false;
       return;

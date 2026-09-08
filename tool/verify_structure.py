@@ -391,6 +391,7 @@ def run():
         for name in (
             "ProtectionStateStore.kt",
             "ProtectionOverlayController.kt",
+            "ProtectionAccessState.kt",
             "ProtectionBootReceiver.kt",
             "WatcherService.kt",
         )
@@ -405,23 +406,133 @@ def run():
         watcher_src = read_text(recovery_sources["WatcherService.kt"])
         boot_src = read_text(recovery_sources["ProtectionBootReceiver.kt"])
         store_src = read_text(recovery_sources["ProtectionStateStore.kt"])
+        shield_flags = overlay_src[overlay_src.find("private fun shieldFlags"):]
         shield_blocks = (
             "TYPE_APPLICATION_OVERLAY" in overlay_src
             and overlay_src.count("MATCH_PARENT") >= 2
-            and "FLAG_SECURE" in overlay_src
-            and "FLAG_NOT_TOUCHABLE" not in overlay_src
+            and "FLAG_SECURE" in shield_flags
+            and "FLAG_NOT_TOUCHABLE" not in shield_flags
         )
         check("native overlay is opaque, full-screen, touch-blocking, secure",
               shield_blocks)
+        prearmed = (
+            "fun arm(context: Context)" in overlay_src
+            and "manager.addView(root, params)" in overlay_src
+            and "manager.updateViewLayout(active, params)" in overlay_src
+            and "ProtectionOverlayController.arm(this)" in watcher_src
+        )
+        check("native overlay is pre-armed before protected-app detection",
+              prearmed)
         shield_first = (
             watcher_src.find("ProtectionOverlayController.show") >= 0
             and watcher_src.find("OverlayStatusChannel.launchLockChallenge") >= 0
             and watcher_src.find("ProtectionOverlayController.show")
             < watcher_src.find("OverlayStatusChannel.launchLockChallenge")
             and "START_STICKY" in watcher_src
-            and "ProtectionRuntime.isEngineHealthy" in watcher_src
         )
         check("watcher recovery shields before activity hand-off", shield_first)
+        accessibility_path = read_text(os.path.join(
+            kotlin_dir, "AccessibilityLockService.kt"
+        ))
+        accessibility_config = read_text(os.path.join(
+            ROOT,
+            "android/app/src/main/res/xml/accessibility_service_config.xml",
+        ))
+        native_early = (
+            accessibility_path.find("WatcherService.reportForeground") >= 0
+            and accessibility_path.find("val sink = eventSink") >= 0
+            and accessibility_path.find("WatcherService.reportForeground")
+            < accessibility_path.find("val sink = eventSink")
+            and 'android:notificationTimeout="0"' in accessibility_config
+            and "if (ProtectionRuntime.isEngineHealthy()) return"
+            not in watcher_src
+        )
+        check("Accessibility shields natively before Dart event delivery",
+              native_early)
+        check(
+            "stale heartbeat never suppresses native early enforcement",
+            "ProtectionRuntime.isEngineHealthy()) return" not in watcher_src
+            and "recoverProtected(context, packageName)" in watcher_src,
+        )
+        pending_pos = watcher_src.find(
+            "ProtectionStateStore.setPendingChallenge(context, packageName)",
+            watcher_src.find("private fun recoverProtected"),
+        )
+        recovery_shield_pos = watcher_src.find(
+            "ProtectionOverlayController.show(context)", pending_pos
+        )
+        recovery_launch_pos = watcher_src.find(
+            "OverlayStatusChannel.launchLockChallenge(context)",
+            recovery_shield_pos,
+        )
+        check(
+            "pending challenge is latched before shield and activity hand-off",
+            0 <= pending_pos < recovery_shield_pos < recovery_launch_pos,
+        )
+        arbitration = (
+            "ForegroundSource.ACCESSIBILITY" in watcher_src
+            and "ForegroundSource.USAGE_EVENTS" in watcher_src
+            and "ACCESSIBILITY_AUTHORITY_MS" in watcher_src
+            and "now - lastAccessibilityElapsedMs < ACCESSIBILITY_AUTHORITY_MS"
+            in watcher_src
+        )
+        check("recent Accessibility events outrank historical UsageEvents",
+              arbitration)
+        duplicate_guard = (
+            "packageName != lastRecoveryPackage" in watcher_src
+            and "now - lastLaunchAttemptElapsedMs >= RECOVERY_RETRY_MS"
+            in watcher_src
+        )
+        check("duplicate foreground events do not stack challenge launches",
+              duplicate_guard)
+        access_state_src = read_text(recovery_sources["ProtectionAccessState.kt"])
+        native_sessions_fail_closed = (
+            "fun authorize(" in access_state_src
+            and "fun observeForeground(" in access_state_src
+            and "fun revokeAll()" in access_state_src
+            and "SharedPreferences" not in access_state_src
+            and "ProtectionAccessState.authorize" in watcher_src
+        )
+        check("native authorization mirror is process-local and fail closed",
+              native_sessions_fail_closed)
+        immediate_relock = (
+            "if (gracePeriodMs == 0L)" in access_state_src
+            and "authorizations.remove(previous)" in access_state_src
+            and "Intent.ACTION_SCREEN_OFF" in watcher_src
+            and "ProtectionAccessState.revokeAll()" in watcher_src
+        )
+        check("native immediate and screen-off re-lock revoke authorization",
+              immediate_relock)
+        take_start = store_src.find("fun takePendingChallenge")
+        pending_reader = store_src[take_start:store_src.find(
+            "fun pendingChallenge", take_start
+        )]
+        pending_latched = (
+            "return pendingChallenge(context)" in pending_reader
+            and "remove(KEY_PENDING)" not in pending_reader
+            and "clearPendingChallenge" in store_src
+            and 'call.argument<String>("packageName")' in read_text(
+                os.path.join(kotlin_dir, "OverlayStatusChannel.kt")
+            )
+        )
+        check("pending challenge read is non-destructive until hand-off",
+              pending_latched)
+        host_src = read_text(os.path.join(ROOT, "lib/app/lock_challenge_host.dart"))
+        auth_pos = host_src.find("watcher.authorizePackage(packageName)")
+        hide_pos = host_src.find("overlay.hideLockChallenge()", auth_pos)
+        launch_pos = host_src.find("installedAppsService.launchApp", auth_pos)
+        check(
+            "successful auth authorizes native before shield drop and launch",
+            auth_pos >= 0 and hide_pos > auth_pos and launch_pos > hide_pos,
+        )
+        check(
+            "newer pending package rejects stale challenge authorization",
+            "pending != null && pending != packageName" in watcher_src
+            and "return false" in watcher_src[
+                watcher_src.find("pending != null && pending != packageName"):
+                watcher_src.find("ProtectionAccessState.authorize")
+            ],
+        )
         boot_is_conditional = (
             "ProtectionStateStore.isEnabled" in boot_src
             and "WatcherService.start" in boot_src

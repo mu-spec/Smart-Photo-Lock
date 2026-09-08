@@ -78,7 +78,8 @@ void main() {
     expect(watcher.protectedPackages, {'com.example.private'});
   });
 
-  test('pending native challenge is consumed exactly once', () async {
+  test('pending native challenge remains latched until rendered handoff',
+      () async {
     final watcher = StaticWatcherService()
       ..pendingChallenge = 'com.example.private';
 
@@ -86,7 +87,10 @@ void main() {
       (await watcher.takePendingChallenge()).valueOrNull,
       'com.example.private',
     );
-    expect((await watcher.takePendingChallenge()).valueOrNull, isNull);
+    expect(
+      (await watcher.takePendingChallenge()).valueOrNull,
+      'com.example.private',
+    );
   });
 }
 
@@ -99,8 +103,7 @@ class _FailingProtectedAppsRepository implements ProtectedAppsRepository {
   Future<Result<void>> add(ProtectedApp app) async => Result.success(null);
 
   @override
-  Future<Result<void>> remove(String packageName) async =>
-      Result.success(null);
+  Future<Result<void>> remove(String packageName) async => Result.success(null);
 
   @override
   Future<Result<bool>> isProtected(String packageName) async =>

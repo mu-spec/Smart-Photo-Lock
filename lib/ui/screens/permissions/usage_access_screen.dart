@@ -15,7 +15,8 @@ import '../../../services/installed_apps_service.dart';
 ///  4. **detect successful return** — re-checks when the app resumes
 ///     and after the settings intent fires, then shows the granted state.
 class UsageAccessScreen extends StatefulWidget {
-  const UsageAccessScreen({super.key, this.service, this.title = 'Usage access'});
+  const UsageAccessScreen(
+      {super.key, this.service, this.title = 'Usage access'});
 
   /// Overrides the service resolved from [AppScope] (tests/previews).
   final InstalledAppsService? service;
@@ -24,9 +25,11 @@ class UsageAccessScreen extends StatefulWidget {
 
   static const String notGrantedTitle = 'Usage access is off';
   static const String notGrantedMessage =
-      'Smart App Lock detects which app you open so it can lock protected '
-      'apps instantly. Enable usage access to make locking work.';
+      'Usage access provides a recovery fallback by polling Android usage '
+      'history. It is slower than Accessibility and cannot guarantee that '
+      'the first protected frame is hidden.';
   static const String openSettingsLabel = 'Open Settings';
+
   /// Granted-state secondary action: reopen the same system settings
   /// destination so the user can always manage (or revoke) the grant.
   static const String manageSettingsLabel = 'Manage Settings';
@@ -35,7 +38,7 @@ class UsageAccessScreen extends StatefulWidget {
       'allow usage access there, then come back.';
   static const String grantedTitle = 'Usage access enabled';
   static const String grantedMessage =
-      'Smart App Lock can now detect the apps you open.';
+      'The slower usage-history recovery fallback is available.';
   static const String doneLabel = 'Done';
   static const String unavailableTitle = 'Could not check usage access';
   static const String unavailableMessage =

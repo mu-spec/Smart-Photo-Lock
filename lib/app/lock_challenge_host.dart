@@ -210,7 +210,8 @@ class _LockChallengeHostState extends State<LockChallengeHost>
         'LockChallengeHost: protection bootstrap -> ${bootstrap.isSuccess}',
       );
     }
-    if (!mounted || bootstrap.isFailure ||
+    if (!mounted ||
+        bootstrap.isFailure ||
         bootstrap.valueOrNull?.configured != true) {
       return;
     }
@@ -249,6 +250,9 @@ class _LockChallengeHostState extends State<LockChallengeHost>
       return;
     }
     if (container.accessController.gracePeriod != Duration.zero) {
+      await container.watcher.setGracePeriod(
+        container.accessController.gracePeriod,
+      );
       return; // already configured — do not override
     }
     final Result<Duration> result =
@@ -258,6 +262,9 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     }
     container.accessController
         .setGracePeriod(result.valueOrNull ?? Duration.zero);
+    await container.watcher.setGracePeriod(
+      result.valueOrNull ?? Duration.zero,
+    );
   }
 
   @override
@@ -428,7 +435,10 @@ class _LockChallengeHostState extends State<LockChallengeHost>
       final AppContainer? container = AppScope.read(context);
       if (container != null) {
         await container.overlay.setSecureWindow(true);
-        await container.overlay.markChallengeReady();
+        final String? packageName = _lastPresentedPackage;
+        if (packageName != null) {
+          await container.overlay.markChallengeReady(packageName);
+        }
       }
       return;
     }
@@ -604,7 +614,7 @@ class _LockChallengeHostState extends State<LockChallengeHost>
         // reached a rendered frame. Native also verifies that MainActivity
         // is resumed; if a background launch was blocked, the shield stays.
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          unawaited(container.overlay.markChallengeReady());
+          unawaited(container.overlay.markChallengeReady(packageName));
         });
         final bool? unlocked = await unlockFuture;
         // Phase 5I: the unlock session is granted ONLY on an explicit
@@ -613,15 +623,30 @@ class _LockChallengeHostState extends State<LockChallengeHost>
         // cancellation and service failures all resolve false/null) — and
         // the host re-checks `mounted` after the await so a torn-down tree
         // can never grant.
-        passed = unlocked == true;
-        if (passed) {
+        final bool authenticated = unlocked == true;
+        if (authenticated) {
           if (!mounted) {
             return;
           }
           // Phase 5E/5F: the credential passed — open the session,
           // dismiss the challenge, then LAUNCH the protected app so the
           // user proceeds straight into it.
-          await container.accessController.grantAccess(packageName);
+          final dartGrant =
+              await container.accessController.grantAccess(packageName);
+          if (dartGrant.isFailure) {
+            return;
+          }
+          // Native sees the protected app before Dart does. Mirror only this
+          // short-lived authorization before dropping the shield. Any bridge
+          // failure revokes both layers and remains fail closed.
+          final nativeGrant =
+              await container.watcher.authorizePackage(packageName);
+          if (nativeGrant.isFailure) {
+            await container.accessController.revokeAllAccess();
+            await container.watcher.revokeAllAuthorizations();
+            return;
+          }
+          passed = true;
           await container.overlay.hideLockChallenge();
           await container.installedAppsService.launchApp(packageName);
         }

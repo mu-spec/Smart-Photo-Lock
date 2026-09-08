@@ -39,7 +39,8 @@ void main() {
     });
 
     test('a native false result is reported as false', () async {
-      messenger.setMockMethodCallHandler(channel, (MethodCall call) async => false);
+      messenger.setMockMethodCallHandler(
+          channel, (MethodCall call) async => false);
       final WatcherService service = MethodChannelWatcherService();
       expect((await service.start()).valueOrNull, isFalse);
       expect((await service.stop()).valueOrNull, isFalse);
@@ -55,6 +56,10 @@ void main() {
       expect((await service.stop()).isFailure, isTrue);
       expect((await service.isRunning()).isFailure, isTrue);
       expect((await service.heartbeat()).isFailure, isTrue);
+      expect((await service.setGracePeriod(Duration.zero)).isFailure, isTrue);
+      expect((await service.authorizePackage('com.example.locked')).isFailure,
+          isTrue);
+      expect((await service.revokeAllAuthorizations()).isFailure, isTrue);
       expect((await service.getHealth()).isFailure, isTrue);
     });
 
@@ -86,6 +91,15 @@ void main() {
         isTrue,
       );
       expect((await service.heartbeat()).isSuccess, isTrue);
+      expect(
+        (await service.setGracePeriod(const Duration(seconds: 30))).isSuccess,
+        isTrue,
+      );
+      expect(
+        (await service.authorizePackage('com.example.locked')).isSuccess,
+        isTrue,
+      );
+      expect((await service.revokeAllAuthorizations()).isSuccess, isTrue);
       expect((await service.markEngineUnavailable()).isSuccess, isTrue);
       expect(
         (await service.takePendingChallenge()).valueOrNull,
@@ -99,6 +113,21 @@ void main() {
         <String, dynamic>{
           'enabled': true,
           'protectedPackages': <String>['com.example.locked'],
+        },
+      );
+      expect(
+        calls
+            .singleWhere((MethodCall c) => c.method == 'setGracePeriod')
+            .arguments,
+        <String, dynamic>{'milliseconds': 30000},
+      );
+      expect(
+        calls
+            .singleWhere((MethodCall c) => c.method == 'authorizePackage')
+            .arguments,
+        <String, dynamic>{
+          'packageName': 'com.example.locked',
+          'sessionWindowMilliseconds': 120000,
         },
       );
     });
@@ -124,6 +153,15 @@ void main() {
       );
       await service.start();
       await service.heartbeat();
+      await service.setGracePeriod(const Duration(seconds: 30));
+      expect(service.gracePeriod, const Duration(seconds: 30));
+      expect(
+        (await service.authorizePackage('com.example.locked')).isSuccess,
+        isTrue,
+      );
+      expect(service.authorizedPackages, {'com.example.locked'});
+      await service.revokeAllAuthorizations();
+      expect(service.authorizedPackages, isEmpty);
       expect((await service.getHealth()).valueOrNull!.engineState,
           ProtectionEngineState.healthy);
       await service.markEngineUnavailable();

@@ -604,9 +604,9 @@ Large-list responsiveness:
 **Architecture definition only — no implementation, no manifest changes.**
 The authoritative document is `docs/capabilities.md`. Summary:
 
-- **User-granted:** Usage Access (detection, primary) · overlay
-  (`SYSTEM_ALERT_WINDOW`, the challenge window) · Accessibility service
-  (detection fallback).
+- **User-granted:** Accessibility service (earliest event-driven detection) ·
+  overlay (`SYSTEM_ALERT_WINDOW`, the challenge window) · Usage Access
+  (slower history/polling recovery detector).
 - **Normal/install-time:** `POST_NOTIFICATIONS` + `FOREGROUND_SERVICE`
   (with `_SPECIAL_USE` + property) for the watcher; `<queries>` already
   shipped in 3A.
@@ -641,7 +641,7 @@ UsageAccessScreen
 
 ## 4C. Accessibility setup
 
-Accessibility is used for ONE purpose — the detection fallback — and the
+Accessibility is used for ONE purpose — early app-window detection — and the
 disclosure is prominent:
 
 ```
@@ -824,15 +824,15 @@ using the selected Play-compliant architecture.
 
 ```
 ForegroundAppMonitor (protection)
-  ├─ UsageStatsManager backend (PRIMARY, polled every 1 s)
+  ├─ Accessibility early path (EVENTS; native shield first)
+  │     └─ TYPE_WINDOW_STATE_CHANGED package names
+  ├─ UsageStatsManager recovery fallback (history, polled every 1 s)
   │     └─ InstalledAppsChannel.getForegroundPackage
   │           ├─ hasUsageAccess? no  -> null (fail-closed, no detection)
-  │           ├─ queryUsageStats(INTERVAL_DAILY, now-60s, now)
-  │           └─ most-recently-used launchable package (own app excluded)
-  └─ Accessibility fallback (EVENTS, subscribed while running)
-        └─ AccessibilityLockService reports TYPE_WINDOW_STATE_CHANGED
-              package names via EventChannel
-              smart_app_lock/accessibility_events
+  │           ├─ queryEvents(now-10s, now)
+  │           └─ latest ACTIVITY_RESUMED/MOVE_TO_FOREGROUND package
+  └─ Dart receives the same Accessibility package names after native
+        enforcement via smart_app_lock/accessibility_events
 ```
 
 - `ForegroundAppMonitor` merges both paths and emits `ForegroundAppChange`
@@ -843,8 +843,8 @@ ForegroundAppMonitor (protection)
   objects the UI reads); the lock engine (5B+) owns start/stop. 5A
   delivers detection only — no lock screen, no watcher foreground
   service (that lands with the watcher phase per capabilities.md).
-- Native code stays total: no `!!`, no throwing checks; the usage-stats
-  probe is one defensive loop over the platform list.
+- Native code stays total: no `!!`, no throwing checks; the UsageEvents
+  probe is one defensive loop over the historical event list.
 
 ## 5B. Detection diagnostics (temporary developer tool)
 
@@ -1322,30 +1322,37 @@ no-credential fail-safe
 
 ## C0 lifecycle recovery — hybrid watcher and lock shield
 
-Normal enforcement stays in Dart while a heartbeat proves the isolate is
-healthy. The native layer takes over detection and presentation after isolate
-loss, process recreation, or reboot.
+Native code always owns the earliest detector-to-shield transition. Dart owns
+credential evaluation, challenge UI, and authoritative session policy. The
+heartbeat describes engine health; it never suppresses native shielding.
 
 ```
 ProtectionBootstrap
   ├─ sync credential-present + protected package names (no secrets)
   ├─ start/stop recovery watcher only when desired state changes
-  └─ heartbeat while Dart owns enforcement
+  └─ heartbeat reports Flutter engine health
 WatcherService (native, specialUse, START_STICKY)
-  ├─ usage polling + accessibility package reports
-  ├─ heartbeat lease decides Dart-authoritative vs native-recovery mode
+  ├─ accessibility callback expands the pre-armed shield synchronously
+  ├─ UsageEvents polling supplies slower recovery fallback
+  ├─ process-local authorization mirrors successful Dart sessions
   └─ shield first -> persist pending package -> launch MainActivity
 ProtectionBootReceiver
   └─ starts only when persisted desired protection is enabled
 LockChallengeHost
-  └─ consumes pending challenge and releases the shield only after the
+  └─ reads the latched pending challenge and releases the shield only after the
      Flutter challenge is rendered in a resumed activity
 ```
 
 - Notification permission is optional: denial degrades notification
   visibility but is not treated as watcher startup failure.
-- Usage Access and Accessibility are alternative detectors; overlay is the
+- Accessibility is the early detector required for the strongest available
+  protection. Usage Access is a slower recovery fallback. Overlay is the
   required enforcement shield.
+- The overlay is pre-armed as an invisible, zero-sized, non-touchable window;
+  a protected event expands it into an opaque touch/key-blocking shield before
+  Flutter reconstruction begins.
+- Native authorizations are granted only after explicit Dart authentication
+  success and are never persisted, so process death/reboot remains fail closed.
 - The in-memory container wires a static watcher for deterministic lifecycle,
   bootstrap, health, and pending-challenge tests.
 

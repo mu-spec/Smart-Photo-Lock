@@ -9,7 +9,7 @@ import io.flutter.plugin.common.EventChannel
  * Detection-only accessibility service for Smart App Lock (Phase 4C
  * declaration; Phase 5A reporting).
  *
- * The service exists as the FALLBACK foreground-detection path. Its
+ * The service exists as the earliest available foreground-detection path. Its
  * config (`res/xml/accessibility_service_config.xml`) restricts it to
  * TYPE_WINDOW_STATE_CHANGED events with content capture DISABLED — the
  * service never reads screen content, never performs actions on the
@@ -24,6 +24,9 @@ class AccessibilityLockService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        if (ProtectionStateStore.isEnabled(this)) {
+            ProtectionOverlayController.arm(this)
+        }
         if (ProtectionStateStore.isEnabled(this) && !WatcherService.isRunning()) {
             WatcherService.start(this)
         }
@@ -40,7 +43,11 @@ class AccessibilityLockService : AccessibilityService() {
         }
         // Native recovery receives the same narrowly scoped package-only
         // signal even when no Flutter EventChannel listener exists.
-        WatcherService.reportForeground(this, packageName)
+        WatcherService.reportForeground(
+            this,
+            packageName,
+            ForegroundSource.ACCESSIBILITY,
+        )
         val sink = eventSink ?: return
         // Mobile-QA diagnostics: trace the real-device pipeline.
         Log.d("SmartAppLock", "a11y foreground -> $packageName")

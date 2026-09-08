@@ -107,14 +107,16 @@ void main() {
     return container;
   }
 
-  Future<void> protect(AppContainer container, String package) =>
-      container.protectedApps.add(
-        ProtectedApp(
-          packageName: package,
-          label: package,
-          addedAt: DateTime(2026, 8, 21),
-        ),
-      );
+  Future<void> protect(AppContainer container, String package) async {
+    await container.protectedApps.add(
+      ProtectedApp(
+        packageName: package,
+        label: package,
+        addedAt: DateTime(2026, 8, 21),
+      ),
+    );
+    await container.protectionBootstrap.synchronize();
+  }
 
   /// The user opens another app (accessibility detection path).
   Future<void> openApp(

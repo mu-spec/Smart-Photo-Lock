@@ -23,10 +23,35 @@ object WatcherChannel {
                             val packages = call.argument<List<String>>("protectedPackages")
                                 ?.toSet() ?: emptySet()
                             ProtectionStateStore.configure(activity, enabled, packages)
-                            if (!enabled) {
+                            if (enabled) {
+                                ProtectionOverlayController.arm(activity)
+                            } else {
                                 ProtectionStateStore.clearPendingChallenge(activity)
-                                ProtectionOverlayController.hide()
+                                ProtectionOverlayController.disarm()
                             }
+                            result.success(true)
+                        }
+                        "setGracePeriod" -> {
+                            val milliseconds =
+                                call.argument<Number>("milliseconds")?.toLong() ?: 0L
+                            WatcherService.setGracePeriod(milliseconds)
+                            result.success(true)
+                        }
+                        "authorizePackage" -> {
+                            val packageName = call.argument<String>("packageName") ?: ""
+                            val sessionWindowMs =
+                                call.argument<Number>("sessionWindowMilliseconds")
+                                    ?.toLong() ?: 0L
+                            result.success(
+                                WatcherService.authorizePackage(
+                                    activity,
+                                    packageName,
+                                    sessionWindowMs,
+                                ),
+                            )
+                        }
+                        "revokeAllAuthorizations" -> {
+                            WatcherService.revokeAllAuthorizations()
                             result.success(true)
                         }
                         "heartbeat" -> {

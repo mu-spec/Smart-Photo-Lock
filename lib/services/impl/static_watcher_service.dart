@@ -16,6 +16,11 @@ class StaticWatcherService implements WatcherService {
   int stopCalls = 0;
   int configureCalls = 0;
   int heartbeatCalls = 0;
+  int setGracePeriodCalls = 0;
+  int authorizePackageCalls = 0;
+  int revokeAllAuthorizationsCalls = 0;
+  Duration gracePeriod = Duration.zero;
+  final Set<String> authorizedPackages = <String>{};
 
   @override
   Future<Result<bool>> start() async {
@@ -42,6 +47,8 @@ class StaticWatcherService implements WatcherService {
     configureCalls++;
     protectionConfigured = enabled;
     this.protectedPackages = Set<String>.of(protectedPackages);
+    authorizedPackages.retainAll(this.protectedPackages);
+    if (!enabled) authorizedPackages.clear();
     return Result.success(null);
   }
 
@@ -53,6 +60,34 @@ class StaticWatcherService implements WatcherService {
   }
 
   @override
+  Future<Result<void>> setGracePeriod(Duration period) async {
+    setGracePeriodCalls++;
+    gracePeriod = period.isNegative ? Duration.zero : period;
+    return Result.success(null);
+  }
+
+  @override
+  Future<Result<void>> authorizePackage(
+    String packageName, {
+    Duration sessionWindow = const Duration(minutes: 2),
+  }) async {
+    authorizePackageCalls++;
+    if (!protectionConfigured || !protectedPackages.contains(packageName)) {
+      return Result.failure(StateError('Package is not protected.'));
+    }
+    authorizedPackages.add(packageName);
+    if (pendingChallenge == packageName) pendingChallenge = null;
+    return Result.success(null);
+  }
+
+  @override
+  Future<Result<void>> revokeAllAuthorizations() async {
+    revokeAllAuthorizationsCalls++;
+    authorizedPackages.clear();
+    return Result.success(null);
+  }
+
+  @override
   Future<Result<void>> markEngineUnavailable() async {
     engineAvailable = false;
     return Result.success(null);
@@ -60,9 +95,7 @@ class StaticWatcherService implements WatcherService {
 
   @override
   Future<Result<String?>> takePendingChallenge() async {
-    final String? pending = pendingChallenge;
-    pendingChallenge = null;
-    return Result.success(pending);
+    return Result.success(pendingChallenge);
   }
 
   @override

@@ -914,8 +914,9 @@ process anchor:
   to native recovery on teardown without disabling desired protection.
 - A native opaque overlay shield blocks touches before `MainActivity` is
   launched and remains until the Flutter challenge is ready.
-- Notification permission is optional; Usage Access and Accessibility are
-  alternative detectors.
+- Notification permission is optional. Accessibility is the earliest native
+  detector; Usage Access is a slower recovery fallback and cannot guarantee
+  first-frame concealment by itself.
 - Diagnostics: logcat tag `SmartAppLock` (native probes + a11y events);
   assert-based Dart prints (monitor/trigger) and kDebugMode prints
   (challenge host) — stripped in release.
@@ -1040,3 +1041,45 @@ cancelled gestures) never invalidates. No UI test was changed; four
 monitor unit tests cover the new API. This also repairs the same
 latent path in the regression gauntlet (Home + re-open / Recents task
 switch).
+
+---
+
+# C0 physical QA fix #1 — protected-app flash-through
+
+Observed sequence: protected app content became readable before the native
+shield, followed by the PIN challenge.
+
+Root cause:
+
+1. `AccessibilityLockService` deliberately waited up to 100 ms before Android
+   delivered a window-state event.
+2. `WatcherService` discarded that native event whenever the Dart heartbeat
+   was healthy.
+3. The event then crossed into Dart, waited for asynchronous matching/session
+   evaluation and widget scheduling, and only afterward requested the shield.
+4. UsageEvents is a polled history query and necessarily observes the resumed
+   activity after the transition; it cannot guarantee first-frame concealment.
+
+Fail-closed repair:
+
+- Accessibility notification batching is zero.
+- The native accessibility callback evaluates the protected package before
+  relaying the event to Dart and never waits for heartbeat expiry.
+- A zero-sized, invisible, non-interactive overlay stays pre-attached while
+  protection is configured and expands synchronously for a protected event.
+- Pending challenge state remains latched until a rendered/resumed Flutter
+  challenge confirms handoff.
+- Correct authentication is the sole source of a process-local native package
+  authorization. Authorization occurs before shield removal and target launch;
+  failure revokes both Dart and native sessions.
+- Immediate/grace policy is synchronized to native enforcement. Screen-off
+  revokes both layers, and native authorizations never survive process death or
+  reboot.
+- Recent Accessibility events remain authoritative over contradictory stale
+  UsageEvents reports; duplicate events are throttled without delaying the
+  first shield.
+
+Deterministic coverage: watcher channel serialization, native authorization
+ordering, pending-latch semantics, detector arbitration, immediate/grace
+behavior, screen-off revocation, duplicate challenge suppression, and static
+source-order guards. Actual compositor/event timing remains physical-device QA.

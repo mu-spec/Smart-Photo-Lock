@@ -33,7 +33,8 @@ void main() {
             if (builder == null) {
               return null;
             }
-            return MaterialPageRoute<bool>(settings: settings, builder: builder);
+            return MaterialPageRoute<bool>(
+                settings: settings, builder: builder);
           },
           home: const PermissionSetupScreen(),
         ),
@@ -47,7 +48,7 @@ void main() {
         matching: find.text(label),
       );
 
-  testWidgets('disabled capabilities show alternatives and required shield',
+  testWidgets('disabled capabilities show early detector and shield required',
       (WidgetTester tester) async {
     await pumpScreen(
       tester,
@@ -64,9 +65,9 @@ void main() {
     expect(find.text('Background lock shield'), findsOneWidget);
     expect(find.text('Protection notification'), findsOneWidget);
 
-    expect(pillInRow('perm_row_usage', 'Alternative'), findsOneWidget);
+    expect(pillInRow('perm_row_usage', 'Recommended'), findsOneWidget);
     expect(
-      pillInRow('perm_row_accessibility', 'Alternative'),
+      pillInRow('perm_row_accessibility', 'Required'),
       findsOneWidget,
     );
     expect(pillInRow('perm_row_overlay', 'Required'), findsOneWidget);
@@ -105,9 +106,39 @@ void main() {
     expect(find.text(PermissionSetupScreen.coreMissingLabel), findsOneWidget);
     expect(pillInRow('perm_row_usage', 'Enabled'), findsOneWidget);
     expect(
-      pillInRow('perm_row_accessibility', 'Alternative'),
+      pillInRow('perm_row_accessibility', 'Required'),
       findsOneWidget,
     );
+  });
+
+  testWidgets('usage access plus shield remains delayed/incomplete',
+      (WidgetTester tester) async {
+    await pumpScreen(
+      tester,
+      container: AppContainer.inMemory(
+        usageAccessGranted: true,
+        accessibilityEnabled: false,
+        overlayGranted: true,
+      ),
+    );
+
+    expect(find.text(PermissionSetupScreen.coreMissingLabel), findsOneWidget);
+    expect(pillInRow('perm_row_accessibility', 'Required'), findsOneWidget);
+  });
+
+  testWidgets('Accessibility plus shield satisfies early protection core',
+      (WidgetTester tester) async {
+    await pumpScreen(
+      tester,
+      container: AppContainer.inMemory(
+        usageAccessGranted: false,
+        accessibilityEnabled: true,
+        overlayGranted: true,
+      ),
+    );
+
+    expect(find.text(PermissionSetupScreen.coreReadyLabel), findsOneWidget);
+    expect(pillInRow('perm_row_usage', 'Recommended'), findsOneWidget);
   });
 
   testWidgets('tapping the usage row opens the usage-access flow',
@@ -185,8 +216,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text(PermissionSetupScreen.coreMissingLabel), findsOneWidget);
-    expect(find.text('Alternative'), findsNWidgets(2));
-    expect(find.text('Required'), findsOneWidget);
+    expect(find.text('Recommended'), findsOneWidget);
+    expect(find.text('Required'), findsNWidgets(2));
     expect(tester.takeException(), isNull);
   });
 }

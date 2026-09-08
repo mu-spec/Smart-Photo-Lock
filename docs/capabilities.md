@@ -9,14 +9,17 @@ lock engine. It describes the implementation that exists, not future phases.
 
 Smart App Lock uses a hybrid design:
 
-1. While Dart is healthy, Flutter evaluates foreground-package events and owns
-   authentication, sessions, grace periods, and navigation.
+1. Native Accessibility handling owns the earliest package-to-shield
+   transition even while Dart is healthy. Flutter owns authentication and the
+   authoritative session/grace policy.
 2. A native foreground service holds a minimal, non-secret copy of the desired
    protection state and receives a Dart heartbeat.
-3. If the heartbeat expires after process/isolate loss or reboot, native usage
-   polling or accessibility events detect a protected package.
-4. Native code first raises an opaque, touch-blocking
-   `TYPE_APPLICATION_OVERLAY` shield, persists a pending package, and then
+3. Accessibility events are handled synchronously in native code. UsageEvents
+   polling is a slower recovery fallback; heartbeat expiry is not a prerequisite
+   for native shielding.
+4. A zero-sized inert overlay is pre-attached while protection is configured.
+   Native code expands it into an opaque, touch/key-blocking
+   `TYPE_APPLICATION_OVERLAY`, persists a pending package, and only then
    launches `MainActivity` to reconstruct the Flutter challenge.
 5. The shield is removed only after the Flutter challenge route is ready and
    the activity is resumed.
@@ -29,8 +32,8 @@ native recovery preferences.
 | Capability | Classification | Current use | Behavior when unavailable |
 | --- | --- | --- | --- |
 | Draw over other apps (`SYSTEM_ALERT_WINDOW`) | **Required** | Opaque touch-blocking recovery/handoff shield and background-activity-launch exemption | Protection is unavailable; the UI must not claim it is active |
-| Usage Access (`PACKAGE_USAGE_STATS`) | **Alternative detector** | Dart and native foreground-app polling | Accessibility can provide detection |
-| Accessibility service (`BIND_ACCESSIBILITY_SERVICE`) | **Alternative detector** | Narrow window-state package events; no content retrieval | Usage Access can provide detection |
+| Usage Access (`PACKAGE_USAGE_STATS`) | **Recommended fallback** | Polling/history-based recovery detection | Recovery redundancy is reduced; UsageEvents alone cannot guarantee first-frame concealment |
+| Accessibility service (`BIND_ACCESSIBILITY_SERVICE`) | **Required for strongest available protection** | Earliest narrow window-state package event; native shield is raised before Dart delivery; no content retrieval | Usage-only protection remains best-effort and is truthfully reported as delayed/degraded |
 | Foreground service (`FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_SPECIAL_USE`) | **Required internal capability** | Native recovery watcher | Protection cannot survive Dart/process loss |
 | Notifications (`POST_NOTIFICATIONS`, API 33+) | **Optional** | Makes the ongoing service notification visible in the notification drawer | Service may run but health is degraded and notification visibility is reduced |
 | Boot completed (`RECEIVE_BOOT_COMPLETED`) | **Required internal capability** | Restarts only previously configured protection after boot | Reboot recovery is unavailable |
@@ -41,15 +44,16 @@ Minimum protection readiness is:
 
 ```text
 overlay granted
-AND (usage access granted OR accessibility enabled)
+AND accessibility enabled
 AND native recovery service available
 AND credential configured
 AND at least one protected package configured
 ```
 
-Both detectors being present adds redundancy. One detector missing is a
-degraded-but-available state, not a total failure. Notification denial is also
-reported as degraded, not as proof that the service failed to start.
+Usage Access adds recovery redundancy. Usage-only detection is still available
+but degraded because Android exposes UsageEvents as historical queries; it
+cannot promise flash-free first-frame enforcement. Notification denial is also
+degraded, not proof that the service failed to start.
 
 ## Explicitly excluded capabilities
 
@@ -73,8 +77,10 @@ reported as degraded, not as proof that the service failed to start.
   protection watcher.
 - If overlay or both detection paths are missing/revoked, protection health is
   unavailable and setup/recovery guidance is shown.
-- If one detector or notification visibility is missing, protection health is
-  degraded and the remaining enforcement path stays active.
+- If Accessibility is missing but Usage Access remains, protection health is
+  explicitly degraded as delayed/best-effort rather than described as
+  flash-resistant. Missing Usage Access or notification visibility reduces
+  redundancy without stopping Accessibility enforcement.
 - A capability probe/storage failure never converts protection to a healthy
   state and never clears the last known native desired-protection state.
 
@@ -101,7 +107,7 @@ tooling; it is not a release capability.
 
 Changes to this architecture must retain automated checks for:
 
-1. alternative-detector capability combinations and truthful health states;
+1. early-detector/recovery-detector combinations and truthful health states;
 2. no native recovery enablement without both a credential and protected app;
 3. fail-closed persistence/bootstrap errors;
 4. recovery configuration surviving Flutter teardown;

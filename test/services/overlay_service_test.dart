@@ -31,15 +31,15 @@ void main() {
     });
 
     test('a null native result is treated as not granted', () async {
-      messenger.setMockMethodCallHandler(channel, (MethodCall call) async => null);
+      messenger.setMockMethodCallHandler(
+          channel, (MethodCall call) async => null);
       final OverlayLockService service = MethodChannelOverlayLockService();
       final result = await service.canDrawOverlays();
       expect(result.isSuccess, isTrue);
       expect(result.valueOrNull, isFalse);
     });
 
-    test('requestOverlayPermission reports the native intent result',
-        () async {
+    test('requestOverlayPermission reports the native intent result', () async {
       messenger.setMockMethodCallHandler(channel, (MethodCall call) async {
         expect(call.method, 'requestOverlayPermission');
         return true;
@@ -47,7 +47,8 @@ void main() {
       final OverlayLockService service = MethodChannelOverlayLockService();
       expect((await service.requestOverlayPermission()).isSuccess, isTrue);
 
-      messenger.setMockMethodCallHandler(channel, (MethodCall call) async => false);
+      messenger.setMockMethodCallHandler(
+          channel, (MethodCall call) async => false);
       final result = await service.requestOverlayPermission();
       expect(result.isFailure, isTrue);
       expect(result.errorOrNull.toString(),
@@ -63,9 +64,12 @@ void main() {
       expect((await service.requestOverlayPermission()).isFailure, isTrue);
     });
 
-    test('showLockChallenge/hideLockChallenge report the native results '
+    test(
+        'showLockChallenge/hideLockChallenge report the native results '
         '(Phase 5D)', () async {
+      final List<MethodCall> calls = <MethodCall>[];
       messenger.setMockMethodCallHandler(channel, (MethodCall call) async {
+        calls.add(call);
         if (call.method == 'showLockChallenge') {
           return true;
         }
@@ -78,18 +82,31 @@ void main() {
         return null;
       });
       final OverlayLockService service = MethodChannelOverlayLockService();
-      expect((await service.showLockChallenge('com.whatsapp')).isSuccess,
-          isTrue);
+      expect(
+          (await service.showLockChallenge('com.whatsapp')).isSuccess, isTrue);
       expect((await service.hideLockChallenge()).isSuccess, isTrue);
-      expect((await service.markChallengeReady()).isSuccess, isTrue);
+      expect(
+        (await service.markChallengeReady('com.whatsapp')).isSuccess,
+        isTrue,
+      );
+      expect(
+        calls
+            .singleWhere((MethodCall c) => c.method == 'markChallengeReady')
+            .arguments,
+        <String, dynamic>{'packageName': 'com.whatsapp'},
+      );
 
       // A native false reports a failure (the challenge could not be
       // presented) — never a fabricated success.
-      messenger.setMockMethodCallHandler(channel, (MethodCall call) async => false);
-      expect((await service.showLockChallenge('com.whatsapp')).isFailure,
-          isTrue);
+      messenger.setMockMethodCallHandler(
+          channel, (MethodCall call) async => false);
+      expect(
+          (await service.showLockChallenge('com.whatsapp')).isFailure, isTrue);
       expect((await service.hideLockChallenge()).isFailure, isTrue);
-      expect((await service.markChallengeReady()).isFailure, isTrue);
+      expect(
+        (await service.markChallengeReady('com.whatsapp')).isFailure,
+        isTrue,
+      );
     });
 
     test('challenge platform errors fail closed', () async {
@@ -97,10 +114,13 @@ void main() {
         throw PlatformException(code: 'overlay_error', message: 'boom');
       });
       final OverlayLockService service = MethodChannelOverlayLockService();
-      expect((await service.showLockChallenge('com.whatsapp')).isFailure,
-          isTrue);
+      expect(
+          (await service.showLockChallenge('com.whatsapp')).isFailure, isTrue);
       expect((await service.hideLockChallenge()).isFailure, isTrue);
-      expect((await service.markChallengeReady()).isFailure, isTrue);
+      expect(
+        (await service.markChallengeReady('com.whatsapp')).isFailure,
+        isTrue,
+      );
     });
 
     test('setSecureWindow relays the flag and reports success (Phase 5O)',
@@ -108,7 +128,8 @@ void main() {
       final List<bool?> seen = <bool?>[];
       messenger.setMockMethodCallHandler(channel, (MethodCall call) async {
         expect(call.method, 'setSecureWindow');
-        seen.add((call.arguments as Map<dynamic, dynamic>?)?['secure'] as bool?);
+        seen.add(
+            (call.arguments as Map<dynamic, dynamic>?)?['secure'] as bool?);
         return true;
       });
       final OverlayLockService service = MethodChannelOverlayLockService();
@@ -117,12 +138,12 @@ void main() {
       expect(seen, <bool?>[true, false]);
 
       // A native false reports a failure — never a fabricated success.
-      messenger.setMockMethodCallHandler(channel, (MethodCall call) async => false);
+      messenger.setMockMethodCallHandler(
+          channel, (MethodCall call) async => false);
       expect((await service.setSecureWindow(true)).isFailure, isTrue);
     });
 
-    test('setSecureWindow platform errors fail closed (Phase 5O)',
-        () async {
+    test('setSecureWindow platform errors fail closed (Phase 5O)', () async {
       messenger.setMockMethodCallHandler(channel, (MethodCall call) async {
         throw PlatformException(code: 'overlay_error', message: 'boom');
       });
@@ -144,7 +165,8 @@ void main() {
       expect((await service.canDrawOverlays()).valueOrNull, isTrue);
     });
 
-    test('challenge calls are counted and the package is recorded '
+    test(
+        'challenge calls are counted and the package is recorded '
         '(Phase 5D)', () async {
       final StaticOverlayLockService service = StaticOverlayLockService();
 
@@ -157,8 +179,12 @@ void main() {
 
       expect((await service.hideLockChallenge()).isSuccess, isTrue);
       expect(service.hideLockChallengeCalls, 1);
-      expect((await service.markChallengeReady()).isSuccess, isTrue);
+      expect(
+        (await service.markChallengeReady('com.whatsapp')).isSuccess,
+        isTrue,
+      );
       expect(service.markChallengeReadyCalls, 1);
+      expect(service.lastReadyPackage, 'com.whatsapp');
 
       service.showLockChallengeSucceeds = false;
       expect(

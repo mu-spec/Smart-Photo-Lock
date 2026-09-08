@@ -22,7 +22,6 @@ import 'package:smart_app_lock/utilities/result.dart';
 /// challenge through the production app wiring (monitor -> matcher ->
 /// access controller -> challenge host -> router -> unlock screen).
 void main() {
-
   Future<AppContainer> pumpApp(
     WidgetTester tester, {
     AppContainer? container,
@@ -54,14 +53,16 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  Future<void> protect(AppContainer container, String package) =>
-      container.protectedApps.add(
-        ProtectedApp(
-          packageName: package,
-          label: package,
-          addedAt: DateTime(2026, 8, 21),
-        ),
-      );
+  Future<void> protect(AppContainer container, String package) async {
+    await container.protectedApps.add(
+      ProtectedApp(
+        packageName: package,
+        label: package,
+        addedAt: DateTime(2026, 8, 21),
+      ),
+    );
+    await container.protectionBootstrap.synchronize();
+  }
 
   /// Phase 5I: the unlock session currently open for [package] (null =
   /// no session was granted — failed authentication must never create
@@ -93,6 +94,7 @@ void main() {
     expect(watcher.running, isTrue);
     expect(watcher.engineAvailable, isFalse);
   });
+
   /// Draws [nodes] on the unlock screen's pattern grid: bounds-derived
   /// node centers, a small horizontal arena-winning move first, then
   /// micro-stepped device-like strokes (mirrors the pattern-suite
@@ -115,8 +117,7 @@ void main() {
       );
     }
 
-    final TestGesture gesture =
-        await tester.startGesture(center(nodes.first));
+    final TestGesture gesture = await tester.startGesture(center(nodes.first));
     await tester.pump();
     // Win the gesture arena from the enclosing scrollable with a small
     // HORIZONTAL movement before any vertical leg is drawn.
@@ -141,10 +142,7 @@ void main() {
     await tester.pump();
   }
 
-
-
-  testWidgets(
-      'leaving a protected app re-locks it immediately (Phase 5J)',
+  testWidgets('leaving a protected app re-locks it immediately (Phase 5J)',
       (WidgetTester tester) async {
     final AppContainer container = await pumpApp(tester);
     await container.auth.enrollPin('1234');
@@ -169,6 +167,9 @@ void main() {
     expect(apps.launchedPackages, <String>['com.whatsapp']);
     // Phase 5I positive control: ONLY the authenticated path grants.
     expect(sessionFor(container, 'com.whatsapp'), isNotNull);
+    final StaticWatcherService watcher =
+        container.watcher as StaticWatcherService;
+    expect(watcher.authorizedPackages, contains('com.whatsapp'));
 
     // The user leaves WhatsApp for the launcher: the unlock session is
     // revoked IMMEDIATELY (no re-challenge for the launcher itself).
@@ -202,6 +203,10 @@ void main() {
     (container.screenState as StaticScreenStateService).emitScreenOff();
     await tester.pump();
     expect(sessionFor(container, 'com.whatsapp'), isNull);
+    expect(
+      (container.watcher as StaticWatcherService).authorizedPackages,
+      isEmpty,
+    );
 
     // The screen turns back on and the user returns to Smart App Lock:
     // the re-lock is enforced — the protected app is challenged again.
@@ -219,8 +224,7 @@ void main() {
     expect(sessionFor(container, 'com.whatsapp'), isNotNull);
   });
 
-  testWidgets(
-      'resume without a screen-off never re-challenges (Phase 5K)',
+  testWidgets('resume without a screen-off never re-challenges (Phase 5K)',
       (WidgetTester tester) async {
     final AppContainer container = await pumpApp(tester);
     await container.auth.enrollPin('1234');
@@ -282,8 +286,7 @@ void main() {
     expect(find.byType(PinUnlockScreen), findsOneWidget);
   });
 
-  testWidgets(
-      're-lock is immediate — no grace window after leaving (Phase 5J)',
+  testWidgets('re-lock is immediate — no grace window after leaving (Phase 5J)',
       (WidgetTester tester) async {
     // A controllable clock proves the re-lock happens well INSIDE the
     // old 2-minute session window: leaving ends the session at once.
@@ -349,7 +352,8 @@ void main() {
     expect(find.byType(PinUnlockScreen), findsNothing);
   });
 
-  testWidgets('the PRIMARY credential decides the challenge screen: '
+  testWidgets(
+      'the PRIMARY credential decides the challenge screen: '
       'pattern-primary users get the pattern (Phase 5F)',
       (WidgetTester tester) async {
     final AppContainer container = await pumpApp(tester);
@@ -364,9 +368,9 @@ void main() {
     expect(find.byType(PinUnlockScreen), findsNothing);
   });
 
-  testWidgets('the PRIMARY credential decides the challenge screen: '
-      'PIN-primary users get the PIN (Phase 5F)',
-      (WidgetTester tester) async {
+  testWidgets(
+      'the PRIMARY credential decides the challenge screen: '
+      'PIN-primary users get the PIN (Phase 5F)', (WidgetTester tester) async {
     final AppContainer container = await pumpApp(tester);
     // Pattern enrolled first, PIN second -> primary is the PIN.
     await container.auth.enrollPattern(const <int>[3, 6, 9, 8]);
@@ -406,7 +410,8 @@ void main() {
     expect(find.byType(PatternUnlockScreen), findsNothing);
   });
 
-  testWidgets('a wrong pattern keeps the challenge up and the app blocked '
+  testWidgets(
+      'a wrong pattern keeps the challenge up and the app blocked '
       '(Phase 5F)', (WidgetTester tester) async {
     final AppContainer container = await pumpApp(tester);
     await container.auth.enrollPattern(const <int>[3, 6, 9, 8]);
@@ -462,8 +467,8 @@ void main() {
     expect(sessionFor(container, 'com.whatsapp'), isNotNull);
   });
 
-
-  testWidgets('a wrong PIN keeps the challenge up and the app blocked '
+  testWidgets(
+      'a wrong PIN keeps the challenge up and the app blocked '
       '(Phase 5E)', (WidgetTester tester) async {
     final AppContainer container = await pumpApp(tester);
     await container.auth.enrollPin('1234');
@@ -480,8 +485,7 @@ void main() {
     // Still locked: the screen stays, the error is visible, and the
     // protected app was never launched.
     expect(find.byType(PinUnlockScreen), findsOneWidget);
-    expect(find.textContaining(PinUnlockScreen.wrongPinPrefix),
-        findsOneWidget);
+    expect(find.textContaining(PinUnlockScreen.wrongPinPrefix), findsOneWidget);
     final StaticInstalledAppsService apps =
         container.installedAppsService as StaticInstalledAppsService;
     expect(apps.launchAppCalls, 0);
@@ -591,7 +595,8 @@ void main() {
     expect(apps.launchedPackages, <String>['com.whatsapp']);
   });
 
-  testWidgets('biometric failure keeps the protected app blocked '
+  testWidgets(
+      'biometric failure keeps the protected app blocked '
       '(Phase 5G)', (WidgetTester tester) async {
     final AppContainer container = await pumpApp(
       tester,
@@ -616,7 +621,8 @@ void main() {
     expect(sessionFor(container, 'com.whatsapp'), isNull);
   });
 
-  testWidgets('biometric not enrolled -> no biometric key on the '
+  testWidgets(
+      'biometric not enrolled -> no biometric key on the '
       'challenge', (WidgetTester tester) async {
     final AppContainer container = await pumpApp(tester);
     await container.auth.enrollPin('1234');
@@ -968,8 +974,7 @@ void main() {
     expect(sessionFor(container, 'com.whatsapp'), isNull);
   });
 
-  testWidgets(
-      'the hidden state counts as a real leave (Phase 5P)',
+  testWidgets('the hidden state counts as a real leave (Phase 5P)',
       (WidgetTester tester) async {
     final AppContainer container = await pumpApp(tester);
     await container.auth.enrollPin('1234');
@@ -1195,8 +1200,7 @@ void main() {
     expect(sessionFor(container, 'com.whatsapp'), isNotNull);
   });
 
-  testWidgets(
-      'sleep/wake while a challenge is up never stacks (Phase 5R)',
+  testWidgets('sleep/wake while a challenge is up never stacks (Phase 5R)',
       (WidgetTester tester) async {
     final AppContainer container = await pumpApp(tester);
     await container.auth.enrollPin('1234');
@@ -1224,8 +1228,7 @@ void main() {
     expect(overlay.secureWindow, isFalse);
   });
 
-  testWidgets(
-      'rapid sleep/wake cycles stay consistent (Phase 5R)',
+  testWidgets('rapid sleep/wake cycles stay consistent (Phase 5R)',
       (WidgetTester tester) async {
     final AppContainer container = await pumpApp(tester);
     await container.auth.enrollPin('1234');
@@ -1487,5 +1490,4 @@ class _FakeBiometricService implements BiometricService {
     BiometricOptions? options,
   }) async =>
       Result.success(passes);
-
 }

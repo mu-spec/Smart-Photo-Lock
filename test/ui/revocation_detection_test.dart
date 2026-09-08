@@ -24,8 +24,7 @@ void main() {
     addTearDown(tester.view.reset);
   }
 
-  testWidgets(
-      'revoking a granted capability shows the alert banner and badge',
+  testWidgets('revoking a granted capability shows the alert banner and badge',
       (WidgetTester tester) async {
     useTallViewport(tester);
     final AppContainer container = AppContainer.inMemory(
@@ -41,8 +40,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text(SecurityScreen.revokedTitle), findsNothing);
 
-    // Overlay is a required capability, unlike the two alternative
-    // detectors, so revoking it must raise the warning.
+    // Overlay is a required capability, so revoking it raises the warning.
     final StaticOverlayLockService overlay =
         container.overlay as StaticOverlayLockService;
     overlay.overlayGranted = false;
@@ -131,8 +129,7 @@ void main() {
     // All three revoked in the system settings.
     (container.installedAppsService as StaticInstalledAppsService)
         .usageAccessGranted = false;
-    (container.accessibility as StaticAccessibilityLockService).enabled =
-        false;
+    (container.accessibility as StaticAccessibilityLockService).enabled = false;
     (container.overlay as StaticOverlayLockService).overlayGranted = false;
     await container.capabilityMonitor.probe();
     await tester.pumpAndSettle();
@@ -141,8 +138,7 @@ void main() {
     // The user restores ALL three and returns to the app.
     (container.installedAppsService as StaticInstalledAppsService)
         .usageAccessGranted = true;
-    (container.accessibility as StaticAccessibilityLockService).enabled =
-        true;
+    (container.accessibility as StaticAccessibilityLockService).enabled = true;
     (container.overlay as StaticOverlayLockService).overlayGranted = true;
     await resumeFromSettings(tester);
 
@@ -171,11 +167,10 @@ void main() {
     await tester.tap(find.byKey(const Key('nav_security')));
     await tester.pumpAndSettle();
 
-    // Revoke both alternative detectors AND the required overlay.
+    // Revoke both detectors AND the required overlay.
     (container.installedAppsService as StaticInstalledAppsService)
         .usageAccessGranted = false;
-    (container.accessibility as StaticAccessibilityLockService).enabled =
-        false;
+    (container.accessibility as StaticAccessibilityLockService).enabled = false;
     (container.overlay as StaticOverlayLockService).overlayGranted = false;
     await container.capabilityMonitor.probe();
     await tester.pumpAndSettle();
@@ -186,9 +181,14 @@ void main() {
     await resumeFromSettings(tester);
     expect(find.text(SecurityScreen.revokedTitle), findsOneWidget);
 
-    // Restore either detector: minimum capability health is recovered.
+    // Restoring Usage Access alone is still delayed protection; the required
+    // early Accessibility detector must return before the warning clears.
     (container.installedAppsService as StaticInstalledAppsService)
         .usageAccessGranted = true;
+    await resumeFromSettings(tester);
+    expect(find.text(SecurityScreen.revokedTitle), findsOneWidget);
+
+    (container.accessibility as StaticAccessibilityLockService).enabled = true;
     await resumeFromSettings(tester);
     expect(find.text(SecurityScreen.revokedTitle), findsNothing);
 
