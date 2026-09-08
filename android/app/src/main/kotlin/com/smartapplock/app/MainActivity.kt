@@ -1,5 +1,6 @@
 package com.smartapplock.app
 
+import android.content.Intent
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 
@@ -23,8 +24,21 @@ import io.flutter.embedding.engine.FlutterEngine
 class MainActivity : FlutterFragmentActivity() {
 
     override fun onResume() {
-        super.onResume()
+        // Set this before Flutter receives the resumed lifecycle. A Dart
+        // post-frame ready acknowledgement issued from that callback must
+        // never be rejected because native state was one callback behind.
         ProtectionRuntime.activityResumed = true
+        super.onResume()
+        WatcherService.onChallengeActivityAvailable(this)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        // singleTop/reorder-to-front may deliver a new intent without
+        // recreating Flutter. Keep the native retry path armed while the
+        // existing host pulls and reconstructs its pending challenge.
+        WatcherService.onChallengeActivityAvailable(this)
     }
 
     override fun onPause() {

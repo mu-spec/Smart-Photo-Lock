@@ -1,5 +1,6 @@
 import '../../utilities/result.dart';
 import '../overlay_lock_service.dart';
+import '../pending_lock_challenge.dart';
 
 /// In-memory [OverlayLockService] for tests, previews and the in-memory
 /// [AppContainer] (Phase 4D).
@@ -26,6 +27,8 @@ class StaticOverlayLockService implements OverlayLockService {
   int hideLockChallengeCalls = 0;
   int markChallengeReadyCalls = 0;
   String? lastReadyPackage;
+  int? lastReadyGeneration;
+  int nextChallengeGeneration = 0;
 
   /// The most recently challenged package, or null.
   String? lastLockPackage;
@@ -45,11 +48,18 @@ class StaticOverlayLockService implements OverlayLockService {
   }
 
   @override
-  Future<Result<void>> showLockChallenge(String packageName) async {
+  Future<Result<PendingLockChallenge>> showLockChallenge(
+    String packageName,
+  ) async {
     showLockChallengeCalls++;
     lastLockPackage = packageName;
     return showLockChallengeSucceeds
-        ? Result.success(null)
+        ? Result.success(
+            PendingLockChallenge(
+              packageName: packageName,
+              generation: ++nextChallengeGeneration,
+            ),
+          )
         : Result.failure(StateError('Could not show the lock challenge.'));
   }
 
@@ -60,9 +70,12 @@ class StaticOverlayLockService implements OverlayLockService {
   }
 
   @override
-  Future<Result<void>> markChallengeReady(String packageName) async {
+  Future<Result<void>> markChallengeReady(
+    PendingLockChallenge challenge,
+  ) async {
     markChallengeReadyCalls++;
-    lastReadyPackage = packageName;
+    lastReadyPackage = challenge.packageName;
+    lastReadyGeneration = challenge.generation;
     return Result.success(null);
   }
 

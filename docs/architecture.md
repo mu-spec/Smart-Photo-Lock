@@ -1685,6 +1685,37 @@ Verification (run by the developer):
 - `flutter test test/ui/lock_challenge_test.dart --concurrency=1`
 - `flutter test --concurrency=1`
 
+## C0 physical QA fix #2 — screen-off/wake recovery
+
+The native watcher owns wake recovery because `ACTION_SCREEN_ON` is delivered
+while the keyguard may still reject or defer a background Activity launch.
+Screen-off now revokes both authorization layers, creates a new persisted
+`PendingChallenge(packageName, generation)`, and raises the pre-armed shield.
+The generation invalidates callbacks captured by any pre-sleep Flutter route.
+
+Recovery ordering is:
+
+1. `ACTION_SCREEN_ON`: shield first, then one immediate Activity attempt.
+2. `ACTION_USER_PRESENT`: a separate immediate attempt after keyguard unlock;
+   it is never throttled by the earlier screen-on attempt.
+3. A rate-limited native retry remains scheduled while the pending ticket is
+   latched. Android accepting `startActivity` is not treated as proof that the
+   challenge became visible.
+4. `MainActivity.onResume`/`onNewIntent` keep recovery armed. The existing
+   Flutter host pulls pending native state again on resume and during its
+   heartbeat instead of reading it only at cold bootstrap.
+5. The shield is removed only when a resumed, rendered route acknowledges the
+   exact package and generation. Successful authentication must consume that
+   same handoff ticket before native authorization can be granted.
+
+If Android repeatedly refuses the challenge Activity, the shield exposes a
+`Return to Home` action. It never grants the protected package: it requests the
+system launcher and removes the shield only after foreground detection confirms
+that the unprotected default Home package actually became active.
+
+No new permission is required. Actual keyguard, compositor, background-launch,
+and OEM task-manager behavior remains physical-device-only validation.
+
 ## Phase 5 mobile-QA fix #3A — safe settle timing (scheduler crash fix)
 
 Fix #3's settle mechanism read `SchedulerBinding.currentFrameTimeStamp`

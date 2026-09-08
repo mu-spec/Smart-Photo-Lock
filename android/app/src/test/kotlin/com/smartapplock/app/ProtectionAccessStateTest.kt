@@ -1,6 +1,8 @@
 package com.smartapplock.app
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -11,6 +13,7 @@ class ProtectionAccessStateTest {
     @Before
     fun resetAuthorizationState() {
         ProtectionAccessState.revokeAll()
+        ProtectionRuntime.invalidateChallengeHandoff()
         ProtectionAccessState.setGracePeriod(0L)
         ProtectionAccessState.observeForeground(
             packageName = launcher,
@@ -78,5 +81,29 @@ class ProtectionAccessStateTest {
             ProtectionAccessState.Decision.CHALLENGE,
             ProtectionAccessState.observeForeground(locked, true, 1_001L),
         )
+    }
+
+    @Test
+    fun staleChallengeHandoffCannotAuthorizeAfterScreenOffInvalidation() {
+        val beforeSleep = ProtectionStateStore.PendingChallenge(locked, 8L)
+        ProtectionRuntime.markChallengeReady(beforeSleep)
+
+        // ACTION_SCREEN_OFF performs this invalidation before creating the
+        // replacement pending generation.
+        ProtectionRuntime.invalidateChallengeHandoff()
+
+        assertFalse(ProtectionRuntime.consumeChallengeHandoff(locked, 8L))
+    }
+
+    @Test
+    fun challengeHandoffIsPackageGenerationSpecificAndSingleUse() {
+        ProtectionRuntime.invalidateChallengeHandoff()
+        ProtectionRuntime.markChallengeReady(
+            ProtectionStateStore.PendingChallenge(locked, 9L),
+        )
+
+        assertFalse(ProtectionRuntime.consumeChallengeHandoff(locked, 8L))
+        assertTrue(ProtectionRuntime.consumeChallengeHandoff(locked, 9L))
+        assertFalse(ProtectionRuntime.consumeChallengeHandoff(locked, 9L))
     }
 }

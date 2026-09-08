@@ -9,6 +9,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
+import android.widget.Button
 import android.widget.TextView
 
 /**
@@ -50,6 +51,23 @@ object ProtectionOverlayController {
                     FrameLayout.LayoutParams.MATCH_PARENT,
                     FrameLayout.LayoutParams.MATCH_PARENT,
                 ),
+            )
+            val exitButton = Button(appContext).apply {
+                text = "Return to Home"
+                isAllCaps = false
+                setOnClickListener {
+                    WatcherService.requestSafeExitToHome(appContext)
+                }
+            }
+            root.addView(
+                exitButton,
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL,
+                ).apply {
+                    bottomMargin = 72
+                },
             )
             @Suppress("DEPRECATION")
             val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

@@ -1,4 +1,5 @@
 import '../utilities/result.dart';
+import 'pending_lock_challenge.dart';
 
 enum ProtectionEngineState { inactive, healthy, recovering, unavailable }
 
@@ -76,7 +77,7 @@ abstract interface class WatcherService {
   /// authentication. Native state is process-local and disappears on reboot
   /// or process death, preserving fail-closed recovery.
   Future<Result<void>> authorizePackage(
-    String packageName, {
+    PendingLockChallenge challenge, {
     Duration sessionWindow = const Duration(minutes: 2),
   });
 
@@ -89,7 +90,7 @@ abstract interface class WatcherService {
 
   /// Reads a package queued by native recovery after process death/reboot.
   /// The native shield latch remains set until the rendered challenge handoff.
-  Future<Result<String?>> takePendingChallenge();
+  Future<Result<PendingLockChallenge?>> takePendingChallenge();
 
   /// Current native enforcement health for truthful baseline UI.
   Future<Result<ProtectionEngineHealth>> getHealth();

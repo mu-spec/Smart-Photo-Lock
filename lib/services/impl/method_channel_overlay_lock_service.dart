@@ -2,6 +2,7 @@ import 'package:flutter/services.dart';
 
 import '../../utilities/result.dart';
 import '../overlay_lock_service.dart';
+import '../pending_lock_challenge.dart';
 
 /// Production [OverlayLockService] over the native
 /// `smart_app_lock/overlay` channel (Phase 4D capability state; 5D
@@ -28,6 +29,8 @@ class MethodChannelOverlayLockService implements OverlayLockService {
       return Result.failure(e);
     } on MissingPluginException catch (e) {
       return Result.failure(e);
+    } catch (e, stackTrace) {
+      return Result.failure(e, stackTrace);
     }
   }
 
@@ -50,14 +53,17 @@ class MethodChannelOverlayLockService implements OverlayLockService {
   }
 
   @override
-  Future<Result<void>> showLockChallenge(String packageName) async {
+  Future<Result<PendingLockChallenge>> showLockChallenge(
+    String packageName,
+  ) async {
     try {
-      final bool? shown = await _channel.invokeMethod<bool>(
+      final Map<dynamic, dynamic>? shown =
+          await _channel.invokeMethod<Map<dynamic, dynamic>>(
         'showLockChallenge',
         <String, dynamic>{'packageName': packageName},
       );
-      if (shown == true) {
-        return Result.success(null);
+      if (shown != null) {
+        return Result.success(PendingLockChallenge.fromMap(shown));
       }
       return Result.failure(
         StateError('Could not show the lock challenge.'),
@@ -66,6 +72,8 @@ class MethodChannelOverlayLockService implements OverlayLockService {
       return Result.failure(e);
     } on MissingPluginException catch (e) {
       return Result.failure(e);
+    } catch (e, stackTrace) {
+      return Result.failure(e, stackTrace);
     }
   }
 
@@ -88,11 +96,13 @@ class MethodChannelOverlayLockService implements OverlayLockService {
   }
 
   @override
-  Future<Result<void>> markChallengeReady(String packageName) async {
+  Future<Result<void>> markChallengeReady(
+    PendingLockChallenge challenge,
+  ) async {
     try {
       final bool? ready = await _channel.invokeMethod<bool>(
         'markChallengeReady',
-        <String, dynamic>{'packageName': packageName},
+        challenge.toMap(),
       );
       if (ready == true) {
         return Result.success(null);

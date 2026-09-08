@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:smart_app_lock/services/impl/method_channel_overlay_lock_service.dart';
 import 'package:smart_app_lock/services/impl/static_overlay_lock_service.dart';
 import 'package:smart_app_lock/services/overlay_lock_service.dart';
+import 'package:smart_app_lock/services/pending_lock_challenge.dart';
 
 /// Phase 4D: the overlay capability bridge — wire format on the Dart side
 /// and the static test service.
@@ -71,7 +72,10 @@ void main() {
       messenger.setMockMethodCallHandler(channel, (MethodCall call) async {
         calls.add(call);
         if (call.method == 'showLockChallenge') {
-          return true;
+          return <String, dynamic>{
+            'packageName': 'com.whatsapp',
+            'generation': 7,
+          };
         }
         if (call.method == 'hideLockChallenge') {
           return true;
@@ -82,29 +86,40 @@ void main() {
         return null;
       });
       final OverlayLockService service = MethodChannelOverlayLockService();
-      expect(
-          (await service.showLockChallenge('com.whatsapp')).isSuccess, isTrue);
+      final shown = await service.showLockChallenge('com.whatsapp');
+      expect(shown.isSuccess, isTrue);
+      expect(shown.valueOrNull?.generation, 7);
       expect((await service.hideLockChallenge()).isSuccess, isTrue);
       expect(
-        (await service.markChallengeReady('com.whatsapp')).isSuccess,
+        (await service.markChallengeReady(shown.valueOrNull!)).isSuccess,
         isTrue,
       );
       expect(
         calls
             .singleWhere((MethodCall c) => c.method == 'markChallengeReady')
             .arguments,
-        <String, dynamic>{'packageName': 'com.whatsapp'},
+        <String, dynamic>{
+          'packageName': 'com.whatsapp',
+          'generation': 7,
+        },
       );
 
       // A native false reports a failure (the challenge could not be
       // presented) — never a fabricated success.
       messenger.setMockMethodCallHandler(
-          channel, (MethodCall call) async => false);
+        channel,
+        (MethodCall call) async =>
+            call.method == 'showLockChallenge' ? null : false,
+      );
       expect(
           (await service.showLockChallenge('com.whatsapp')).isFailure, isTrue);
       expect((await service.hideLockChallenge()).isFailure, isTrue);
       expect(
-        (await service.markChallengeReady('com.whatsapp')).isFailure,
+        (await service.markChallengeReady(const PendingLockChallenge(
+          packageName: 'com.whatsapp',
+          generation: 7,
+        )))
+            .isFailure,
         isTrue,
       );
     });
@@ -118,7 +133,11 @@ void main() {
           (await service.showLockChallenge('com.whatsapp')).isFailure, isTrue);
       expect((await service.hideLockChallenge()).isFailure, isTrue);
       expect(
-        (await service.markChallengeReady('com.whatsapp')).isFailure,
+        (await service.markChallengeReady(const PendingLockChallenge(
+          packageName: 'com.whatsapp',
+          generation: 7,
+        )))
+            .isFailure,
         isTrue,
       );
     });
@@ -170,17 +189,15 @@ void main() {
         '(Phase 5D)', () async {
       final StaticOverlayLockService service = StaticOverlayLockService();
 
-      expect(
-        (await service.showLockChallenge('com.whatsapp')).isSuccess,
-        isTrue,
-      );
+      final shown = await service.showLockChallenge('com.whatsapp');
+      expect(shown.isSuccess, isTrue);
       expect(service.showLockChallengeCalls, 1);
       expect(service.lastLockPackage, 'com.whatsapp');
 
       expect((await service.hideLockChallenge()).isSuccess, isTrue);
       expect(service.hideLockChallengeCalls, 1);
       expect(
-        (await service.markChallengeReady('com.whatsapp')).isSuccess,
+        (await service.markChallengeReady(shown.valueOrNull!)).isSuccess,
         isTrue,
       );
       expect(service.markChallengeReadyCalls, 1);

@@ -39,6 +39,8 @@ object WatcherChannel {
                         }
                         "authorizePackage" -> {
                             val packageName = call.argument<String>("packageName") ?: ""
+                            val generation =
+                                call.argument<Number>("generation")?.toLong() ?: -1L
                             val sessionWindowMs =
                                 call.argument<Number>("sessionWindowMilliseconds")
                                     ?.toLong() ?: 0L
@@ -46,6 +48,7 @@ object WatcherChannel {
                                 WatcherService.authorizePackage(
                                     activity,
                                     packageName,
+                                    generation,
                                     sessionWindowMs,
                                 ),
                             )
@@ -63,7 +66,7 @@ object WatcherChannel {
                             result.success(true)
                         }
                         "takePendingChallenge" -> result.success(
-                            ProtectionStateStore.takePendingChallenge(activity),
+                            ProtectionStateStore.takePendingChallenge(activity)?.toMap(),
                         )
                         "getHealth" -> result.success(health(activity))
                         else -> result.notImplemented()

@@ -5,10 +5,22 @@ import android.os.SystemClock
 
 /** Minimal non-secret state required to recover enforcement without Dart. */
 object ProtectionStateStore {
+    data class PendingChallenge(
+        val packageName: String,
+        val generation: Long,
+    ) {
+        fun toMap(): Map<String, Any> = mapOf(
+            "packageName" to packageName,
+            "generation" to generation,
+        )
+    }
+
     private const val PREFS = "smart_app_lock_protection_bootstrap"
     private const val KEY_ENABLED = "enabled"
     private const val KEY_PACKAGES = "protected_packages"
     private const val KEY_PENDING = "pending_challenge"
+    private const val KEY_PENDING_GENERATION = "pending_challenge_generation"
+    private const val KEY_NEXT_GENERATION = "next_challenge_generation"
     private const val KEY_LAST_ERROR = "last_error"
 
     fun configure(context: Context, enabled: Boolean, packages: Set<String>) {
@@ -21,6 +33,11 @@ object ProtectionStateStore {
             .putBoolean(KEY_ENABLED, enabled && normalized.isNotEmpty())
             .putStringSet(KEY_PACKAGES, normalized)
             .apply()
+        val pending = pendingChallenge(context)
+        if (!enabled || (pending != null && pending.packageName !in normalized)) {
+            clearPendingChallenge(context)
+            ProtectionRuntime.invalidateChallengeHandoff()
+        }
     }
 
     fun isEnabled(context: Context): Boolean =
@@ -34,12 +51,45 @@ object ProtectionStateStore {
     fun isProtected(context: Context, packageName: String): Boolean =
         isEnabled(context) && protectedPackages(context).contains(packageName)
 
-    fun setPendingChallenge(context: Context, packageName: String) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putString(KEY_PENDING, packageName).apply()
+    /**
+     * Returns the current ticket for [packageName], creating one when needed.
+     * Repeated detector/retry events for the same package keep one generation.
+     */
+    @Synchronized
+    fun ensurePendingChallenge(
+        context: Context,
+        packageName: String,
+    ): PendingChallenge {
+        val preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val current = readPendingChallenge(preferences)
+        if (current?.packageName == packageName) return current
+        return replacePendingChallenge(context, packageName)
     }
 
-    fun takePendingChallenge(context: Context): String? {
+    /**
+     * Creates a new ticket even when the package is unchanged. Screen-off uses
+     * this to invalidate every pre-sleep ready/authentication callback.
+     */
+    @Synchronized
+    fun replacePendingChallenge(
+        context: Context,
+        packageName: String,
+    ): PendingChallenge {
+        val preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val generation = preferences.getLong(KEY_NEXT_GENERATION, 0L) + 1L
+        val pending = PendingChallenge(packageName, generation)
+        // commit() is intentional: the fail-closed recovery ticket must reach
+        // disk before Android can kill the process during screen-off/wake.
+        preferences.edit()
+            .putString(KEY_PENDING, packageName)
+            .putLong(KEY_PENDING_GENERATION, generation)
+            .putLong(KEY_NEXT_GENERATION, generation)
+            .commit()
+        ProtectionRuntime.invalidateChallengeHandoff()
+        return pending
+    }
+
+    fun takePendingChallenge(context: Context): PendingChallenge? {
         // The pending package is also the native shield's fail-closed latch.
         // Reading it during Flutter reconstruction must not clear it. The
         // latch is cleared only after a resumed, rendered challenge confirms
@@ -48,19 +98,41 @@ object ProtectionStateStore {
         return pendingChallenge(context)
     }
 
-    fun pendingChallenge(context: Context): String? =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY_PENDING, null)
+    fun pendingChallenge(context: Context): PendingChallenge? =
+        readPendingChallenge(
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE),
+        )
 
-    fun clearPendingChallenge(context: Context, expectedPackage: String? = null): Boolean {
+    @Synchronized
+    fun clearPendingChallenge(
+        context: Context,
+        expectedPackage: String? = null,
+        expectedGeneration: Long? = null,
+    ): Boolean {
         val preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        if (expectedPackage != null &&
-            preferences.getString(KEY_PENDING, null) != expectedPackage
-        ) {
+        val pending = readPendingChallenge(preferences)
+        if (expectedPackage != null && pending?.packageName != expectedPackage) {
             return false
         }
-        preferences.edit().remove(KEY_PENDING).apply()
+        if (expectedGeneration != null && pending?.generation != expectedGeneration) {
+            return false
+        }
+        preferences.edit()
+            .remove(KEY_PENDING)
+            .remove(KEY_PENDING_GENERATION)
+            .apply()
         return true
+    }
+
+    private fun readPendingChallenge(
+        preferences: android.content.SharedPreferences,
+    ): PendingChallenge? {
+        val packageName = preferences.getString(KEY_PENDING, null)
+            ?.takeIf { it.isNotBlank() } ?: return null
+        val generation = preferences.getLong(KEY_PENDING_GENERATION, 0L)
+        // Legacy state from an older build is still fail-closed. Upgrade it
+        // to generation zero; the next replacement gets a fresh generation.
+        return PendingChallenge(packageName, generation)
     }
 
     fun setLastError(context: Context, message: String?) {
@@ -85,12 +157,37 @@ object ProtectionRuntime {
     @Volatile private var lastHeartbeatElapsedMs = 0L
     @Volatile var activityResumed = false
 
+    @Volatile private var readyChallenge: ProtectionStateStore.PendingChallenge? = null
+
     fun heartbeat() {
         lastHeartbeatElapsedMs = SystemClock.elapsedRealtime()
     }
 
     fun markEngineUnavailable() {
         lastHeartbeatElapsedMs = 0L
+    }
+
+    @Synchronized
+    fun markChallengeReady(challenge: ProtectionStateStore.PendingChallenge) {
+        readyChallenge = challenge
+    }
+
+    @Synchronized
+    fun consumeChallengeHandoff(
+        packageName: String,
+        generation: Long,
+    ): Boolean {
+        val ready = readyChallenge
+        if (ready?.packageName != packageName || ready.generation != generation) {
+            return false
+        }
+        readyChallenge = null
+        return true
+    }
+
+    @Synchronized
+    fun invalidateChallengeHandoff() {
+        readyChallenge = null
     }
 
     fun isEngineHealthy(nowElapsedMs: Long = SystemClock.elapsedRealtime()): Boolean =

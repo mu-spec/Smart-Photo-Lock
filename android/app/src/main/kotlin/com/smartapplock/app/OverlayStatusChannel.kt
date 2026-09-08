@@ -56,12 +56,14 @@ object OverlayStatusChannel {
                 "showLockChallenge" -> {
                     try {
                         val packageName = call.argument<String>("packageName")
-                        if (!packageName.isNullOrBlank()) {
-                            ProtectionStateStore.setPendingChallenge(
-                                activity,
-                                packageName,
-                            )
+                        if (packageName.isNullOrBlank()) {
+                            result.success(null)
+                            return@setMethodCallHandler
                         }
+                        val pending = ProtectionStateStore.ensurePendingChallenge(
+                            activity,
+                            packageName,
+                        )
                         // Cover first, then launch: a blocked/delayed
                         // background activity start can never expose the
                         // protected app as usable content.
@@ -69,7 +71,9 @@ object OverlayStatusChannel {
                         val launched = shielded &&
                             (ProtectionRuntime.activityResumed ||
                                 launchLockChallenge(activity))
-                        result.success(shielded && launched)
+                        result.success(
+                            if (shielded && launched) pending.toMap() else null,
+                        )
                     } catch (e: Exception) {
                         result.error(
                             "overlay_error",
@@ -79,25 +83,53 @@ object OverlayStatusChannel {
                     }
                 }
                 "hideLockChallenge" -> {
-                    result.success(ProtectionOverlayController.hide())
+                    // Authentication may race with ACTION_SCREEN_OFF. A new
+                    // wake ticket always wins; never hide its shield from an
+                    // older challenge's success path.
+                    result.success(
+                        ProtectionStateStore.pendingChallenge(activity) == null &&
+                            ProtectionOverlayController.hide(),
+                    )
                 }
                 "markChallengeReady" -> {
                     // Never drop the hand-off shield for an off-screen
                     // Flutter route, or clear a newer package's latch with a
                     // stale post-frame callback from an older challenge.
                     val packageName = call.argument<String>("packageName")
+                    val generation =
+                        call.argument<Number>("generation")?.toLong() ?: -1L
                     if (ProtectionRuntime.activityResumed &&
-                        !packageName.isNullOrBlank()
+                        !packageName.isNullOrBlank() &&
+                        generation >= 0L
                     ) {
-                        // Clear only this package. If a newer package replaced
-                        // the latch, its pending recovery survives; the
-                        // already-rendered Flutter challenge is nevertheless
-                        // a safe opaque hand-off surface for the shield.
-                        ProtectionStateStore.clearPendingChallenge(
+                        // Clear and hide only for the exact ticket. Screen-off
+                        // replaces the generation, so a pre-sleep post-frame
+                        // callback cannot remove the wake shield.
+                        val cleared = ProtectionStateStore.clearPendingChallenge(
                             activity,
                             packageName,
+                            generation,
                         )
-                        result.success(ProtectionOverlayController.hide())
+                        if (cleared) {
+                            ProtectionRuntime.markChallengeReady(
+                                ProtectionStateStore.PendingChallenge(
+                                    packageName,
+                                    generation,
+                                ),
+                            )
+                            val hidden = ProtectionOverlayController.hide()
+                            if (hidden) {
+                                WatcherService.onChallengeHandoffComplete()
+                            } else {
+                                WatcherService.onChallengeHandoffFailed(
+                                    activity,
+                                    packageName,
+                                )
+                            }
+                            result.success(hidden)
+                        } else {
+                            result.success(false)
+                        }
                     } else {
                         result.success(false)
                     }
@@ -168,7 +200,9 @@ object OverlayStatusChannel {
         return try {
             val intent = Intent(context, MainActivity::class.java)
             intent.addFlags(
-                Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT,
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP,
             )
             context.startActivity(intent)
             true

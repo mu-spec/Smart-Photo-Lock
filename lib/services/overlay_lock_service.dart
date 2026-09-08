@@ -1,4 +1,5 @@
 import '../utilities/result.dart';
+import 'pending_lock_challenge.dart';
 
 /// Bridge to Android's overlay API and native recovery shield.
 ///
@@ -15,12 +16,12 @@ abstract interface class OverlayLockService {
   Future<Result<void>> requestOverlayPermission();
 
   /// Shows the lock challenge on top of the protected app.
-  Future<Result<void>> showLockChallenge(String packageName);
+  Future<Result<PendingLockChallenge>> showLockChallenge(String packageName);
 
   /// Removes the native fail-closed shield only after Android confirms the
   /// Flutter challenge activity is resumed and ready for [packageName]. A
   /// stale callback cannot clear a newer package's pending shield latch.
-  Future<Result<void>> markChallengeReady(String packageName);
+  Future<Result<void>> markChallengeReady(PendingLockChallenge challenge);
 
   /// Dismisses the lock challenge (called after a successful unlock).
   Future<Result<void>> hideLockChallenge();

@@ -4,6 +4,7 @@ import 'package:smart_app_lock/data/models/protected_app.dart';
 import 'package:smart_app_lock/data/repositories/protected_apps_repository.dart';
 import 'package:smart_app_lock/protection/protection_bootstrap.dart';
 import 'package:smart_app_lock/services/impl/static_watcher_service.dart';
+import 'package:smart_app_lock/services/pending_lock_challenge.dart';
 import 'package:smart_app_lock/utilities/result.dart';
 
 void main() {
@@ -85,11 +86,17 @@ void main() {
 
     expect(
       (await watcher.takePendingChallenge()).valueOrNull,
-      'com.example.private',
+      const PendingLockChallenge(
+        packageName: 'com.example.private',
+        generation: 1,
+      ),
     );
     expect(
       (await watcher.takePendingChallenge()).valueOrNull,
-      'com.example.private',
+      const PendingLockChallenge(
+        packageName: 'com.example.private',
+        generation: 1,
+      ),
     );
   });
 }

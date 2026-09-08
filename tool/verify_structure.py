@@ -452,10 +452,10 @@ def run():
         check(
             "stale heartbeat never suppresses native early enforcement",
             "ProtectionRuntime.isEngineHealthy()) return" not in watcher_src
-            and "recoverProtected(context, packageName)" in watcher_src,
+            and "WakeRecoverySignal.FOREGROUND" in watcher_src,
         )
         pending_pos = watcher_src.find(
-            "ProtectionStateStore.setPendingChallenge(context, packageName)",
+            "ProtectionStateStore.ensurePendingChallenge(context, packageName)",
             watcher_src.find("private fun recoverProtected"),
         )
         recovery_shield_pos = watcher_src.find(
@@ -478,13 +478,24 @@ def run():
         )
         check("recent Accessibility events outrank historical UsageEvents",
               arbitration)
+        wake_gate_src = read_text(os.path.join(kotlin_dir, "WakeRecoveryGate.kt"))
         duplicate_guard = (
-            "packageName != lastRecoveryPackage" in watcher_src
-            and "now - lastLaunchAttemptElapsedMs >= RECOVERY_RETRY_MS"
-            in watcher_src
+            "lastScreenOnCycle == screenCycle" in wake_gate_src
+            and "lastUserPresentCycle == screenCycle" in wake_gate_src
+            and "nowElapsedMs - lastAttemptElapsedMs >= retryIntervalMs"
+            in wake_gate_src
         )
         check("duplicate foreground events do not stack challenge launches",
               duplicate_guard)
+        wake_recovery = (
+            "Intent.ACTION_USER_PRESENT" in watcher_src
+            and "WakeRecoverySignal.SCREEN_ON" in watcher_src
+            and "WakeRecoverySignal.USER_PRESENT" in watcher_src
+            and "handler.postDelayed(recoveryRetry, RECOVERY_RETRY_MS)"
+            in watcher_src
+        )
+        check("screen wake has user-present and deterministic retry recovery",
+              wake_recovery)
         access_state_src = read_text(recovery_sources["ProtectionAccessState.kt"])
         native_sessions_fail_closed = (
             "fun authorize(" in access_state_src
@@ -518,7 +529,7 @@ def run():
         check("pending challenge read is non-destructive until hand-off",
               pending_latched)
         host_src = read_text(os.path.join(ROOT, "lib/app/lock_challenge_host.dart"))
-        auth_pos = host_src.find("watcher.authorizePackage(packageName)")
+        auth_pos = host_src.find("watcher.authorizePackage(")
         hide_pos = host_src.find("overlay.hideLockChallenge()", auth_pos)
         launch_pos = host_src.find("installedAppsService.launchApp", auth_pos)
         check(
@@ -527,12 +538,25 @@ def run():
         )
         check(
             "newer pending package rejects stale challenge authorization",
-            "pending != null && pending != packageName" in watcher_src
+            "pending.packageName != packageName || pending.generation != generation"
+            in watcher_src
             and "return false" in watcher_src[
-                watcher_src.find("pending != null && pending != packageName"):
+                watcher_src.find("pending.packageName != packageName"):
                 watcher_src.find("ProtectionAccessState.authorize")
             ],
         )
+        overlay_channel_src = read_text(os.path.join(
+            kotlin_dir, "OverlayStatusChannel.kt"
+        ))
+        generation_handoff = (
+            "expectedGeneration" in store_src
+            and "replacePendingChallenge" in watcher_src
+            and "ProtectionRuntime.invalidateChallengeHandoff()" in watcher_src
+            and 'call.argument<Number>("generation")' in overlay_channel_src
+            and "if (cleared)" in overlay_channel_src
+        )
+        check("screen-off generation rejects stale challenge-ready callbacks",
+              generation_handoff)
         boot_is_conditional = (
             "ProtectionStateStore.isEnabled" in boot_src
             and "WatcherService.start" in boot_src

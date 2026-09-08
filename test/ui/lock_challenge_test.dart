@@ -1267,6 +1267,75 @@ void main() {
     expect(sessionFor(container, 'com.whatsapp'), isNotNull);
   });
 
+  testWidgets(
+      'an existing MainActivity reconstructs a native wake challenge on resume',
+      (WidgetTester tester) async {
+    final AppContainer container = await pumpApp(tester);
+    await container.auth.enrollPin('1234');
+    await protect(container, 'com.whatsapp');
+    final StaticWatcherService watcher =
+        container.watcher as StaticWatcherService;
+    final StaticOverlayLockService overlay =
+        container.overlay as StaticOverlayLockService;
+
+    // Native screen-off/wake recovery created this while the Flutter host was
+    // alive but backgrounded. No fresh Accessibility or UsageEvents signal is
+    // emitted: resume itself must pull and reconstruct the ticket.
+    watcher
+      ..pendingChallenge = 'com.whatsapp'
+      ..pendingChallengeGeneration = 41;
+    overlay.nextChallengeGeneration = 40;
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+    expect(overlay.lastReadyPackage, 'com.whatsapp');
+    expect(overlay.lastReadyGeneration, 41);
+    expect(sessionFor(container, 'com.whatsapp'), isNull);
+  });
+
+  testWidgets(
+      'screen-off generation replaces the handoff of an existing challenge',
+      (WidgetTester tester) async {
+    final AppContainer container = await pumpApp(tester);
+    await container.auth.enrollPin('1234');
+    await protect(container, 'com.whatsapp');
+    final StaticWatcherService watcher =
+        container.watcher as StaticWatcherService;
+    final StaticOverlayLockService overlay =
+        container.overlay as StaticOverlayLockService;
+
+    await openApp(tester, container, 'com.whatsapp');
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+    final int firstGeneration = overlay.lastReadyGeneration!;
+
+    // Model native ACTION_SCREEN_OFF replacing the same package's ticket.
+    watcher
+      ..pendingChallenge = 'com.whatsapp'
+      ..pendingChallengeGeneration = firstGeneration + 1;
+    (container.screenState as StaticScreenStateService).emitScreenOff();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(PinUnlockScreen), findsOneWidget,
+        reason: 'wake recovery must reuse, not stack, the active route');
+    expect(overlay.lastReadyGeneration, firstGeneration + 1,
+        reason: 'only the post-screen-off ticket may hand off the shield');
+    expect(sessionFor(container, 'com.whatsapp'), isNull);
+  });
+
   // -- Phase 5 mobile-QA fix #2: challenge flicker / re-entry ---------------
 
   testWidgets(

@@ -1083,3 +1083,29 @@ Deterministic coverage: watcher channel serialization, native authorization
 ordering, pending-latch semantics, detector arbitration, immediate/grace
 behavior, screen-off revocation, duplicate challenge suppression, and static
 source-order guards. Actual compositor/event timing remains physical-device QA.
+
+---
+
+# C0 physical QA fix #2 — screen-off/wake deadlock
+
+Reproduction before the fix: authenticate a protected app, turn the display
+off, wake and unlock. The native shield remained indefinitely because the only
+active launch attempt ran at `SCREEN_ON` behind keyguard; there was no
+`USER_PRESENT` recovery, no independent retry, and an already-alive Flutter
+host consumed native pending state only during initial bootstrap.
+
+Regression coverage now includes:
+
+- `WakeRecoveryGateTest`: distinct screen-on/user-present attempts, duplicate
+  broadcast coalescing, retry cadence, and repeated screen cycles.
+- `ProtectionAccessStateTest`: authorization revocation plus exact,
+  single-consumption challenge handoffs and stale generation rejection.
+- `lock_challenge_test.dart`: an existing MainActivity reconstructs a pending
+  wake ticket without a new detector event, and screen-off replacement does
+  not stack routes or accept the old handoff generation.
+- watcher/overlay bridge tests: package + generation wire format and failure
+  behavior.
+
+JVM/widget tests cannot reproduce Android keyguard policy, OEM background-start
+restrictions, or compositor ordering. The full screen-off/wake sequence and the
+shield's `Return to Home` escape require the physical-device checklist.

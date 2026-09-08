@@ -7,6 +7,7 @@ import '../protection/access_controller.dart';
 import '../protection/lock_trigger.dart';
 import '../security/credentials/auth_type.dart';
 import '../security/credentials/credential_state.dart';
+import '../services/pending_lock_challenge.dart';
 import '../utilities/result.dart';
 import 'app_container.dart';
 import 'app_scope.dart';
@@ -105,6 +106,11 @@ class _LockChallengeHostState extends State<LockChallengeHost>
   /// the challenge in the foreground.
   String? _lastPresentedPackage;
 
+  /// Exact native hand-off ticket for the active route. Screen-off replaces
+  /// its generation, so callbacks captured before sleep cannot hide or grant
+  /// the wake challenge.
+  PendingLockChallenge? _activeNativeChallenge;
+
   /// Phase 5 mobile-QA fix #2 (challenge flicker / re-entry): true from
   /// the moment WE bring Smart App Lock to the front (`showLockChallenge`
   /// — the native `startActivity` bridge) until the app has actually
@@ -150,6 +156,8 @@ class _LockChallengeHostState extends State<LockChallengeHost>
   /// heartbeats stop, native detection takes over without trusting a stale
   /// "engine active" flag.
   Timer? _heartbeatTimer;
+
+  bool _checkingNativePending = false;
 
   /// Phase 5M: whether the app is currently in the foreground (drives
   /// the pending re-presentation; tracked explicitly so tests and
@@ -218,20 +226,59 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     _heartbeatTimer?.cancel();
     _heartbeatTimer = Timer.periodic(
       const Duration(seconds: 2),
-      (_) => unawaited(container.watcher.heartbeat()),
+      (_) => unawaited(_heartbeatAndRecoverPending()),
     );
     final pending = await container.watcher.takePendingChallenge();
-    final String? packageName = pending.valueOrNull;
-    if (!mounted || packageName == null || packageName.isEmpty) {
+    final PendingLockChallenge? challenge = pending.valueOrNull;
+    if (!mounted || challenge == null) {
       return;
     }
     final AccessDecision decision =
-        await container.accessController.evaluate(packageName);
+        await container.accessController.evaluate(challenge.packageName);
     if (decision == AccessDecision.challenge ||
         decision == AccessDecision.deny) {
-      await _presentChallenge(packageName);
+      await _presentChallenge(challenge.packageName);
     } else {
       await container.overlay.hideLockChallenge();
+    }
+  }
+
+  /// Keeps an already-running Flutter engine attached to native wake state.
+  /// A background-activity start can be accepted but deferred by Android;
+  /// once this Activity is actually resumed, this pull reconstructs the exact
+  /// pending challenge without waiting for a new foreground-app event.
+  Future<void> _heartbeatAndRecoverPending() async {
+    final AppContainer? container = _container;
+    if (container == null || !mounted || _checkingNativePending) return;
+    _checkingNativePending = true;
+    try {
+      await container.watcher.heartbeat();
+      if (!mounted || !_appForeground || _presenting) return;
+      final result = await container.watcher.takePendingChallenge();
+      final PendingLockChallenge? pending = result.valueOrNull;
+      if (!mounted || pending == null) return;
+      if (_challenging) {
+        if (pending.packageName == _lastPresentedPackage &&
+            WidgetsBinding.instance.lifecycleState ==
+                AppLifecycleState.resumed) {
+          _activeNativeChallenge = pending;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && _activeNativeChallenge == pending) {
+              unawaited(container.overlay.markChallengeReady(pending));
+            }
+          });
+        }
+        return;
+      }
+      final AccessDecision decision =
+          await container.accessController.evaluate(pending.packageName);
+      if (mounted &&
+          (decision == AccessDecision.challenge ||
+              decision == AccessDecision.deny)) {
+        await _presentChallenge(pending.packageName);
+      }
+    } finally {
+      _checkingNativePending = false;
     }
   }
 
@@ -411,6 +458,13 @@ class _LockChallengeHostState extends State<LockChallengeHost>
       return;
     }
     final bool screenOff = trigger.takeScreenOffPending();
+    final AppContainer? container = _container;
+    PendingLockChallenge? nativePending;
+    if (container != null) {
+      nativePending =
+          (await container.watcher.takePendingChallenge()).valueOrNull;
+    }
+    if (!mounted) return;
     _diag(
       'resumed challenging=$_challenging screenOffPending=$screenOff '
       'interrupted=$_interruptedChallenge ownInFlight=$_ownPresentationInFlight '
@@ -432,13 +486,27 @@ class _LockChallengeHostState extends State<LockChallengeHost>
       // survive an activity recreation — re-arm FLAG_SECURE whenever a
       // challenge is on screen, so the recents snapshot is protected
       // again even when the platform rebuilt the window under us.
-      final AppContainer? container = AppScope.read(context);
       if (container != null) {
         await container.overlay.setSecureWindow(true);
-        final String? packageName = _lastPresentedPackage;
-        if (packageName != null) {
-          await container.overlay.markChallengeReady(packageName);
+        if (nativePending?.packageName == _lastPresentedPackage) {
+          _activeNativeChallenge = nativePending;
         }
+        final PendingLockChallenge? challenge = _activeNativeChallenge;
+        if (challenge != null) {
+          await container.overlay.markChallengeReady(challenge);
+        }
+      }
+      return;
+    }
+    if (nativePending != null) {
+      _interruptedChallenge = false;
+      final AccessDecision decision = await container?.accessController
+              .evaluate(nativePending.packageName) ??
+          AccessDecision.challenge;
+      if (mounted &&
+          (decision == AccessDecision.challenge ||
+              decision == AccessDecision.deny)) {
+        await _presentChallenge(nativePending.packageName);
       }
       return;
     }
@@ -569,6 +637,15 @@ class _LockChallengeHostState extends State<LockChallengeHost>
         }
         return;
       }
+      final PendingLockChallenge? nativeChallenge = shown.valueOrNull;
+      if (nativeChallenge == null ||
+          nativeChallenge.packageName != packageName) {
+        _ownPresentationInFlight = false;
+        _diag(
+            '$diagId PRESENT-FAIL invalid-native-ticket package=$packageName');
+        return;
+      }
+      _activeNativeChallenge = nativeChallenge;
       _diag('$diagId PRESENTED package=$packageName');
 
       // Phase 5O (recents hardening): FLAG_SECURE keeps the recents
@@ -614,7 +691,11 @@ class _LockChallengeHostState extends State<LockChallengeHost>
         // reached a rendered frame. Native also verifies that MainActivity
         // is resumed; if a background launch was blocked, the shield stays.
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          unawaited(container.overlay.markChallengeReady(packageName));
+          if (mounted && _activeNativeChallenge == nativeChallenge) {
+            unawaited(
+              container.overlay.markChallengeReady(nativeChallenge),
+            );
+          }
         });
         final bool? unlocked = await unlockFuture;
         // Phase 5I: the unlock session is granted ONLY on an explicit
@@ -639,8 +720,15 @@ class _LockChallengeHostState extends State<LockChallengeHost>
           // Native sees the protected app before Dart does. Mirror only this
           // short-lived authorization before dropping the shield. Any bridge
           // failure revokes both layers and remains fail closed.
-          final nativeGrant =
-              await container.watcher.authorizePackage(packageName);
+          final PendingLockChallenge? grantingChallenge =
+              _activeNativeChallenge;
+          if (grantingChallenge == null) {
+            await container.accessController.revokeAllAccess();
+            return;
+          }
+          final nativeGrant = await container.watcher.authorizePackage(
+            grantingChallenge,
+          );
           if (nativeGrant.isFailure) {
             await container.accessController.revokeAllAccess();
             await container.watcher.revokeAllAuthorizations();
@@ -674,6 +762,7 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     final String? diagId = _diagActiveChallengeId;
     _diagActiveChallengeId = null;
     _challenging = false;
+    _activeNativeChallenge = null;
     // Phase 5 mobile-QA diagnostics #1 (temporary): the challenge
     // closed — classify the exact reason.
     final String dismissalReason;

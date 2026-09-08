@@ -1,6 +1,7 @@
 import 'package:flutter/services.dart';
 
 import '../../utilities/result.dart';
+import '../pending_lock_challenge.dart';
 import '../watcher_service.dart';
 
 /// Production [WatcherService] over the native `smart_app_lock/watcher`
@@ -68,11 +69,11 @@ class MethodChannelWatcherService implements WatcherService {
 
   @override
   Future<Result<void>> authorizePackage(
-    String packageName, {
+    PendingLockChallenge challenge, {
     Duration sessionWindow = const Duration(minutes: 2),
   }) =>
       _invokeVoid('authorizePackage', <String, dynamic>{
-        'packageName': packageName,
+        ...challenge.toMap(),
         'sessionWindowMilliseconds':
             sessionWindow.isNegative ? 0 : sessionWindow.inMilliseconds,
       });
@@ -86,15 +87,21 @@ class MethodChannelWatcherService implements WatcherService {
       _invokeVoid('markEngineUnavailable');
 
   @override
-  Future<Result<String?>> takePendingChallenge() async {
+  Future<Result<PendingLockChallenge?>> takePendingChallenge() async {
     try {
+      final Map<dynamic, dynamic>? pending =
+          await _channel.invokeMethod<Map<dynamic, dynamic>>(
+        'takePendingChallenge',
+      );
       return Result.success(
-        await _channel.invokeMethod<String>('takePendingChallenge'),
+        pending == null ? null : PendingLockChallenge.fromMap(pending),
       );
     } on PlatformException catch (e) {
       return Result.failure(e);
     } on MissingPluginException catch (e) {
       return Result.failure(e);
+    } catch (e, stackTrace) {
+      return Result.failure(e, stackTrace);
     }
   }
 

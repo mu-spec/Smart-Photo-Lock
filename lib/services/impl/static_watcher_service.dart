@@ -1,4 +1,5 @@
 import '../../utilities/result.dart';
+import '../pending_lock_challenge.dart';
 import '../watcher_service.dart';
 
 /// In-memory [WatcherService] for tests and previews (Phase 5 mobile-QA
@@ -11,6 +12,7 @@ class StaticWatcherService implements WatcherService {
   bool notificationPermissionGranted = true;
   Set<String> protectedPackages = <String>{};
   String? pendingChallenge;
+  int pendingChallengeGeneration = 1;
   String? lastError;
   int startCalls = 0;
   int stopCalls = 0;
@@ -68,15 +70,24 @@ class StaticWatcherService implements WatcherService {
 
   @override
   Future<Result<void>> authorizePackage(
-    String packageName, {
+    PendingLockChallenge challenge, {
     Duration sessionWindow = const Duration(minutes: 2),
   }) async {
     authorizePackageCalls++;
+    final String packageName = challenge.packageName;
     if (!protectionConfigured || !protectedPackages.contains(packageName)) {
       return Result.failure(StateError('Package is not protected.'));
     }
+    if (pendingChallenge != null &&
+        (pendingChallenge != packageName ||
+            pendingChallengeGeneration != challenge.generation)) {
+      return Result.failure(StateError('Challenge ticket is stale.'));
+    }
     authorizedPackages.add(packageName);
-    if (pendingChallenge == packageName) pendingChallenge = null;
+    if (pendingChallenge == packageName &&
+        pendingChallengeGeneration == challenge.generation) {
+      pendingChallenge = null;
+    }
     return Result.success(null);
   }
 
@@ -94,8 +105,16 @@ class StaticWatcherService implements WatcherService {
   }
 
   @override
-  Future<Result<String?>> takePendingChallenge() async {
-    return Result.success(pendingChallenge);
+  Future<Result<PendingLockChallenge?>> takePendingChallenge() async {
+    final String? packageName = pendingChallenge;
+    return Result.success(
+      packageName == null
+          ? null
+          : PendingLockChallenge(
+              packageName: packageName,
+              generation: pendingChallengeGeneration,
+            ),
+    );
   }
 
   @override
