@@ -48,6 +48,12 @@
          No credential data is read by the receiver. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
+    <!-- Normal (non-runtime) permission used only to bring this app's
+         already-existing task forward for a pending lock challenge. This is
+         required because MainActivity intentionally has no task affinity, so
+         NEW_TASK cannot reliably rediscover its existing task after wake. -->
+    <uses-permission android:name="android.permission.REORDER_TASKS" />
+
     <!-- Phase 3A: package visibility (Android 11+). Declaring the launcher
          intent lets us discover launchable apps for App Lock selection
          without the broad QUERY_ALL_PACKAGES permission. -->

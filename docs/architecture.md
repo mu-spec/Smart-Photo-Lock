@@ -1701,10 +1701,19 @@ Recovery ordering is:
 3. A rate-limited native retry remains scheduled while the pending ticket is
    latched. Android accepting `startActivity` is not treated as proof that the
    challenge became visible.
-4. `MainActivity.onResume`/`onNewIntent` keep recovery armed. The existing
+4. The active protected package is also persisted as a non-secret wake target,
+   separately from the pending presentation latch. `SCREEN_ON` and
+   `USER_PRESENT` reconstruct a missing pending ticket from that target, so a
+   process restart cannot revoke authorization while forgetting what to lock.
+5. Because `MainActivity` intentionally has an empty task affinity, recovery
+   raises its exact live task with `ActivityManager.moveTaskToFront`; a
+   generation-bearing explicit intent cold-starts it when no live Activity
+   exists. `onCreate`, `onResume`, and `onNewIntent` accept only the current
+   package/generation.
+6. `MainActivity.onResume`/`onNewIntent` keep recovery armed. The existing
    Flutter host pulls pending native state again on resume and during its
    heartbeat instead of reading it only at cold bootstrap.
-5. The shield is removed only when a resumed, rendered route acknowledges the
+7. The shield is removed only when a resumed, rendered route acknowledges the
    exact package and generation. Successful authentication must consume that
    same handoff ticket before native authorization can be granted.
 
@@ -1713,8 +1722,10 @@ If Android repeatedly refuses the challenge Activity, the shield exposes a
 system launcher and removes the shield only after foreground detection confirms
 that the unprotected default Home package actually became active.
 
-No new permission is required. Actual keyguard, compositor, background-launch,
-and OEM task-manager behavior remains physical-device-only validation.
+`REORDER_TASKS` is added as a normal, install-time permission; it has no runtime
+prompt and is used only to promote Smart App Lock's own known task. Actual
+keyguard, compositor, background-launch, and OEM task-manager behavior remains
+physical-device-only validation.
 
 ## Phase 5 mobile-QA fix #3A — safe settle timing (scheduler crash fix)
 

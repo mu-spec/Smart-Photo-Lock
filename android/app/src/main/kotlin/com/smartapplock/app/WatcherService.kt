@@ -63,22 +63,33 @@ class WatcherService : Service() {
                     activeInstance?.cancelRecoveryRetry()
                     ProtectionRuntime.invalidateChallengeHandoff()
                     ProtectionAccessState.revokeAll()
-                    val foreground = ProtectionAccessState.currentForegroundPackage()
-                    if (foreground != null &&
-                        ProtectionStateStore.isProtected(context, foreground)
-                    ) {
-                        resetRecovery(foreground)
+                    val observed = ProtectionAccessState.currentForegroundPackage()
+                    val wakePackage = WakeReauthTargetPolicy.resolve(
+                        observedPackage = observed,
+                        rememberedPackage = ProtectionStateStore.wakeReauthPackage(context),
+                    ) { ProtectionStateStore.isProtected(context, it) }
+                    Log.d(
+                        TAG,
+                        "SCREEN_OFF observed=$observed wakePackage=$wakePackage",
+                    )
+                    if (wakePackage != null) {
+                        ProtectionStateStore.rememberWakeReauthPackage(
+                            context,
+                            wakePackage,
+                        )
+                        resetRecovery(wakePackage)
                         // A fresh generation makes every callback created
                         // before screen-off stale, even for the same package.
                         ProtectionStateStore.replacePendingChallenge(
                             context,
-                            foreground,
+                            wakePackage,
                         )
                         ProtectionOverlayController.show(context)
                     }
                 }
                 Intent.ACTION_SCREEN_ON -> {
-                    val pending = ProtectionStateStore.pendingChallenge(context)
+                    val pending = ProtectionStateStore.restoreWakeReauthChallenge(context)
+                    Log.d(TAG, "SCREEN_ON pending=$pending")
                     if (pending != null &&
                         ProtectionStateStore.isProtected(context, pending.packageName)
                     ) {
@@ -90,7 +101,8 @@ class WatcherService : Service() {
                     }
                 }
                 Intent.ACTION_USER_PRESENT -> {
-                    val pending = ProtectionStateStore.pendingChallenge(context)
+                    val pending = ProtectionStateStore.restoreWakeReauthChallenge(context)
+                    Log.d(TAG, "USER_PRESENT pending=$pending")
                     if (pending != null &&
                         ProtectionStateStore.isProtected(context, pending.packageName)
                     ) {
@@ -280,6 +292,7 @@ class WatcherService : Service() {
             ProtectionAccessState.revokeAll()
             ProtectionRuntime.invalidateChallengeHandoff()
             ProtectionStateStore.clearPendingChallenge(context)
+            ProtectionStateStore.rememberWakeReauthPackage(context, null)
             ProtectionOverlayController.disarm()
             context.stopService(Intent(context, WatcherService::class.java))
             true
@@ -323,6 +336,11 @@ class WatcherService : Service() {
             }
 
             val protected = ProtectionStateStore.isProtected(context, packageName)
+            if (protected) {
+                ProtectionStateStore.rememberWakeReauthPackage(context, packageName)
+            } else {
+                ProtectionStateStore.rememberWakeReauthPackage(context, null)
+            }
             val decision = ProtectionAccessState.observeForeground(
                 packageName = packageName,
                 protected = protected,
@@ -377,6 +395,7 @@ class WatcherService : Service() {
                 return false
             }
             ProtectionAccessState.authorize(packageName, sessionWindowMs)
+            ProtectionStateStore.rememberWakeReauthPackage(context, packageName)
             ProtectionStateStore.clearPendingChallenge(
                 context,
                 packageName,
@@ -401,11 +420,12 @@ class WatcherService : Service() {
                 activeInstance?.scheduleRecoveryRetry()
                 return
             }
-            ProtectionStateStore.ensurePendingChallenge(context, packageName)
+            val pending = ProtectionStateStore.ensurePendingChallenge(context, packageName)
 
             // Security-critical order: shield first, activity hand-off second.
             val shielded = ProtectionOverlayController.show(context)
-            val launched = shielded && OverlayStatusChannel.launchLockChallenge(context)
+            val launched = shielded &&
+                MainActivity.foregroundForRecovery(context, pending)
             when {
                 !shielded -> ProtectionStateStore.setLastError(
                     context,
@@ -510,6 +530,13 @@ class WatcherService : Service() {
             safeExitChallenge = null
             safeExitHomePackage = null
             ProtectionRuntime.invalidateChallengeHandoff()
+            // Home is confirmed foreground. Clear only the active wake
+            // identity; protected-app configuration remains unchanged.
+            ProtectionStateStore.rememberWakeReauthPackage(context, null)
+            ProtectionAccessState.observeForeground(
+                packageName = foregroundPackage,
+                protected = false,
+            )
             recoveryGate.reset()
             activeInstance?.cancelRecoveryRetry()
             ProtectionOverlayController.hide()

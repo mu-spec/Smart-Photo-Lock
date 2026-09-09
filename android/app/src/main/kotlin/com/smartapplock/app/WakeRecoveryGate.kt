@@ -3,6 +3,33 @@ package com.smartapplock.app
 /** Why native wake recovery is being requested. */
 enum class WakeRecoverySignal { SCREEN_ON, USER_PRESENT, FOREGROUND, RETRY }
 
+/** Selects the protected package that SCREEN_OFF must preserve. */
+object WakeReauthTargetPolicy {
+    fun resolve(
+        observedPackage: String?,
+        rememberedPackage: String?,
+        isProtected: (String) -> Boolean,
+    ): String? {
+        if (!observedPackage.isNullOrBlank() && isProtected(observedPackage)) {
+            return observedPackage
+        }
+        return rememberedPackage
+            ?.takeIf { it.isNotBlank() && isProtected(it) }
+    }
+}
+
+/** Exact-match guard shared by onCreate/onResume/onNewIntent recovery. */
+object RecoveryIntentPolicy {
+    fun matches(
+        pending: ProtectionStateStore.PendingChallenge?,
+        packageName: String?,
+        generation: Long,
+    ): Boolean = !packageName.isNullOrBlank() &&
+        generation >= 0L &&
+        pending?.packageName == packageName &&
+        pending.generation == generation
+}
+
 /**
  * Pure, deterministic arbitration for wake recovery attempts.
  *

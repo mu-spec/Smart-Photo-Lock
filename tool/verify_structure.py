@@ -425,9 +425,9 @@ def run():
               prearmed)
         shield_first = (
             watcher_src.find("ProtectionOverlayController.show") >= 0
-            and watcher_src.find("OverlayStatusChannel.launchLockChallenge") >= 0
+            and watcher_src.find("MainActivity.foregroundForRecovery") >= 0
             and watcher_src.find("ProtectionOverlayController.show")
-            < watcher_src.find("OverlayStatusChannel.launchLockChallenge")
+            < watcher_src.find("MainActivity.foregroundForRecovery")
             and "START_STICKY" in watcher_src
         )
         check("watcher recovery shields before activity hand-off", shield_first)
@@ -462,7 +462,7 @@ def run():
             "ProtectionOverlayController.show(context)", pending_pos
         )
         recovery_launch_pos = watcher_src.find(
-            "OverlayStatusChannel.launchLockChallenge(context)",
+            "MainActivity.foregroundForRecovery(context, pending)",
             recovery_shield_pos,
         )
         check(
@@ -496,6 +496,38 @@ def run():
         )
         check("screen wake has user-present and deterministic retry recovery",
               wake_recovery)
+        main_activity_src = read_text(os.path.join(kotlin_dir, "MainActivity.kt"))
+        manifest_src = read_text(os.path.join(
+            ROOT, "android/app/src/main/AndroidManifest.xml"
+        ))
+        exact_task_recovery = (
+            "moveTaskToFront" in main_activity_src
+            and "ACTION_RECOVER_CHALLENGE" in main_activity_src
+            and "acceptRecoveryIntent(intent, \"onNewIntent\")" in main_activity_src
+            and "RecoveryIntentPolicy.matches" in main_activity_src
+            and "android.permission.REORDER_TASKS" in manifest_src
+        )
+        check("wake recovery raises exact existing task and handles new intent",
+              exact_task_recovery)
+        retained_wake_target = (
+            "KEY_WAKE_REAUTH_PACKAGE" in store_src
+            and "restoreWakeReauthChallenge" in store_src
+            and "rememberWakeReauthPackage" in watcher_src
+            and "restoreWakeReauthChallenge(context)" in watcher_src
+        )
+        check("screen-off package identity survives pending handoff and process loss",
+              retained_wake_target)
+        safe_exit_start = watcher_src.find("private fun completeSafeExitIfConfirmed")
+        safe_exit_body = watcher_src[safe_exit_start:]
+        safe_exit_preserves_protection = (
+            safe_exit_start >= 0
+            and "ProtectionOverlayController.hide()" in safe_exit_body
+            and "ProtectionStateStore.configure" not in safe_exit_body
+            and "ProtectionAccessState.authorize" not in safe_exit_body
+            and "ProtectionAccessState.revokeAll" not in safe_exit_body
+        )
+        check("Return to Home never grants or disables configured protection",
+              safe_exit_preserves_protection)
         access_state_src = read_text(recovery_sources["ProtectionAccessState.kt"])
         native_sessions_fail_closed = (
             "fun authorize(" in access_state_src

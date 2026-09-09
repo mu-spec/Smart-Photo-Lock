@@ -1109,3 +1109,22 @@ Regression coverage now includes:
 JVM/widget tests cannot reproduce Android keyguard policy, OEM background-start
 restrictions, or compositor ordering. The full screen-off/wake sequence and the
 shield's `Return to Home` escape require the physical-device checklist.
+
+---
+
+# C0 physical QA fix #3 — exact task wake recovery
+
+The previous recovery path retained a pending ticket in the reproduced case,
+which is why the native shield appeared, but treated a non-throwing
+`startActivity` call as if `MainActivity` had resumed. `MainActivity` has an
+empty task affinity for task-hijacking hardening, so `NEW_TASK` plus
+`REORDER_TO_FRONT` could not reliably identify and raise its existing task.
+No lifecycle acknowledgement followed and Flutter never pulled the ticket.
+
+Recovery now stores a separate non-secret wake package, reconstructs a missing
+pending ticket on both `SCREEN_ON` and `USER_PRESENT`, and promotes the exact
+live Activity task by task ID. A package/generation recovery intent covers cold
+start and `onNewIntent`; Flutter still removes the shield only after a resumed,
+rendered challenge acknowledges the exact ticket. `Return to Home` clears only
+the active wake target/pending presentation after Home is detector-confirmed;
+it does not authorize the package or alter protected-app configuration.

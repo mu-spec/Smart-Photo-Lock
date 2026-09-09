@@ -197,17 +197,7 @@ object OverlayStatusChannel {
      * when the launch cannot be performed (never crashes the bridge).
      */
     fun launchLockChallenge(context: Context): Boolean {
-        return try {
-            val intent = Intent(context, MainActivity::class.java)
-            intent.addFlags(
-                Intent.FLAG_ACTIVITY_NEW_TASK or
-                    Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
-                    Intent.FLAG_ACTIVITY_SINGLE_TOP,
-            )
-            context.startActivity(intent)
-            true
-        } catch (e: Exception) {
-            false
-        }
+        val pending = ProtectionStateStore.pendingChallenge(context) ?: return false
+        return MainActivity.foregroundForRecovery(context, pending)
     }
 }

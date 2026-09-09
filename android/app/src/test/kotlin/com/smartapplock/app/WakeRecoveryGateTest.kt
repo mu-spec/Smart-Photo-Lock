@@ -45,4 +45,48 @@ class WakeRecoveryGateTest {
         gate.onScreenOff()
         assertTrue(gate.shouldAttempt(locked, WakeRecoverySignal.SCREEN_ON, 1_100L))
     }
+
+    @Test
+    fun screenOffRetainsObservedProtectedPackageIdentity() {
+        assertTrue(
+            WakeReauthTargetPolicy.resolve(
+                observedPackage = locked,
+                rememberedPackage = null,
+                isProtected = { it == locked },
+            ) == locked,
+        )
+    }
+
+    @Test
+    fun screenOffRestoresRememberedPackageAfterProcessStateLoss() {
+        assertTrue(
+            WakeReauthTargetPolicy.resolve(
+                observedPackage = null,
+                rememberedPackage = locked,
+                isProtected = { it == locked },
+            ) == locked,
+        )
+    }
+
+    @Test
+    fun staleOrUnprotectedWakeIdentityIsNeverRecovered() {
+        assertTrue(
+            WakeReauthTargetPolicy.resolve(
+                observedPackage = "com.example.launcher",
+                rememberedPackage = "com.example.removed",
+                isProtected = { false },
+            ) == null,
+        )
+    }
+
+    @Test
+    fun existingActivityAcceptsOnlyItsExactWakeRecoveryIntent() {
+        val pending = ProtectionStateStore.PendingChallenge(locked, 17L)
+
+        assertTrue(RecoveryIntentPolicy.matches(pending, locked, 17L))
+        assertFalse(RecoveryIntentPolicy.matches(pending, locked, 16L))
+        assertFalse(
+            RecoveryIntentPolicy.matches(pending, "com.example.other", 17L),
+        )
+    }
 }

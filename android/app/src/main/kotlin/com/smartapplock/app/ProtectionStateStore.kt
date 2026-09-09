@@ -21,6 +21,7 @@ object ProtectionStateStore {
     private const val KEY_PENDING = "pending_challenge"
     private const val KEY_PENDING_GENERATION = "pending_challenge_generation"
     private const val KEY_NEXT_GENERATION = "next_challenge_generation"
+    private const val KEY_WAKE_REAUTH_PACKAGE = "wake_reauth_package"
     private const val KEY_LAST_ERROR = "last_error"
 
     fun configure(context: Context, enabled: Boolean, packages: Set<String>) {
@@ -37,6 +38,10 @@ object ProtectionStateStore {
         if (!enabled || (pending != null && pending.packageName !in normalized)) {
             clearPendingChallenge(context)
             ProtectionRuntime.invalidateChallengeHandoff()
+        }
+        val wakePackage = rememberedWakeReauthPackage(context)
+        if (!enabled || (wakePackage != null && wakePackage !in normalized)) {
+            rememberWakeReauthPackage(context, null)
         }
     }
 
@@ -102,6 +107,46 @@ object ProtectionStateStore {
         readPendingChallenge(
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE),
         )
+
+    /**
+     * Persists only the non-secret package identity needed to reconstruct a
+     * screen-off challenge after native/Flutter process recreation. This is
+     * deliberately separate from the pending presentation latch: a rendered
+     * challenge clears the latch, but the active protected package must still
+     * be known if the screen turns off a moment later.
+     */
+    @Synchronized
+    fun rememberWakeReauthPackage(context: Context, packageName: String?) {
+        val preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val normalized = packageName?.takeIf { it.isNotBlank() }
+        if (preferences.getString(KEY_WAKE_REAUTH_PACKAGE, null) == normalized) return
+        val editor = preferences.edit()
+        if (normalized == null) {
+            editor.remove(KEY_WAKE_REAUTH_PACKAGE)
+        } else {
+            editor.putString(KEY_WAKE_REAUTH_PACKAGE, normalized)
+        }
+        // This state is written on foreground transitions, not every poll.
+        // Synchronous persistence ensures SCREEN_OFF/process death cannot
+        // leave authorization revoked without the package identity.
+        editor.commit()
+    }
+
+    fun wakeReauthPackage(context: Context): String? =
+        rememberedWakeReauthPackage(context)
+            ?.takeIf { it.isNotBlank() && isProtected(context, it) }
+
+    private fun rememberedWakeReauthPackage(context: Context): String? =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(KEY_WAKE_REAUTH_PACKAGE, null)
+
+    /** Restores a pending ticket from the separate wake identity if needed. */
+    @Synchronized
+    fun restoreWakeReauthChallenge(context: Context): PendingChallenge? {
+        pendingChallenge(context)?.let { return it }
+        val packageName = wakeReauthPackage(context) ?: return null
+        return replacePendingChallenge(context, packageName)
+    }
 
     @Synchronized
     fun clearPendingChallenge(
