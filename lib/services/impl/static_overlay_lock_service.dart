@@ -23,6 +23,10 @@ class StaticOverlayLockService implements OverlayLockService {
   /// failed bring-to-front).
   bool showLockChallengeSucceeds = true;
 
+  /// Whether the rendered challenge may acknowledge native shield handoff.
+  /// Tests set this false to model SCREEN_ON while keyguard is still locked.
+  bool markChallengeReadySucceeds = true;
+
   int showLockChallengeCalls = 0;
   int hideLockChallengeCalls = 0;
   int markChallengeReadyCalls = 0;
@@ -76,7 +80,9 @@ class StaticOverlayLockService implements OverlayLockService {
     markChallengeReadyCalls++;
     lastReadyPackage = challenge.packageName;
     lastReadyGeneration = challenge.generation;
-    return Result.success(null);
+    return markChallengeReadySucceeds
+        ? Result.success(null)
+        : Result.failure(StateError('Challenge handoff is not visible yet.'));
   }
 
   @override

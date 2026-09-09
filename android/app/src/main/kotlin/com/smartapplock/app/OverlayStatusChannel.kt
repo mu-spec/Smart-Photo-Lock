@@ -1,5 +1,6 @@
 package com.smartapplock.app
 
+import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -98,39 +99,38 @@ object OverlayStatusChannel {
                     val packageName = call.argument<String>("packageName")
                     val generation =
                         call.argument<Number>("generation")?.toLong() ?: -1L
-                    if (ProtectionRuntime.activityResumed &&
+                    val pending = ProtectionStateStore.pendingChallenge(activity)
+                    val exactPending = pending?.takeIf {
                         !packageName.isNullOrBlank() &&
-                        generation >= 0L
-                    ) {
-                        // Clear and hide only for the exact ticket. Screen-off
-                        // replaces the generation, so a pre-sleep post-frame
-                        // callback cannot remove the wake shield.
-                        val cleared = ProtectionStateStore.clearPendingChallenge(
-                            activity,
-                            packageName,
-                            generation,
+                        generation >= 0L &&
+                            it.packageName == packageName &&
+                            it.generation == generation
+                    }
+                    val keyguardLocked = activity
+                        .getSystemService(KeyguardManager::class.java)
+                        .isKeyguardLocked
+                    if (ChallengeReadyPolicy.canHandOff(
+                            activityResumed = ProtectionRuntime.activityResumed,
+                            keyguardLocked = keyguardLocked,
+                            pendingMatches = exactPending != null,
                         )
-                        if (cleared) {
-                            ProtectionRuntime.markChallengeReady(
-                                ProtectionStateStore.PendingChallenge(
-                                    packageName,
-                                    generation,
-                                ),
-                            )
-                            val hidden = ProtectionOverlayController.hide()
-                            if (hidden) {
-                                WatcherService.onChallengeHandoffComplete()
-                            } else {
-                                WatcherService.onChallengeHandoffFailed(
-                                    activity,
-                                    packageName,
-                                )
-                            }
-                            result.success(hidden)
+                    ) {
+                        // Keep the ticket persisted until authentication. A
+                        // ready acknowledgement releases only the shield.
+                        ProtectionRuntime.markChallengeReady(checkNotNull(exactPending))
+                        val hidden = ProtectionOverlayController.hide()
+                        if (hidden) {
+                            WatcherService.onChallengeHandoffComplete()
                         } else {
-                            result.success(false)
+                            WatcherService.onChallengeHandoffFailed(
+                                activity,
+                                exactPending.packageName,
+                            )
                         }
+                        result.success(hidden)
                     } else {
+                        // SCREEN_ON can resume behind keyguard. Preserve the
+                        // pending ticket and shield for USER_PRESENT/retry.
                         result.success(false)
                     }
                 }

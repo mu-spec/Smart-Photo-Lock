@@ -30,6 +30,15 @@ object RecoveryIntentPolicy {
         pending.generation == generation
 }
 
+/** A route is safe to hand off only when it is current and not keyguard-covered. */
+object ChallengeReadyPolicy {
+    fun canHandOff(
+        activityResumed: Boolean,
+        keyguardLocked: Boolean,
+        pendingMatches: Boolean,
+    ): Boolean = activityResumed && !keyguardLocked && pendingMatches
+}
+
 /**
  * Pure, deterministic arbitration for wake recovery attempts.
  *

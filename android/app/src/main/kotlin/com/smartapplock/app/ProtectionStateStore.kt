@@ -95,11 +95,11 @@ object ProtectionStateStore {
     }
 
     fun takePendingChallenge(context: Context): PendingChallenge? {
-        // The pending package is also the native shield's fail-closed latch.
-        // Reading it during Flutter reconstruction must not clear it. The
-        // latch is cleared only after a resumed, rendered challenge confirms
-        // the hand-off through markChallengeReady, or after authentication
-        // explicitly authorizes the same package.
+        // Pending represents unresolved authentication, not merely an overlay
+        // transition. Reading it during Flutter reconstruction and rendering
+        // the route must not clear it. It is cleared only by exact successful
+        // authorization or after a detector confirms the user safely left for
+        // an unprotected package.
         return pendingChallenge(context)
     }
 
@@ -216,6 +216,13 @@ object ProtectionRuntime {
     fun markChallengeReady(challenge: ProtectionStateStore.PendingChallenge) {
         readyChallenge = challenge
     }
+
+    @Synchronized
+    fun isChallengeReady(challenge: ProtectionStateStore.PendingChallenge): Boolean =
+        readyChallenge == challenge
+
+    @Synchronized
+    fun readyChallenge(): ProtectionStateStore.PendingChallenge? = readyChallenge
 
     @Synchronized
     fun consumeChallengeHandoff(

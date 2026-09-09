@@ -558,7 +558,7 @@ def run():
                 os.path.join(kotlin_dir, "OverlayStatusChannel.kt")
             )
         )
-        check("pending challenge read is non-destructive until hand-off",
+        check("pending challenge read is non-destructive until authorization",
               pending_latched)
         host_src = read_text(os.path.join(ROOT, "lib/app/lock_challenge_host.dart"))
         auth_pos = host_src.find("watcher.authorizePackage(")
@@ -585,10 +585,24 @@ def run():
             and "replacePendingChallenge" in watcher_src
             and "ProtectionRuntime.invalidateChallengeHandoff()" in watcher_src
             and 'call.argument<Number>("generation")' in overlay_channel_src
-            and "if (cleared)" in overlay_channel_src
+            and "ChallengeReadyPolicy.canHandOff" in overlay_channel_src
         )
         check("screen-off generation rejects stale challenge-ready callbacks",
               generation_handoff)
+        ready_start = overlay_channel_src.find('"markChallengeReady"')
+        ready_end = overlay_channel_src.find('"setSecureWindow"', ready_start)
+        ready_body = overlay_channel_src[ready_start:ready_end]
+        unresolved_survives_ready = (
+            "isKeyguardLocked" in ready_body
+            and "ProtectionRuntime.markChallengeReady" in ready_body
+            and "clearPendingChallenge" not in ready_body
+            and "ProtectionStateStore.clearPendingChallenge" in watcher_src[
+                watcher_src.find("fun authorizePackage"):
+                watcher_src.find("fun revokeAllAuthorizations")
+            ]
+        )
+        check("ready handoff cannot consume unresolved authentication",
+              unresolved_survives_ready)
         boot_is_conditional = (
             "ProtectionStateStore.isEnabled" in boot_src
             and "WatcherService.start" in boot_src

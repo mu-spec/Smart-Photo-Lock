@@ -340,6 +340,19 @@ class WatcherService : Service() {
                 ProtectionStateStore.rememberWakeReauthPackage(context, packageName)
             } else {
                 ProtectionStateStore.rememberWakeReauthPackage(context, null)
+                // Home/Recents may abandon a rendered challenge. Clear it
+                // only after native detection confirms an unprotected target;
+                // this grants no package access.
+                ProtectionRuntime.readyChallenge()?.let { ready ->
+                    if (ProtectionStateStore.clearPendingChallenge(
+                            context,
+                            ready.packageName,
+                            ready.generation,
+                        )
+                    ) {
+                        ProtectionRuntime.invalidateChallengeHandoff()
+                    }
+                }
             }
             val decision = ProtectionAccessState.observeForeground(
                 packageName = packageName,
@@ -348,9 +361,9 @@ class WatcherService : Service() {
             )
             if (!protected || decision == ProtectionAccessState.Decision.ALLOW) {
                 resetRecovery()
-                // Pending is also the overlay's fail-closed latch. Only the
-                // rendered challenge hand-off or explicit authorization may
-                // clear it.
+                // Pending represents unresolved authentication. An
+                // unprotected transition may cancel it above; otherwise only
+                // exact successful authorization clears it.
                 if (ProtectionStateStore.pendingChallenge(context) == null) {
                     ProtectionOverlayController.hide()
                 }
@@ -381,9 +394,8 @@ class WatcherService : Service() {
         ): Boolean {
             if (!ProtectionStateStore.isProtected(context, packageName)) return false
             val pending = ProtectionStateStore.pendingChallenge(context)
-            if (pending != null &&
-                (pending.packageName != packageName || pending.generation != generation)
-            ) {
+                ?: return false
+            if (pending.packageName != packageName || pending.generation != generation) {
                 // A newer protected foreground replaced this challenge. An
                 // older route completing successfully must not authorize or
                 // launch the package that is no longer being challenged.
@@ -421,6 +433,15 @@ class WatcherService : Service() {
                 return
             }
             val pending = ProtectionStateStore.ensurePendingChallenge(context, packageName)
+
+            // Duplicate detector events must not re-cover or re-promote an
+            // exact rendered challenge. Screen-off invalidates ready state
+            // and replaces the generation before reaching recovery.
+            if (ProtectionRuntime.activityResumed &&
+                ProtectionRuntime.isChallengeReady(pending)
+            ) {
+                return
+            }
 
             // Security-critical order: shield first, activity hand-off second.
             val shielded = ProtectionOverlayController.show(context)

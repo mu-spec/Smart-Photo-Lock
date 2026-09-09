@@ -1067,8 +1067,9 @@ Fail-closed repair:
   relaying the event to Dart and never waits for heartbeat expiry.
 - A zero-sized, invisible, non-interactive overlay stays pre-attached while
   protection is configured and expands synchronously for a protected event.
-- Pending challenge state remains latched until a rendered/resumed Flutter
-  challenge confirms handoff.
+- Pending challenge state remains latched through rendered/resumed Flutter
+  handoff and is consumed only by exact successful authentication or a
+  detector-confirmed safe transition away.
 - Correct authentication is the sole source of a process-local native package
   authorization. Authorization occurs before shield removal and target launch;
   failure revokes both Dart and native sessions.
@@ -1128,3 +1129,24 @@ start and `onNewIntent`; Flutter still removes the shield only after a resumed,
 rendered challenge acknowledges the exact ticket. `Return to Home` clears only
 the active wake target/pending presentation after Home is detector-confirmed;
 it does not authorize the package or alter protected-app configuration.
+
+---
+
+# C0 physical QA fix #4 — unresolved challenge survives wake
+
+When screen-off occurred while the PIN route was already visible, screen-on
+could resume `MainActivity` behind keyguard while Flutter still considered the
+old route active. Flutter adopted the fresh screen-off generation and sent a
+ready acknowledgement. Native checked only `activityResumed`, cleared pending,
+and hid the shield. A trailing hidden/paused callback then removed the old
+route, leaving the dashboard with no native ticket for `USER_PRESENT`.
+
+Ready acknowledgement is now a visual shield handoff, not consumption of the
+authentication requirement. Native keeps the exact package/generation pending
+until successful authorization, rejects ready while keyguard is locked, and
+skips duplicate recovery only when the exact route is both ready and resumed.
+If the old route is removed during the wake lifecycle storm, resume/heartbeat
+finds the still-pending ticket and reconstructs one route before the shield can
+drop. A detector-confirmed transition to an unprotected Home/Recents target may
+cancel the unresolved presentation, but never grants access or changes the
+protected-app configuration.

@@ -1339,8 +1339,9 @@ WatcherService (native, specialUse, START_STICKY)
 ProtectionBootReceiver
   └─ starts only when persisted desired protection is enabled
 LockChallengeHost
-  └─ reads the latched pending challenge and releases the shield only after the
-     Flutter challenge is rendered in a resumed activity
+  └─ reads the unresolved pending challenge and releases the shield only after
+     Flutter renders it in a resumed, keyguard-uncovered activity; the ticket
+     remains until exact successful authentication
 ```
 
 - Notification permission is optional: denial degrades notification
@@ -1702,7 +1703,7 @@ Recovery ordering is:
    latched. Android accepting `startActivity` is not treated as proof that the
    challenge became visible.
 4. The active protected package is also persisted as a non-secret wake target,
-   separately from the pending presentation latch. `SCREEN_ON` and
+   separately from route readiness. `SCREEN_ON` and
    `USER_PRESENT` reconstruct a missing pending ticket from that target, so a
    process restart cannot revoke authorization while forgetting what to lock.
 5. Because `MainActivity` intentionally has an empty task affinity, recovery
@@ -1714,8 +1715,10 @@ Recovery ordering is:
    Flutter host pulls pending native state again on resume and during its
    heartbeat instead of reading it only at cold bootstrap.
 7. The shield is removed only when a resumed, rendered route acknowledges the
-   exact package and generation. Successful authentication must consume that
-   same handoff ticket before native authorization can be granted.
+   exact package and generation while `KeyguardManager` confirms it is not
+   keyguard-covered. The persisted ticket remains unresolved after this visual
+   handoff. Successful authentication must consume that same handoff ticket
+   before native authorization can be granted and the ticket can be cleared.
 
 If Android repeatedly refuses the challenge Activity, the shield exposes a
 `Return to Home` action. It never grants the protected package: it requests the

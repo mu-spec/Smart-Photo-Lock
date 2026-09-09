@@ -1336,6 +1336,66 @@ void main() {
     expect(sessionFor(container, 'com.whatsapp'), isNull);
   });
 
+  testWidgets(
+      'screen-off while challenge is unresolved cannot settle on dashboard',
+      (WidgetTester tester) async {
+    final AppContainer container = await pumpApp(tester);
+    await container.auth.enrollPin('1234');
+    await protect(container, 'com.whatsapp');
+    final StaticWatcherService watcher =
+        container.watcher as StaticWatcherService;
+    final StaticOverlayLockService overlay =
+        container.overlay as StaticOverlayLockService;
+
+    await openApp(tester, container, 'com.whatsapp');
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+    final int preSleepGeneration = overlay.lastReadyGeneration!;
+
+    // Native SCREEN_OFF preserves unresolved authentication under a fresh
+    // generation. The original route is then removed by the real
+    // hidden/paused lifecycle leave.
+    watcher
+      ..pendingChallenge = 'com.whatsapp'
+      ..pendingChallengeGeneration = preSleepGeneration + 1;
+    overlay.markChallengeReadySucceeds = false;
+    (container.screenState as StaticScreenStateService).emitScreenOff();
+    await transition(tester, AppLifecycleState.inactive);
+    await transition(tester, AppLifecycleState.hidden);
+    await transition(tester, AppLifecycleState.paused);
+    // Flutter disables frames while hidden/paused, so the popped route may
+    // remain in the off-screen widget tree until the task resumes.
+
+    // SCREEN_ON may resume behind keyguard, where native rejects ready. The
+    // pending ticket remains, so resume reconstructs the route instead of
+    // leaving the dashboard as the final visible state.
+    await transition(tester, AppLifecycleState.hidden);
+    await transition(tester, AppLifecycleState.inactive);
+    await transition(tester, AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+    expect(overlay.lastReadyGeneration, preSleepGeneration + 1);
+    expect(watcher.pendingChallenge, 'com.whatsapp');
+    expect(watcher.pendingChallengeGeneration, preSleepGeneration + 1);
+    expect(sessionFor(container, 'com.whatsapp'), isNull);
+
+    // USER_PRESENT/heartbeat can now acknowledge the same ticket. It must not
+    // stack a second route or clear unresolved authentication.
+    overlay.markChallengeReadySucceeds = true;
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pumpAndSettle();
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+    expect(watcher.pendingChallenge, 'com.whatsapp');
+
+    for (final String digit in <String>['1', '2', '3', '4']) {
+      await tester.tap(find.byKey(Key('pin_key_$digit')));
+      await tester.pumpAndSettle();
+    }
+    expect(find.byType(PinUnlockScreen), findsNothing);
+    expect(watcher.pendingChallenge, isNull);
+    expect(sessionFor(container, 'com.whatsapp'), isNotNull);
+  });
+
   // -- Phase 5 mobile-QA fix #2: challenge flicker / re-entry ---------------
 
   testWidgets(

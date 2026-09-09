@@ -89,4 +89,33 @@ class WakeRecoveryGateTest {
             RecoveryIntentPolicy.matches(pending, "com.example.other", 17L),
         )
     }
+
+    @Test
+    fun keyguardCoveredResumeCannotConsumeUnresolvedChallenge() {
+        assertFalse(
+            ChallengeReadyPolicy.canHandOff(
+                activityResumed = true,
+                keyguardLocked = true,
+                pendingMatches = true,
+            ),
+        )
+    }
+
+    @Test
+    fun userPresentCanHandOffOnlyTheCurrentGeneration() {
+        assertTrue(
+            ChallengeReadyPolicy.canHandOff(
+                activityResumed = true,
+                keyguardLocked = false,
+                pendingMatches = true,
+            ),
+        )
+        assertFalse(
+            ChallengeReadyPolicy.canHandOff(
+                activityResumed = true,
+                keyguardLocked = false,
+                pendingMatches = false,
+            ),
+        )
+    }
 }
