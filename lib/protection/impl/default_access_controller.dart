@@ -59,7 +59,14 @@ class DefaultAccessController implements AccessController {
     if (match.decision == ProtectedMatchDecision.notProtected) {
       return AccessDecision.allow;
     }
-    // protected OR unknown (fail-closed) — both require authentication.
+    if (match.decision == ProtectedMatchDecision.unknown) {
+      // Protection-state certainty takes precedence over every existing
+      // session or grace window. A repository failure must never turn an
+      // unknown package into an allowed package.
+      return AccessDecision.challenge;
+    }
+    // The package is known protected; apply the normal authentication
+    // and session policy only after that security state is established.
     final CredentialState? state = (await _auth.status()).valueOrNull;
     if (state != null && state.statusAt(_now()) == CredentialStatus.lockedOut) {
       return AccessDecision.deny;

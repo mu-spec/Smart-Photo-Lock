@@ -126,6 +126,32 @@ void main() {
     );
   });
 
+  test('unknown protection never allows an active session and recovers '
+      'after the repository recovers', () async {
+    final _RecoveringRepository repository = _RecoveringRepository();
+    final DefaultAccessController recovering = DefaultAccessController(
+      matcher: ProtectedAppMatcher(repository: repository),
+      auth: container.auth,
+    );
+    await recovering.grantAccess('com.whatsapp');
+
+    // The existing session must not convert an unknown protection state
+    // into allow, and the session itself must remain available.
+    expect(
+      await recovering.evaluate('com.whatsapp'),
+      AccessDecision.challenge,
+    );
+    expect(recovering.sessionFor('com.whatsapp'), isNotNull);
+
+    // Once the protected-app read succeeds again, normal session behavior
+    // resumes without re-authentication or session deletion.
+    repository.available = true;
+    expect(
+      await recovering.evaluate('com.whatsapp'),
+      AccessDecision.allow,
+    );
+  });
+
   test('an active authentication lockout denies protected access '
       '(Phase 5E)', () async {
     await protect('com.whatsapp');
@@ -564,6 +590,35 @@ void main() {
   });
 
 
+}
+
+/// Repository that starts unavailable and can recover for the
+/// unknown-state regression test.
+class _RecoveringRepository implements ProtectedAppsRepository {
+  bool available = false;
+
+  @override
+  Future<Result<List<ProtectedApp>>> getProtectedApps() async => available
+      ? Result.success(const <ProtectedApp>[])
+      : Result.failure(StateError('database unavailable'));
+
+  @override
+  Future<Result<void>> add(ProtectedApp app) async =>
+      Result.failure(StateError('not used by this test'));
+
+  @override
+  Future<Result<void>> remove(String packageName) async =>
+      Result.failure(StateError('not used by this test'));
+
+  @override
+  Future<Result<bool>> isProtected(String packageName) async => available
+      ? Result.success(packageName == 'com.whatsapp')
+      : Result.failure(StateError('database unavailable'));
+
+  @override
+  Future<Result<int>> count() async => available
+      ? Result.success(1)
+      : Result.failure(StateError('database unavailable'));
 }
 
 /// [ProtectedAppsRepository] whose reads always fail — proves the
