@@ -233,14 +233,10 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     if (!mounted || challenge == null) {
       return;
     }
-    final AccessDecision decision =
-        await container.accessController.evaluate(challenge.packageName);
-    if (decision == AccessDecision.challenge ||
-        decision == AccessDecision.deny) {
-      await _presentChallenge(challenge.packageName);
-    } else {
-      await container.overlay.hideLockChallenge();
-    }
+    // A native pending ticket is an unresolved authentication requirement,
+    // not a fresh foreground decision. It must win over any Dart session or
+    // grace state reconstructed during the wake/process lifecycle.
+    await _presentChallenge(challenge.packageName);
   }
 
   /// Keeps an already-running Flutter engine attached to native wake state.
@@ -270,13 +266,10 @@ class _LockChallengeHostState extends State<LockChallengeHost>
         }
         return;
       }
-      final AccessDecision decision =
-          await container.accessController.evaluate(pending.packageName);
-      if (mounted &&
-          (decision == AccessDecision.challenge ||
-              decision == AccessDecision.deny)) {
-        await _presentChallenge(pending.packageName);
-      }
+      // The native ticket is authoritative until exact authentication or
+      // exact safe abandonment clears it. Do not let a stale Dart session
+      // turn wake recovery into the dashboard.
+      await _presentChallenge(pending.packageName);
     } finally {
       _checkingNativePending = false;
     }
@@ -500,14 +493,10 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     }
     if (nativePending != null) {
       _interruptedChallenge = false;
-      final AccessDecision decision = await container?.accessController
-              .evaluate(nativePending.packageName) ??
-          AccessDecision.challenge;
-      if (mounted &&
-          (decision == AccessDecision.challenge ||
-              decision == AccessDecision.deny)) {
-        await _presentChallenge(nativePending.packageName);
-      }
+      // A persisted native ticket means authentication is still unresolved.
+      // Restore it exactly once instead of re-evaluating Dart session/grace
+      // state and allowing the dashboard to remain foreground.
+      await _presentChallenge(nativePending.packageName);
       return;
     }
     // Re-lock enforcement only after a screen-off (5K) or an

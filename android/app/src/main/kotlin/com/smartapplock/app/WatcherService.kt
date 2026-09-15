@@ -14,6 +14,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
 
@@ -61,6 +62,9 @@ class WatcherService : Service() {
                 Intent.ACTION_SCREEN_OFF -> {
                     recoveryGate.onScreenOff()
                     activeInstance?.cancelRecoveryRetry()
+                    // A new screen cycle supersedes any older Home escape;
+                    // its fresh pending generation must remain shielded.
+                    abortSafeExit()
                     ProtectionRuntime.invalidateChallengeHandoff()
                     ProtectionAccessState.revokeAll()
                     val observed = ProtectionAccessState.currentForegroundPackage()
@@ -263,6 +267,9 @@ class WatcherService : Service() {
         private const val POLL_INTERVAL_MS = 1_000L
         private const val RECOVERY_RETRY_MS = 3_000L
         private const val ACCESSIBILITY_AUTHORITY_MS = 5_000L
+        // This is only a bounded launcher/task-transition coordination window.
+        // It is never treated as authentication or protected-app authorization.
+        private const val SAFE_EXIT_COORDINATION_MS = 1_500L
         const val CHANNEL_ID = "smart_app_lock_watcher"
         const val NOTIFICATION_ID = 7
 
@@ -271,8 +278,9 @@ class WatcherService : Service() {
         @Volatile private var activeInstance: WatcherService? = null
         @Volatile private var lastAccessibilityElapsedMs = 0L
         private val recoveryGate = WakeRecoveryGate(RECOVERY_RETRY_MS)
-        @Volatile private var safeExitChallenge: ProtectionStateStore.PendingChallenge? = null
-        @Volatile private var safeExitHomePackage: String? = null
+        private val safeExitGate = SafeExitGate()
+        private val safeExitHandler = Handler(Looper.getMainLooper())
+        private var safeExitTimeout: Runnable? = null
 
         fun start(context: Context): Boolean = try {
             val intent = Intent(context, WatcherService::class.java)
@@ -289,6 +297,7 @@ class WatcherService : Service() {
         }
 
         fun stop(context: Context): Boolean = try {
+            abortSafeExit()
             ProtectionAccessState.revokeAll()
             ProtectionRuntime.invalidateChallengeHandoff()
             ProtectionStateStore.clearPendingChallenge(context)
@@ -313,6 +322,10 @@ class WatcherService : Service() {
             activeInstance?.refreshNotification()
         }
 
+        private fun isScreenInteractive(context: Context): Boolean =
+            (context.getSystemService(Context.POWER_SERVICE) as? PowerManager)
+                ?.isInteractive == true
+
         fun reportForeground(
             context: Context,
             packageName: String,
@@ -324,6 +337,20 @@ class WatcherService : Service() {
                 return
             }
             if (completeSafeExitIfConfirmed(context, packageName)) return
+            if (isSafeExitInProgress()) {
+                val request = safeExitGate.request()
+                val current = ProtectionStateStore.pendingChallenge(context)
+                if (request != null && current == request.challenge) {
+                    // Until exact Home confirmation or the bounded fallback,
+                    // every non-Home report keeps the opaque shield in place.
+                    // In particular, a stale protected-app report cannot
+                    // expose content while the user is escaping.
+                    if (packageName != request.homePackage) return
+                } else {
+                    // A newer generation wins over the old escape request.
+                    abortSafeExit()
+                }
+            }
             val now = SystemClock.elapsedRealtime()
             if (source == ForegroundSource.ACCESSIBILITY) {
                 lastAccessibilityElapsedMs = now
@@ -336,6 +363,30 @@ class WatcherService : Service() {
             }
 
             val protected = ProtectionStateStore.isProtected(context, packageName)
+            val pending = ProtectionStateStore.pendingChallenge(context)
+            val wakeReauthPackage = ProtectionStateStore.wakeReauthPackage(context)
+            if (!protected &&
+                ScreenOffForegroundPolicy.shouldPreservePending(
+                    screenInteractive = isScreenInteractive(context),
+                    pending = pending,
+                    wakeReauthPackage = wakeReauthPackage,
+                )
+            ) {
+                // During the display-off transition, launcher/recents may be
+                // reported before ACTION_SCREEN_OFF reaches this service. Do
+                // not interpret that report as a completed Home escape: the
+                // unresolved protected ticket must survive until the screen
+                // receiver replaces it with the fresh wake generation.
+                if (pending != null && wakeReauthPackage == null) {
+                    ProtectionStateStore.rememberWakeReauthPackage(
+                        context,
+                        pending.packageName,
+                    )
+                }
+                ProtectionRuntime.invalidateChallengeHandoff()
+                ProtectionAccessState.revokeAll()
+                return
+            }
             if (protected) {
                 ProtectionStateStore.rememberWakeReauthPackage(context, packageName)
             } else {
@@ -496,9 +547,11 @@ class WatcherService : Service() {
         }
 
         /**
-         * Leaves a recovery shield for the system launcher without granting
-         * the protected package. The shield is removed only after a detector
-         * confirms that the requested Home package is actually foreground.
+         * Abandons the current challenge presentation and requests the system
+         * launcher without granting the protected package. Detector
+         * confirmation completes the normal path; a bounded coordination
+         * fallback prevents a missing detector from trapping the user behind
+         * the shield.
          */
         @Synchronized
         fun requestSafeExitToHome(context: Context): Boolean {
@@ -515,52 +568,161 @@ class WatcherService : Service() {
             } ?: return false
             if (ProtectionStateStore.isProtected(context, homePackage)) return false
 
-            safeExitChallenge = pending
-            safeExitHomePackage = homePackage
+            val request = SafeExitRequest(pending, homePackage)
+            // Repeated presses for the same ticket do not extend the bounded
+            // window. A newer ticket replaces the old request and receives
+            // its own exact-generation guard.
+            if (!safeExitGate.begin(request)) return true
+            cancelSafeExitTimeout()
             activeInstance?.cancelRecoveryRetry()
             return try {
                 context.startActivity(homeIntent)
+                scheduleSafeExitFallback(context, request)
                 true
             } catch (_: Exception) {
-                safeExitChallenge = null
-                safeExitHomePackage = null
+                safeExitGate.cancel()
+                cancelSafeExitTimeout()
                 activeInstance?.scheduleRecoveryRetry()
                 false
             }
         }
 
-        private fun isSafeExitInProgress(): Boolean = safeExitChallenge != null
+        private fun isSafeExitInProgress(): Boolean = safeExitGate.isInProgress()
+
+        /** Cancels an old emergency exit when a newer security cycle wins. */
+        @Synchronized
+        fun abortSafeExit() {
+            safeExitGate.cancel()
+            cancelSafeExitTimeout()
+        }
+
+        @Synchronized
+        private fun scheduleSafeExitFallback(
+            context: Context,
+            request: SafeExitRequest,
+        ) {
+            cancelSafeExitTimeout()
+            val timeout = Runnable {
+                completeSafeExitAfterTimeout(context, request)
+            }
+            safeExitTimeout = timeout
+            safeExitHandler.postDelayed(timeout, SAFE_EXIT_COORDINATION_MS)
+        }
+
+        @Synchronized
+        private fun cancelSafeExitTimeout() {
+            safeExitTimeout?.let { safeExitHandler.removeCallbacks(it) }
+            safeExitTimeout = null
+        }
+
+        @Synchronized
+        private fun completeSafeExitAfterTimeout(
+            context: Context,
+            request: SafeExitRequest,
+        ) {
+            if (safeExitGate.request() != request) return
+            val resolution = safeExitGate.resolveTimeout(
+                ProtectionStateStore.pendingChallenge(context),
+            )
+            when (resolution) {
+                SafeExitResolution.FALLBACK -> {
+                    // The timeout only abandons the presentation ticket and
+                    // releases the UI shield. It is never an auth decision.
+                    finishSafeExit(
+                        context = context,
+                        request = request,
+                        homeConfirmed = false,
+                    )
+                }
+                SafeExitResolution.STALE -> {
+                    cancelSafeExitTimeout()
+                    activeInstance?.scheduleRecoveryRetry()
+                }
+                else -> Unit
+            }
+        }
+
+        /** Emergency exit always revokes native authorization; it never grants it. */
+        private fun revokeEmergencyExitAuthorization() {
+            ProtectionAccessState.revokeAll()
+        }
 
         @Synchronized
         private fun completeSafeExitIfConfirmed(
             context: Context,
             foregroundPackage: String,
         ): Boolean {
-            val pending = safeExitChallenge ?: return false
-            if (safeExitHomePackage != foregroundPackage) return false
-            val cleared = ProtectionStateStore.clearPendingChallenge(
-                context,
-                pending.packageName,
-                pending.generation,
+            val request = safeExitGate.request() ?: return false
+            val resolution = safeExitGate.resolveForeground(
+                currentChallenge = ProtectionStateStore.pendingChallenge(context),
+                foregroundPackage = foregroundPackage,
             )
-            if (!cleared) {
-                safeExitChallenge = null
-                safeExitHomePackage = null
+            return when (resolution) {
+                SafeExitResolution.CONFIRMED -> finishSafeExit(
+                    context = context,
+                    request = request,
+                    homeConfirmed = true,
+                )
+                SafeExitResolution.STALE -> {
+                    cancelSafeExitTimeout()
+                    activeInstance?.scheduleRecoveryRetry()
+                    false
+                }
+                else -> false
+            }
+        }
+
+        /**
+         * Clears only the exact abandoned presentation ticket, revokes every
+         * native authorization, invalidates the ready handoff, and hides the
+         * shield. No Dart session or protection configuration is touched.
+         */
+        @Synchronized
+        private fun finishSafeExit(
+            context: Context,
+            request: SafeExitRequest,
+            homeConfirmed: Boolean,
+        ): Boolean {
+            val current = ProtectionStateStore.pendingChallenge(context)
+            if (current != request.challenge) {
+                cancelSafeExitTimeout()
+                activeInstance?.scheduleRecoveryRetry()
                 return false
             }
-            safeExitChallenge = null
-            safeExitHomePackage = null
+            if (!ProtectionStateStore.clearPendingChallenge(
+                    context,
+                    request.challenge.packageName,
+                    request.challenge.generation,
+                )
+            ) {
+                cancelSafeExitTimeout()
+                activeInstance?.scheduleRecoveryRetry()
+                return false
+            }
+
             ProtectionRuntime.invalidateChallengeHandoff()
-            // Home is confirmed foreground. Clear only the active wake
-            // identity; protected-app configuration remains unchanged.
-            ProtectionStateStore.rememberWakeReauthPackage(context, null)
-            ProtectionAccessState.observeForeground(
-                packageName = foregroundPackage,
-                protected = false,
-            )
+            if (homeConfirmed) {
+                // Only a detector-confirmed Home transition clears the
+                // remembered wake identity. The fallback remains fail-closed
+                // for a later screen-off because it cannot prove Home.
+                ProtectionStateStore.rememberWakeReauthPackage(context, null)
+                ProtectionAccessState.observeForeground(
+                    packageName = request.homePackage,
+                    protected = false,
+                )
+            }
+            // Emergency exit is not authorization and never starts/extends
+            // a grace window, regardless of how the user reached Home.
+            revokeEmergencyExitAuthorization()
             recoveryGate.reset()
             activeInstance?.cancelRecoveryRetry()
-            ProtectionOverlayController.hide()
+            cancelSafeExitTimeout()
+            if (!ProtectionOverlayController.hide()) {
+                ProtectionStateStore.setLastError(
+                    context,
+                    "Emergency Home exit released state but shield hide failed.",
+                )
+            }
             return true
         }
     }

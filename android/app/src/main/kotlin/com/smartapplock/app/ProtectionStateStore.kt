@@ -98,8 +98,8 @@ object ProtectionStateStore {
         // Pending represents unresolved authentication, not merely an overlay
         // transition. Reading it during Flutter reconstruction and rendering
         // the route must not clear it. It is cleared only by exact successful
-        // authorization or after a detector confirms the user safely left for
-        // an unprotected package.
+        // authorization, confirmed safe exit, or exact bounded emergency
+        // abandonment of the current presentation.
         return pendingChallenge(context)
     }
 

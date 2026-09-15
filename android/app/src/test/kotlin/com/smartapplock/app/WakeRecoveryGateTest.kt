@@ -118,4 +118,50 @@ class WakeRecoveryGateTest {
             ),
         )
     }
+
+    @Test
+    fun launcherReportDuringDisplayOffPreservesPendingChallenge() {
+        val pending = ProtectionStateStore.PendingChallenge(locked, 18L)
+
+        assertTrue(
+            ScreenOffForegroundPolicy.shouldPreservePending(
+                screenInteractive = false,
+                pending = pending,
+                wakeReauthPackage = null,
+            ),
+        )
+    }
+
+    @Test
+    fun displayOffWithWakeIdentityPreservesFreshWakeReauthentication() {
+        assertTrue(
+            ScreenOffForegroundPolicy.shouldPreservePending(
+                screenInteractive = false,
+                pending = null,
+                wakeReauthPackage = locked,
+            ),
+        )
+    }
+
+    @Test
+    fun interactiveHomeReportKeepsExistingSafeExitBehavior() {
+        assertFalse(
+            ScreenOffForegroundPolicy.shouldPreservePending(
+                screenInteractive = true,
+                pending = ProtectionStateStore.PendingChallenge(locked, 19L),
+                wakeReauthPackage = locked,
+            ),
+        )
+    }
+
+    @Test
+    fun displayOffWithoutProtectedStateDoesNotBlockOrdinaryReports() {
+        assertFalse(
+            ScreenOffForegroundPolicy.shouldPreservePending(
+                screenInteractive = false,
+                pending = null,
+                wakeReauthPackage = null,
+            ),
+        )
+    }
 }

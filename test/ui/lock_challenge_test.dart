@@ -1396,6 +1396,32 @@ void main() {
     expect(sessionFor(container, 'com.whatsapp'), isNotNull);
   });
 
+  testWidgets(
+      'a native unresolved wake ticket overrides a Dart session during '
+      'route restoration', (WidgetTester tester) async {
+    final AppContainer container = await pumpApp(tester);
+    await container.auth.enrollPin('1234');
+    await protect(container, 'com.whatsapp');
+    final DefaultAccessController controller =
+        container.accessController as DefaultAccessController;
+    final StaticWatcherService watcher =
+        container.watcher as StaticWatcherService;
+
+    // Model a native ticket surviving screen-off while an independently
+    // reconstructed Dart controller still contains an old session. The
+    // unresolved native ticket is authoritative and must restore the route.
+    await controller.grantAccess('com.whatsapp');
+    watcher
+      ..pendingChallenge = 'com.whatsapp'
+      ..pendingChallengeGeneration = 77;
+    await transition(tester, AppLifecycleState.inactive);
+    await transition(tester, AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+    expect(sessionFor(container, 'com.whatsapp'), isNotNull);
+  });
+
   // -- Phase 5 mobile-QA fix #2: challenge flicker / re-entry ---------------
 
   testWidgets(

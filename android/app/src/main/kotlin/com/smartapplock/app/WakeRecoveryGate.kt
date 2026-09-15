@@ -18,6 +18,20 @@ object WakeReauthTargetPolicy {
     }
 }
 
+/**
+ * Prevents an unprotected foreground report during display-off transition
+ * from consuming an unresolved protected-app ticket before ACTION_SCREEN_OFF
+ * creates the fresh wake generation.
+ */
+object ScreenOffForegroundPolicy {
+    fun shouldPreservePending(
+        screenInteractive: Boolean,
+        pending: ProtectionStateStore.PendingChallenge?,
+        wakeReauthPackage: String?,
+    ): Boolean = !screenInteractive &&
+        (pending != null || !wakeReauthPackage.isNullOrBlank())
+}
+
 /** Exact-match guard shared by onCreate/onResume/onNewIntent recovery. */
 object RecoveryIntentPolicy {
     fun matches(
