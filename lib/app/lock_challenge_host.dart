@@ -159,6 +159,34 @@ class _LockChallengeHostState extends State<LockChallengeHost>
 
   bool _checkingNativePending = false;
 
+  /// Phase 5 / Milestone 3 — Fix #2 (CR-1): native readiness handoff state.
+  ///
+  /// Native accepts `markChallengeReady` only while MainActivity is resumed
+  /// AND the keyguard is unlocked (`ChallengeReadyPolicy.canHandOff`). A
+  /// SCREEN_ON can resume the activity behind the keyguard, and dismissing
+  /// the keyguard then produces no further Flutter lifecycle event. A
+  /// one-shot acknowledgement therefore left the shield up permanently.
+  /// A rejected acknowledgement now arms ONE bounded retry
+  /// ([_readyRetryInterval]). Retrying stops when native accepts, the
+  /// challenge closes, the native ticket disappears or changes package,
+  /// the app leaves the foreground (the resume path re-attempts), or the
+  /// host is disposed.
+  static const Duration _readyRetryInterval = Duration(seconds: 1);
+  Timer? _readyRetryTimer;
+
+  /// True while one `markChallengeReady` call is awaiting native (no
+  /// overlapping acknowledgements).
+  bool _readyHandoffInFlight = false;
+
+  /// A handoff trigger arrived while an acknowledgement was in flight. It
+  /// is re-run once for the CURRENT ticket after the call completes.
+  bool _readyHandoffRerun = false;
+
+  /// Identifies the challenge route currently on screen. It changes when
+  /// a route is presented or closed, so an asynchronous result that
+  /// belongs to an earlier route is discarded.
+  int _challengeSerial = 0;
+
   /// Phase 5M: whether the app is currently in the foreground (drives
   /// the pending re-presentation; tracked explicitly so tests and
   /// platform lifecycle quirks behave deterministically).
@@ -260,7 +288,7 @@ class _LockChallengeHostState extends State<LockChallengeHost>
           _activeNativeChallenge = pending;
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted && _activeNativeChallenge == pending) {
-              unawaited(container.overlay.markChallengeReady(pending));
+              unawaited(_handOffChallengeReady());
             }
           });
         }
@@ -326,6 +354,8 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     _settleTimer = null;
     _heartbeatTimer?.cancel();
     _heartbeatTimer = null;
+    // Fix #2: a pending readiness retry can never outlive the host.
+    _cancelReadyRetry();
     final AppContainer? container = _container;
     if (container != null) {
       // Desired protection must outlive this widget/Activity. Hand liveness
@@ -484,10 +514,9 @@ class _LockChallengeHostState extends State<LockChallengeHost>
         if (nativePending?.packageName == _lastPresentedPackage) {
           _activeNativeChallenge = nativePending;
         }
-        final PendingLockChallenge? challenge = _activeNativeChallenge;
-        if (challenge != null) {
-          await container.overlay.markChallengeReady(challenge);
-        }
+        // Fix #2: the result is acted on. A rejection (for example, resumed
+        // behind the keyguard) arms the bounded readiness retry.
+        await _handOffChallengeReady();
       }
       return;
     }
@@ -644,6 +673,7 @@ class _LockChallengeHostState extends State<LockChallengeHost>
       await container.overlay.setSecureWindow(true);
 
       _challenging = true;
+      _challengeSerial++;
       // Phase 5 mobile-QA diagnostics #1 (temporary): the challenge now
       // on screen carries its diagnostic ID (used by dismissal logs).
       _diagActiveChallengeId = diagId;
@@ -681,9 +711,7 @@ class _LockChallengeHostState extends State<LockChallengeHost>
         // is resumed; if a background launch was blocked, the shield stays.
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted && _activeNativeChallenge == nativeChallenge) {
-            unawaited(
-              container.overlay.markChallengeReady(nativeChallenge),
-            );
+            unawaited(_handOffChallengeReady());
           }
         });
         final bool? unlocked = await unlockFuture;
@@ -752,6 +780,10 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     _diagActiveChallengeId = null;
     _challenging = false;
     _activeNativeChallenge = null;
+    // Fix #2: readiness retries belong to the closed route only.
+    _challengeSerial++;
+    _readyHandoffRerun = false;
+    _cancelReadyRetry();
     // Phase 5 mobile-QA diagnostics #1 (temporary): the challenge
     // closed — classify the exact reason.
     final String dismissalReason;
@@ -809,6 +841,107 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     // frame (no flicker window for a recents snapshot to exploit).
     _diag('${diagId ?? 'challenge#?'} CLOSED -> schedule re-challenge');
     _scheduleReChallenge();
+  }
+
+  /// Phase 5 / Milestone 3 — Fix #2 (CR-1): acknowledges that the
+  /// challenge route for the EXACT active native ticket is rendered, and
+  /// acts on native's answer.
+  ///
+  ///  * Accepted: native has recorded the handoff and dropped its shield.
+  ///    No retry is armed.
+  ///  * Rejected: native preconditions are not met yet (for example, the
+  ///    keyguard is still locked). The shield correctly stays up, and one
+  ///    bounded retry is armed ([_scheduleReadyRetry]).
+  ///
+  /// At most one acknowledgement is in flight. A trigger that arrives
+  /// during it is re-run once afterwards for the current ticket. A result
+  /// that arrives after the route closed, was replaced, or the host was
+  /// disposed is discarded. This only reports readiness: it never
+  /// authenticates or grants anything. Authorization still requires a
+  /// correct credential AND native `authorizePackage` for the exact ticket.
+  Future<void> _handOffChallengeReady() async {
+    final AppContainer? container = _container;
+    final PendingLockChallenge? ticket = _activeNativeChallenge;
+    if (container == null || !mounted || !_challenging || ticket == null) {
+      return;
+    }
+    if (_readyHandoffInFlight) {
+      _readyHandoffRerun = true;
+      return;
+    }
+    _readyHandoffInFlight = true;
+    _readyHandoffRerun = false;
+    _cancelReadyRetry();
+    final int serial = _challengeSerial;
+    bool accepted = false;
+    try {
+      accepted = (await container.overlay.markChallengeReady(ticket)).isSuccess;
+    } finally {
+      _readyHandoffInFlight = false;
+    }
+    if (!mounted || serial != _challengeSerial || !_challenging) {
+      return; // stale: the route closed or the host was disposed
+    }
+    if (_readyHandoffRerun || _activeNativeChallenge != ticket) {
+      _readyHandoffRerun = false;
+      await _handOffChallengeReady();
+      return;
+    }
+    _diag(
+      '${_diagActiveChallengeId ?? 'challenge#?'} READY '
+      'generation=${ticket.generation} accepted=$accepted',
+    );
+    if (!accepted) {
+      _scheduleReadyRetry();
+    }
+  }
+
+  /// Fix #2: arms the single one-shot readiness retry. It is never
+  /// periodic: each retry runs only after the previous acknowledgement
+  /// completed and was rejected.
+  void _scheduleReadyRetry() {
+    if (!mounted || !_challenging || _readyRetryTimer != null) {
+      return;
+    }
+    _readyRetryTimer = Timer(
+      _readyRetryInterval,
+      () => unawaited(_retryReadyHandoff()),
+    );
+  }
+
+  void _cancelReadyRetry() {
+    _readyRetryTimer?.cancel();
+    _readyRetryTimer = null;
+  }
+
+  /// Fix #2: one readiness retry. It re-reads the native ticket because
+  /// native may have replaced the generation in the meantime (screen-off,
+  /// failed shield hide). The retry continues only while the SAME
+  /// package's ticket is still unresolved. If the ticket was resolved,
+  /// abandoned or replaced by another package, retrying stops.
+  Future<void> _retryReadyHandoff() async {
+    _readyRetryTimer = null;
+    final AppContainer? container = _container;
+    if (container == null || !mounted || !_challenging || !_appForeground) {
+      // Backgrounded: the resume path performs the next acknowledgement.
+      return;
+    }
+    final int serial = _challengeSerial;
+    final Result<PendingLockChallenge?> result =
+        await container.watcher.takePendingChallenge();
+    if (!mounted || serial != _challengeSerial || !_challenging) {
+      return;
+    }
+    if (result.isFailure) {
+      _scheduleReadyRetry(); // transient bridge failure: stay fail-closed
+      return;
+    }
+    final PendingLockChallenge? pending = result.valueOrNull;
+    if (pending == null || pending.packageName != _lastPresentedPackage) {
+      return;
+    }
+    _activeNativeChallenge = pending;
+    await _handOffChallengeReady();
   }
 
   /// Phase 5 mobile-QA fix #3: arms (or re-arms) the one-shot settle

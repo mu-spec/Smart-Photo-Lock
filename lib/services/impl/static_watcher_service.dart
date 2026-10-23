@@ -1,11 +1,23 @@
 import '../../utilities/result.dart';
 import '../pending_lock_challenge.dart';
 import '../watcher_service.dart';
+import 'static_native_challenge_contract.dart';
 
 /// In-memory [WatcherService] for tests and previews (Phase 5 mobile-QA
 /// fix). [running] is mutable; [startCalls]/[stopCalls] count lifecycle
 /// invocations.
+///
+/// Phase 5 / Milestone 3 — Fix #1 (H-4): when [nativeContract] is bound
+/// (see [StaticNativeChallengeContract.bind]), configuration, ticket
+/// reads, authorization and revocation go through the exact native
+/// contract. In particular, `authorizePackage` needs an exact pending
+/// ticket AND an accepted ready handoff. Unbound, the lenient legacy
+/// behaviour below is unchanged; for example, it authorizes when no
+/// ticket is pending, which native Android never does.
 class StaticWatcherService implements WatcherService {
+  /// Optional faithful native model shared with [StaticOverlayLockService].
+  StaticNativeChallengeContract? nativeContract;
+
   bool running = false;
   bool protectionConfigured = false;
   bool engineAvailable = false;
@@ -51,6 +63,10 @@ class StaticWatcherService implements WatcherService {
     this.protectedPackages = Set<String>.of(protectedPackages);
     authorizedPackages.retainAll(this.protectedPackages);
     if (!enabled) authorizedPackages.clear();
+    nativeContract?.configure(
+      enabled: enabled,
+      packages: Set<String>.of(protectedPackages),
+    );
     return Result.success(null);
   }
 
@@ -74,6 +90,16 @@ class StaticWatcherService implements WatcherService {
     Duration sessionWindow = const Duration(minutes: 2),
   }) async {
     authorizePackageCalls++;
+    final StaticNativeChallengeContract? native = nativeContract;
+    if (native != null) {
+      if (!native.authorizePackage(challenge)) {
+        return Result.failure(
+          StateError('Native watcher rejected authorizePackage.'),
+        );
+      }
+      authorizedPackages.add(challenge.packageName);
+      return Result.success(null);
+    }
     final String packageName = challenge.packageName;
     if (!protectionConfigured || !protectedPackages.contains(packageName)) {
       return Result.failure(StateError('Package is not protected.'));
@@ -95,6 +121,7 @@ class StaticWatcherService implements WatcherService {
   Future<Result<void>> revokeAllAuthorizations() async {
     revokeAllAuthorizationsCalls++;
     authorizedPackages.clear();
+    nativeContract?.revokeAllAuthorizations();
     return Result.success(null);
   }
 
@@ -106,6 +133,10 @@ class StaticWatcherService implements WatcherService {
 
   @override
   Future<Result<PendingLockChallenge?>> takePendingChallenge() async {
+    final StaticNativeChallengeContract? native = nativeContract;
+    if (native != null) {
+      return Result.success(native.takePendingChallenge());
+    }
     final String? packageName = pendingChallenge;
     return Result.success(
       packageName == null
