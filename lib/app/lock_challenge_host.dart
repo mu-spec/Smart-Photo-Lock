@@ -13,6 +13,16 @@ import 'app_container.dart';
 import 'app_scope.dart';
 import 'router.dart';
 
+/// Phase 5 / Milestone 3 — Fix #3: QA-only diagnostics switch.
+///
+/// Off unless the app is built with `--dart-define=SAL_QA_DIAG=true`. It is
+/// a compile-time constant, so normal production builds compile the QA
+/// logging out. When on, the host's existing diagnostic lines are also
+/// emitted in profile/release builds under the `[SAL_QA]` prefix. Lines
+/// contain lifecycle state, flags, challenge generations and the protected
+/// package name only: never a PIN, pattern, biometric result or credential.
+const bool _kQaDiagnostics = bool.fromEnvironment('SAL_QA_DIAG');
+
 /// Phase 5D/5E/5F/5K/5M/5N: presents the lock challenge when a protected
 /// application becomes active — the user's PRIMARY credential (PIN or
 /// pattern) gates access.
@@ -192,6 +202,34 @@ class _LockChallengeHostState extends State<LockChallengeHost>
   /// platform lifecycle quirks behave deterministically).
   bool _appForeground = true;
 
+  /// Phase 5 / Milestone 3 — Fix #3 (CR-1 focus deadlock): whether the
+  /// Activity is visible, i.e. Flutter is `resumed` or `inactive`.
+  ///
+  /// On Android, Flutter reports `inactive` (not `resumed`) when the
+  /// Activity is resumed but its window has no focus. The native
+  /// protection shield is a focusable overlay window, so while it is up
+  /// the app can never reach `resumed`. [_appForeground] keeps its focus
+  /// meaning for Home/Back/settle behaviour; this flag gates only the
+  /// readiness retry, whose every attempt is independently checked by
+  /// native `ChallengeReadyPolicy` (resumed Activity, unlocked keyguard,
+  /// exact ticket).
+  bool _activityVisible = true;
+
+  /// Fix #3: true after an UPWARD `inactive` (from `hidden`/`paused`).
+  /// Android produces that transition only through `onResume` without
+  /// window focus: the Activity is resumed while another window (the
+  /// native shield or the keyguard) owns focus. `resumed`, `hidden` and
+  /// `paused` clear it. A DOWNWARD `inactive` (from `resumed`) is
+  /// ambiguous (onPause or a focus loss) and never sets it.
+  bool _activityResumedUnfocused = false;
+
+  /// Fix #3: at most one native-ticket recovery for the resumed-unfocused
+  /// state runs at a time.
+  bool _unfocusedRecoveryInFlight = false;
+
+  /// Fix #3 diagnostics: the last heartbeat skip reason (logged on change).
+  String? _lastHeartbeatSkip;
+
   // -- Phase 5 mobile-QA diagnostics #1 (temporary, debug-only) --------
 
   /// Monotonic counter giving each challenge presentation attempt a
@@ -210,6 +248,11 @@ class _LockChallengeHostState extends State<LockChallengeHost>
   /// Debug-only trace helper. Stripped entirely in release builds (and
   /// asserts), so it never changes behavior or output in production.
   static void _diag(String message) {
+    if (_kQaDiagnostics) {
+      // ignore: avoid_print
+      print('[SAL_QA] $message');
+      return;
+    }
     assert(() {
       // ignore: avoid_print
       print('[PHASE5_DIAG] $message');
@@ -277,10 +320,27 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     _checkingNativePending = true;
     try {
       await container.watcher.heartbeat();
-      if (!mounted || !_appForeground || _presenting) return;
+      // Fix #3: a resumed Activity whose window is unfocused (behind the
+      // focusable native shield) is eligible for no-route recovery too.
+      final String? skip = !mounted
+          ? 'unmounted'
+          : !(_appForeground || _activityResumedUnfocused)
+              ? 'not-resumed'
+              : _presenting
+                  ? 'presenting'
+                  : null;
+      if (skip != _lastHeartbeatSkip) {
+        _lastHeartbeatSkip = skip;
+        _diag('heartbeat recovery ${skip == null ? 'ELIGIBLE' : 'SKIP reason=$skip'}');
+      }
+      if (skip != null) return;
       final result = await container.watcher.takePendingChallenge();
       final PendingLockChallenge? pending = result.valueOrNull;
       if (!mounted || pending == null) return;
+      _diag(
+        'heartbeat recovery TICKET generation=${pending.generation} '
+        'challenging=$_challenging',
+      );
       if (_challenging) {
         if (pending.packageName == _lastPresentedPackage &&
             WidgetsBinding.instance.lifecycleState ==
@@ -297,7 +357,11 @@ class _LockChallengeHostState extends State<LockChallengeHost>
       // The native ticket is authoritative until exact authentication or
       // exact safe abandonment clears it. Do not let a stale Dart session
       // turn wake recovery into the dashboard.
-      await _presentChallenge(pending.packageName);
+      // Fix #3: while resumed-unfocused the route is shown in place.
+      await _presentChallenge(
+        pending.packageName,
+        inPlace: _activityResumedUnfocused,
+      );
     } finally {
       _checkingNativePending = false;
     }
@@ -380,14 +444,27 @@ class _LockChallengeHostState extends State<LockChallengeHost>
   ///    to `resumed` with the challenge untouched.
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    final AppLifecycleState? previous = _lastLifecycleState;
     _lastLifecycleState = state;
+    // Fix #3: visibility is tracked separately from focus. Only an UPWARD
+    // `inactive` proves "resumed but unfocused".
+    final bool resumedUnfocused = state == AppLifecycleState.inactive &&
+        (previous == AppLifecycleState.hidden ||
+            previous == AppLifecycleState.paused);
+    _activityVisible = state == AppLifecycleState.resumed ||
+        state == AppLifecycleState.inactive;
+    _activityResumedUnfocused = resumedUnfocused;
     // Phase 5 mobile-QA diagnostics #1 (temporary): every lifecycle
     // transition with the host's decision-relevant state.
     _diag(
-      'lifecycle=${state.name} appForeground=$_appForeground '
-      'challenging=$_challenging ownInFlight=$_ownPresentationInFlight '
+      'lifecycle=${state.name} previous=${previous?.name} '
+      'visible=$_activityVisible resumedUnfocused=$resumedUnfocused '
+      'appForeground=$_appForeground '
+      'challenging=$_challenging presenting=$_presenting '
+      'ownInFlight=$_ownPresentationInFlight '
       'interrupted=$_interruptedChallenge '
-      'activeChallenge=$_diagActiveChallengeId',
+      'activeChallenge=$_diagActiveChallengeId '
+      'activeGeneration=${_activeNativeChallenge?.generation}',
     );
     if (state == AppLifecycleState.resumed) {
       _appForeground = true;
@@ -398,6 +475,13 @@ class _LockChallengeHostState extends State<LockChallengeHost>
       // Transient: cancelled gestures, shade pulls, dialogs, split
       // screen — the challenge stays exactly where it is.
       _appForeground = false;
+      if (resumedUnfocused) {
+        // Fix #3: resumed beneath a window that owns focus (the native
+        // shield). `resumed` will not arrive until native hides the
+        // shield, and native hides it only after an accepted readiness
+        // acknowledgement, so recover the exact native ticket now.
+        unawaited(_recoverWhileResumedUnfocused());
+      }
       return;
     }
     if (state == AppLifecycleState.paused ||
@@ -489,7 +573,8 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     }
     if (!mounted) return;
     _diag(
-      'resumed challenging=$_challenging screenOffPending=$screenOff '
+      'resumed nativeGeneration=${nativePending?.generation} '
+      'challenging=$_challenging screenOffPending=$screenOff '
       'interrupted=$_interruptedChallenge ownInFlight=$_ownPresentationInFlight '
       'activeChallenge=$_diagActiveChallengeId',
     );
@@ -545,7 +630,10 @@ class _LockChallengeHostState extends State<LockChallengeHost>
   Future<void> _onLockRequired(LockRequired requirement) =>
       _presentChallenge(requirement.packageName);
 
-  Future<void> _presentChallenge(String packageName) async {
+  Future<void> _presentChallenge(
+    String packageName, {
+    bool inPlace = false,
+  }) async {
     // Phase 5 mobile-QA diagnostics #1 (temporary): every challenge
     // request gets a diagnostic ID.
     _diagChallengeNumber++;
@@ -628,10 +716,17 @@ class _LockChallengeHostState extends State<LockChallengeHost>
       // screen (cleared in `_onResumed`). When the app is already
       // foreground (in-app flows, tests), no bring-to-front happens and
       // no suppression is needed.
-      _ownPresentationInFlight = !_appForeground;
+      //
+      // Fix #3: [inPlace] presentations come from the resumed-but-
+      // unfocused recovery (behind the native shield). The Activity is
+      // already resumed, so native `showLockChallenge` re-shows the shield
+      // without launching the Activity: there is no own transition to
+      // absorb, and latching the suppression would turn a real Home press
+      // into a suppressed leave.
+      _ownPresentationInFlight = !_appForeground && !inPlace;
       _diag(
         '$diagId PRESENT-START package=$packageName '
-        'fromBackground=${!_appForeground}',
+        'fromBackground=$_ownPresentationInFlight inPlace=$inPlace',
       );
       // Bring Smart App Lock to the front (basic challenge presentation;
       // the overlay window lands in the lock-screen phase).
@@ -664,7 +759,10 @@ class _LockChallengeHostState extends State<LockChallengeHost>
         return;
       }
       _activeNativeChallenge = nativeChallenge;
-      _diag('$diagId PRESENTED package=$packageName');
+      _diag(
+        '$diagId PRESENTED package=$packageName '
+        'generation=${nativeChallenge.generation} (native shield shown)',
+      );
 
       // Phase 5O (recents hardening): FLAG_SECURE keeps the recents
       // snapshot blank while the challenge is on screen — the PIN dots,
@@ -873,6 +971,11 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     _readyHandoffRerun = false;
     _cancelReadyRetry();
     final int serial = _challengeSerial;
+    _diag(
+      '${_diagActiveChallengeId ?? 'challenge#?'} READY-ATTEMPT '
+      'generation=${ticket.generation} appForeground=$_appForeground '
+      'resumedUnfocused=$_activityResumedUnfocused',
+    );
     bool accepted = false;
     try {
       accepted = (await container.overlay.markChallengeReady(ticket)).isSuccess;
@@ -880,6 +983,7 @@ class _LockChallengeHostState extends State<LockChallengeHost>
       _readyHandoffInFlight = false;
     }
     if (!mounted || serial != _challengeSerial || !_challenging) {
+      _diag('READY result DISCARDED reason=stale generation=${ticket.generation}');
       return; // stale: the route closed or the host was disposed
     }
     if (_readyHandoffRerun || _activeNativeChallenge != ticket) {
@@ -889,10 +993,90 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     }
     _diag(
       '${_diagActiveChallengeId ?? 'challenge#?'} READY '
-      'generation=${ticket.generation} accepted=$accepted',
+      'generation=${ticket.generation} accepted=$accepted'
+      '${accepted ? ' (native released the shield)' : ''}',
     );
     if (!accepted) {
       _scheduleReadyRetry();
+    }
+  }
+
+  /// Phase 5 / Milestone 3 — Fix #3 (CR-1 focus deadlock): recovers the
+  /// exact pending native ticket when the Activity has resumed but its
+  /// window is unfocused (an upward `inactive`).
+  ///
+  /// Physical evidence (Oppo, Android 9): after the device PIN the
+  /// Activity resumed beneath the focusable native shield. Flutter was
+  /// told `inactive`, the resume path never ran, nothing was acknowledged
+  /// and the shield kept focus indefinitely. This performs the
+  /// native-ticket part of [_onResumed] without waiting for focus:
+  ///
+  ///  * a route is on screen: adopt the ticket for the same package and
+  ///    acknowledge readiness (a rejection arms the bounded retry);
+  ///  * no route: present the native ticket exactly once.
+  ///
+  /// It never hides the shield or grants anything; native accepts an
+  /// acknowledgement only for the exact ticket while the Activity is
+  /// resumed and the keyguard is unlocked. Session/grace re-evaluation is
+  /// left to [_onResumed]. If focus arrives first (`resumed` right after
+  /// this upward `inactive`, the normal path), the resume path owns
+  /// recovery and this returns without acting.
+  Future<void> _recoverWhileResumedUnfocused() async {
+    final AppContainer? container = _container;
+    if (container == null || !mounted) {
+      return;
+    }
+    if (_unfocusedRecoveryInFlight) {
+      _diag('unfocused-recovery SKIP reason=in-flight');
+      return;
+    }
+    _unfocusedRecoveryInFlight = true;
+    try {
+      final Result<PendingLockChallenge?> result =
+          await container.watcher.takePendingChallenge();
+      if (!mounted) {
+        return;
+      }
+      if (!_activityResumedUnfocused) {
+        _diag(
+          'unfocused-recovery CANCEL reason='
+          '${_appForeground ? 'focus-gained-resume-path' : 'left-foreground'}',
+        );
+        return;
+      }
+      if (result.isFailure) {
+        _diag('unfocused-recovery CANCEL reason=bridge-failure');
+        return; // the heartbeat retries no-route recovery
+      }
+      final PendingLockChallenge? pending = result.valueOrNull;
+      if (pending == null) {
+        _diag('unfocused-recovery CANCEL reason=no-native-ticket');
+        return;
+      }
+      _diag(
+        'unfocused-recovery TICKET generation=${pending.generation} '
+        'challenging=$_challenging presenting=$_presenting',
+      );
+      if (_challenging) {
+        if (pending.packageName != _lastPresentedPackage) {
+          _diag('unfocused-recovery CANCEL reason=other-package');
+          return;
+        }
+        _activeNativeChallenge = pending;
+        await container.overlay.setSecureWindow(true);
+        await _handOffChallengeReady();
+        return;
+      }
+      if (_presenting) {
+        // A presentation is already in flight; its post-frame handoff
+        // (and the bounded retry) covers readiness.
+        _diag('unfocused-recovery CANCEL reason=presentation-in-flight');
+        return;
+      }
+      _interruptedChallenge = false;
+      unawaited(_presentChallenge(pending.packageName, inPlace: true));
+    } finally {
+      _unfocusedRecoveryInFlight = false;
     }
   }
 
@@ -907,6 +1091,7 @@ class _LockChallengeHostState extends State<LockChallengeHost>
       _readyRetryInterval,
       () => unawaited(_retryReadyHandoff()),
     );
+    _diag('READY retry SCHEDULED in ${_readyRetryInterval.inMilliseconds}ms');
   }
 
   void _cancelReadyRetry() {
@@ -922,22 +1107,34 @@ class _LockChallengeHostState extends State<LockChallengeHost>
   Future<void> _retryReadyHandoff() async {
     _readyRetryTimer = null;
     final AppContainer? container = _container;
-    if (container == null || !mounted || !_challenging || !_appForeground) {
-      // Backgrounded: the resume path performs the next acknowledgement.
+    // Fix #3: the retry runs while the Activity is VISIBLE (resumed or
+    // inactive), not only while focused: behind the focusable native
+    // shield Flutter stays `inactive` until the handoff is accepted.
+    // Native rejects any attempt made while the Activity is not resumed.
+    if (container == null || !mounted || !_challenging || !_activityVisible) {
+      _diag(
+        'READY retry STOP reason=${!mounted ? 'unmounted' : !_challenging ? 'no-challenge' : 'not-visible'}',
+      );
+      // Hidden/paused: the upward-inactive or resume path re-attempts.
       return;
     }
     final int serial = _challengeSerial;
     final Result<PendingLockChallenge?> result =
         await container.watcher.takePendingChallenge();
     if (!mounted || serial != _challengeSerial || !_challenging) {
+      _diag('READY retry STOP reason=stale-route');
       return;
     }
     if (result.isFailure) {
+      _diag('READY retry bridge-failure -> reschedule');
       _scheduleReadyRetry(); // transient bridge failure: stay fail-closed
       return;
     }
     final PendingLockChallenge? pending = result.valueOrNull;
     if (pending == null || pending.packageName != _lastPresentedPackage) {
+      _diag(
+        'READY retry STOP reason=${pending == null ? 'no-native-ticket' : 'other-package'}',
+      );
       return;
     }
     _activeNativeChallenge = pending;
