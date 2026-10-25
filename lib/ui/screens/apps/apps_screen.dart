@@ -5,6 +5,7 @@ import '../../../data/models/app_entry.dart';
 import '../../../data/models/protected_app.dart';
 import '../../../design_system/design_system.dart';
 import '../../widgets/app_icon.dart';
+import 'unprotect_gate.dart';
 
 /// Filter groups of the Apps tab (Phase 3D).
 enum AppsFilter {
@@ -66,6 +67,23 @@ class AppsScreen extends StatefulWidget {
   static String bulkPartialFailure(int n) =>
       'Could not update $n ${n == 1 ? 'app' : 'apps'}.';
 
+  /// CR-2: shown when an unprotect was not confirmed with the app
+  /// credential. Protection is unchanged.
+  static const String unprotectNotConfirmedMessage =
+      'Protection unchanged. Confirm with your PIN or pattern to remove it.';
+  static const String unprotectNoCredentialMessage =
+      'Set up a PIN or pattern in Security before removing protection.';
+  static const String unprotectUnavailableMessage =
+      'Could not verify your identity. Protection unchanged.';
+
+  /// Maps a CR-2 denial to its user-facing message.
+  static String unprotectDeniedMessage(UnprotectDenial denial) =>
+      switch (denial) {
+        UnprotectDenial.notAuthenticated => unprotectNotConfirmedMessage,
+        UnprotectDenial.noAppCredential => unprotectNoCredentialMessage,
+        UnprotectDenial.credentialUnavailable => unprotectUnavailableMessage,
+      };
+
   @override
   State<AppsScreen> createState() => _AppsScreenState();
 }
@@ -86,6 +104,10 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
   bool _selectionMode = false;
   Set<String> _selected = <String>{};
   bool _bulkBusy = false;
+
+  /// CR-2: true while an unprotect confirmation is on screen. Further
+  /// toggles are ignored so two confirmations can never interleave.
+  bool _unprotectConfirming = false;
 
   /// Memoized visible list (Phase 3H). Recomputed ONLY when the catalog,
   /// query, filter or protection set changes — never during scroll builds,
@@ -274,21 +296,62 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
   }
 
   /// Marks every selected app unprotected (skips apps already unlocked).
+  ///
+  /// CR-2: the selected PROTECTED apps are removed only after the user
+  /// confirms with the Smart App Lock PIN or pattern. One confirmation
+  /// covers exactly the selection snapshot. Denial changes nothing.
   Future<void> _bulkUnprotect() async {
     final container = AppScope.read(context);
-    if (container == null || _selected.isEmpty || _bulkBusy) {
+    if (container == null ||
+        _selected.isEmpty ||
+        _bulkBusy ||
+        _unprotectConfirming) {
       return;
     }
+    // Snapshot: only apps that are protected now can lose protection, and
+    // the confirmation covers exactly this set.
+    final Set<String> targets =
+        _selected.where(_protected.contains).toSet();
+    final NavigatorState navigator = Navigator.of(context);
     setState(() => _bulkBusy = true);
+
+    UnprotectAuthorization? authorization;
+    if (targets.isNotEmpty) {
+      _unprotectConfirming = true;
+      final UnprotectRequestResult request;
+      try {
+        request = await requestUnprotectAuthorization(
+          navigator: navigator,
+          credentials: container.auth,
+          packages: targets,
+        );
+      } finally {
+        _unprotectConfirming = false;
+      }
+      if (!mounted) {
+        return; // torn down: nothing was removed
+      }
+      authorization = request.authorization;
+      if (authorization == null) {
+        setState(() => _bulkBusy = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(AppsScreen.unprotectDeniedMessage(request.denial!)),
+          ),
+        );
+        return;
+      }
+    }
 
     int changed = 0;
     final Set<String> failed = <String>{};
     final Set<String> succeeded = <String>{};
-    for (final String packageName in _selected) {
-      if (!_protected.contains(packageName)) {
-        continue; // already unprotected — sensible no-op
-      }
-      final result = await container.protectedApps.remove(packageName);
+    for (final String packageName in targets) {
+      final result = await removeProtectionWith(
+        authorization!,
+        container.protectedApps,
+        packageName,
+      );
       if (result.isSuccess) {
         changed++;
         succeeded.add(packageName);
@@ -318,7 +381,7 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
     }
 
     setState(() {
-      _protected = _protected.difference(_selected);
+      _protected = _protected.difference(targets);
       _recomputeVisible();
       _bulkBusy = false;
       _selectionMode = false;
@@ -334,12 +397,47 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
   ///
   /// Optimistic: the list updates immediately and reverts with a snackbar
   /// when the repository rejects the change.
+  ///
+  /// CR-2: turning protection OFF first requires confirmation with the
+  /// Smart App Lock PIN or pattern. The switch does not move until the
+  /// credential is verified. Denial leaves the app protected. Turning
+  /// protection ON needs no confirmation.
   Future<void> _toggleProtection(AppEntry app) async {
     final container = AppScope.read(context);
-    if (container == null) {
+    if (container == null || _unprotectConfirming) {
       return;
     }
     final bool wasProtected = _protected.contains(app.packageName);
+    UnprotectAuthorization? authorization;
+    if (wasProtected) {
+      final NavigatorState navigator = Navigator.of(context);
+      _unprotectConfirming = true;
+      final UnprotectRequestResult request;
+      try {
+        request = await requestUnprotectAuthorization(
+          navigator: navigator,
+          credentials: container.auth,
+          packages: <String>{app.packageName},
+        );
+      } finally {
+        _unprotectConfirming = false;
+      }
+      if (!mounted) {
+        return; // torn down: nothing was removed
+      }
+      authorization = request.authorization;
+      if (authorization == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(AppsScreen.unprotectDeniedMessage(request.denial!)),
+          ),
+        );
+        return;
+      }
+      if (!_protected.contains(app.packageName)) {
+        return; // already unprotected meanwhile: nothing to remove
+      }
+    }
     setState(() {
       wasProtected
           ? _protected.remove(app.packageName)
@@ -348,7 +446,11 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
     });
 
     final result = wasProtected
-        ? await container.protectedApps.remove(app.packageName)
+        ? await removeProtectionWith(
+            authorization!,
+            container.protectedApps,
+            app.packageName,
+          )
         : await container.protectedApps.add(
             ProtectedApp(
               packageName: app.packageName,

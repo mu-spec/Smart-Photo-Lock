@@ -44,6 +44,14 @@ void main() {
   Finder checkFor(String packageName) =>
       find.byKey(Key('app_check_$packageName'));
 
+  /// CR-2: removing protection now requires the Smart App Lock PIN.
+  Future<void> confirmWithPin(WidgetTester tester) async {
+    for (final String digit in '1234'.split('')) {
+      await tester.tap(find.byKey(Key('pin_key_$digit')));
+      await tester.pumpAndSettle();
+    }
+  }
+
   testWidgets('Select enters selection mode with checkboxes and bulk bar',
       (WidgetTester tester) async {
     await pumpApps(tester);
@@ -148,6 +156,7 @@ void main() {
   testWidgets('bulk Unprotect removes protection from selected apps',
       (WidgetTester tester) async {
     final AppContainer container = await pumpApps(tester);
+    await container.auth.enrollPin('1234');
     for (final String pkg in <String>['com.whatsapp', 'com.instagram']) {
       await container.protectedApps.add(
         ProtectedApp(
@@ -168,6 +177,7 @@ void main() {
 
     await tester.tap(find.byKey(const Key('apps_bulk_unprotect')));
     await tester.pumpAndSettle();
+    await confirmWithPin(tester);
 
     expect(find.text('2 apps unprotected'), findsOneWidget);
     expect((await container.protectedApps.count()).valueOrNull, 0);
@@ -175,6 +185,7 @@ void main() {
 
   testWidgets('select all respects the active filter', (WidgetTester tester) async {
     final AppContainer container = await pumpApps(tester);
+    await container.auth.enrollPin('1234');
     await container.protectedApps.add(
       ProtectedApp(
         packageName: 'com.whatsapp',
@@ -199,9 +210,10 @@ void main() {
       isTrue,
     );
 
-    // Unprotect everything via bulk.
+    // Unprotect everything via bulk (CR-2: confirmed with the PIN).
     await tester.tap(find.byKey(const Key('apps_bulk_unprotect')));
     await tester.pumpAndSettle();
+    await confirmWithPin(tester);
     expect((await container.protectedApps.count()).valueOrNull, 0);
   });
 

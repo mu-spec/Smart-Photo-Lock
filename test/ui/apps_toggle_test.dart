@@ -39,6 +39,14 @@ void main() {
   Finder switchFor(String packageName) =>
       find.byKey(Key('app_toggle_$packageName'));
 
+  /// CR-2: removing protection now requires the Smart App Lock PIN.
+  Future<void> confirmWithPin(WidgetTester tester) async {
+    for (final String digit in '1234'.split('')) {
+      await tester.tap(find.byKey(Key('pin_key_$digit')));
+      await tester.pumpAndSettle();
+    }
+  }
+
   testWidgets('every row renders a switch, all off by default',
       (WidgetTester tester) async {
     await pumpApps(tester);
@@ -74,6 +82,7 @@ void main() {
   testWidgets('toggling a protected app off unprotects it',
       (WidgetTester tester) async {
     final AppContainer container = await pumpApps(tester);
+    await container.auth.enrollPin('1234');
     await container.protectedApps.add(
       ProtectedApp(
         packageName: 'com.whatsapp',
@@ -88,6 +97,7 @@ void main() {
 
     await tester.tap(switchFor('com.whatsapp'));
     await tester.pumpAndSettle();
+    await confirmWithPin(tester);
 
     expect(tester.widget<Switch>(switchFor('com.whatsapp')).value, isFalse);
     expect(find.text('WhatsApp unprotected'), findsOneWidget); // snackbar
@@ -111,6 +121,7 @@ void main() {
   testWidgets('toggling off inside the Protected filter removes the row',
       (WidgetTester tester) async {
     final AppContainer container = await pumpApps(tester);
+    await container.auth.enrollPin('1234');
     await container.protectedApps.add(
       ProtectedApp(
         packageName: 'com.whatsapp',
@@ -131,6 +142,7 @@ void main() {
     // state appears because nothing is protected anymore.
     await tester.tap(switchFor('com.whatsapp'));
     await tester.pumpAndSettle();
+    await confirmWithPin(tester);
     expect(find.text('WhatsApp'), findsNothing);
     expect(find.text(AppsScreen.noProtectedTitle), findsOneWidget);
     expect((await container.protectedApps.count()).valueOrNull, 0);
