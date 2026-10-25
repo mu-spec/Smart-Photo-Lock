@@ -219,13 +219,17 @@ void main() {
       expect(native.readyBlockers(native.pending!), isEmpty);
     });
 
-    test('an unprotected foreground after a rendered challenge abandons it',
-        () {
+    test(
+        'a genuine leave (Activity paused, then an unprotected app is '
+        'reported) after a rendered challenge abandons it', () {
       final StaticNativeChallengeContract native = configured();
       native.reportForeground(app);
       final PendingLockChallenge ticket = native.showLockChallenge(app)!;
       expect(native.markChallengeReady(ticket), isTrue);
 
+      // H-1 F1: a report while MainActivity is still resumed only defers
+      // (see test/regression/h1_transient_foreground_test.dart).
+      native.onActivityPaused();
       native.reportForeground('com.android.launcher');
       expect(native.pending, isNull);
       expect(native.readyChallenge, isNull);

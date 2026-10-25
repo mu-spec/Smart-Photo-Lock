@@ -16,6 +16,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
+import android.provider.Settings
 import android.util.Log
 
 enum class ForegroundSource { ACCESSIBILITY, USAGE_EVENTS }
@@ -281,6 +282,9 @@ class WatcherService : Service() {
         private val safeExitGate = SafeExitGate()
         private val safeExitHandler = Handler(Looper.getMainLooper())
         private var safeExitTimeout: Runnable? = null
+        // H-1 F1: a possible leave reported while the challenge Activity was
+        // still resumed; confirmed only by the matching onPause.
+        @Volatile private var abandonCandidate: ChallengeAbandonCandidate? = null
 
         fun start(context: Context): Boolean = try {
             val intent = Intent(context, WatcherService::class.java)
@@ -365,9 +369,10 @@ class WatcherService : Service() {
             val protected = ProtectionStateStore.isProtected(context, packageName)
             val pending = ProtectionStateStore.pendingChallenge(context)
             val wakeReauthPackage = ProtectionStateStore.wakeReauthPackage(context)
+            val screenInteractive = isScreenInteractive(context)
             if (!protected &&
                 ScreenOffForegroundPolicy.shouldPreservePending(
-                    screenInteractive = isScreenInteractive(context),
+                    screenInteractive = screenInteractive,
                     pending = pending,
                     wakeReauthPackage = wakeReauthPackage,
                 )
@@ -388,20 +393,40 @@ class WatcherService : Service() {
                 return
             }
             if (protected) {
+                cancelChallengeAbandonCandidate()
                 ProtectionStateStore.rememberWakeReauthPackage(context, packageName)
             } else {
-                ProtectionStateStore.rememberWakeReauthPackage(context, null)
-                // Home/Recents may abandon a rendered challenge. Clear it
-                // only after native detection confirms an unprotected target;
-                // this grants no package access.
+                // H-1: System UI, framework and keyboard windows report a
+                // package without the user leaving. They prove nothing.
+                val transient = ChallengeAbandonPolicy.isTransientWindow(
+                    packageName,
+                    defaultInputMethodPackage(context),
+                )
+                // F2: keep the wake identity across transient windows so
+                // SCREEN_OFF still knows which protected app needs re-auth.
+                if (ChallengeAbandonPolicy.mayForgetWakeIdentity(
+                        protectedTarget = false,
+                        transient = transient,
+                    )
+                ) {
+                    ProtectionStateStore.rememberWakeReauthPackage(context, null)
+                }
+                // F1: Home/Recents may abandon a rendered challenge, but only
+                // a confirmed genuine leave clears it; this grants no access.
                 ProtectionRuntime.readyChallenge()?.let { ready ->
-                    if (ProtectionStateStore.clearPendingChallenge(
-                            context,
-                            ready.packageName,
-                            ready.generation,
+                    when (
+                        ChallengeAbandonPolicy.readyTicketAction(
+                            protectedTarget = false,
+                            transient = transient,
+                            challengeActivityResumed = ProtectionRuntime.activityResumed,
+                            screenInteractive = screenInteractive,
                         )
                     ) {
-                        ProtectionRuntime.invalidateChallengeHandoff()
+                        ReadyTicketAction.ABANDON -> abandonReadyChallenge(context, ready)
+                        ReadyTicketAction.DEFER -> recordChallengeAbandonCandidate(
+                            ChallengeAbandonCandidate(ready, packageName, now),
+                        )
+                        ReadyTicketAction.KEEP -> Unit
                     }
                 }
             }
@@ -544,6 +569,75 @@ class WatcherService : Service() {
             if (!ProtectionStateStore.isProtected(context, pending.packageName)) return
             ProtectionOverlayController.show(context)
             activeInstance?.scheduleRecoveryRetry()
+        }
+
+        /**
+         * H-1 F1: `MainActivity.onPause`. A leave reported while the challenge
+         * Activity was still resumed (event-order race) is confirmed here only
+         * for the exact still-ready ticket within the bounded window. Every
+         * other outcome keeps the ticket.
+         */
+        @Synchronized
+        fun onChallengeActivityPaused(context: Context) {
+            val candidate = abandonCandidate ?: return
+            abandonCandidate = null
+            if (!ProtectionStateStore.isEnabled(context)) return
+            if (!ChallengeAbandonPolicy.confirmsDeferred(
+                    candidate = candidate,
+                    ready = ProtectionRuntime.readyChallenge(),
+                    pending = ProtectionStateStore.pendingChallenge(context),
+                    challengeActivityResumed = ProtectionRuntime.activityResumed,
+                    screenInteractive = isScreenInteractive(context),
+                    nowElapsedMs = SystemClock.elapsedRealtime(),
+                )
+            ) {
+                return
+            }
+            abandonReadyChallenge(context, candidate.ticket)
+            // Same follow-up as an immediate unprotected leave in
+            // reportForeground: stop recovery, release only an orphan shield.
+            resetRecovery()
+            if (ProtectionStateStore.pendingChallenge(context) == null) {
+                ProtectionOverlayController.hide()
+            }
+        }
+
+        /** Exact clear of an abandoned rendered ticket; never an authorization. */
+        @Synchronized
+        private fun abandonReadyChallenge(
+            context: Context,
+            ready: ProtectionStateStore.PendingChallenge,
+        ) {
+            abandonCandidate = null
+            if (ProtectionStateStore.clearPendingChallenge(
+                    context,
+                    ready.packageName,
+                    ready.generation,
+                )
+            ) {
+                ProtectionRuntime.invalidateChallengeHandoff()
+            }
+        }
+
+        @Synchronized
+        private fun recordChallengeAbandonCandidate(candidate: ChallengeAbandonCandidate) {
+            abandonCandidate = candidate
+        }
+
+        @Synchronized
+        private fun cancelChallengeAbandonCandidate() {
+            abandonCandidate = null
+        }
+
+        private fun defaultInputMethodPackage(context: Context): String? = try {
+            ChallengeAbandonPolicy.imePackageFromSetting(
+                Settings.Secure.getString(
+                    context.contentResolver,
+                    Settings.Secure.DEFAULT_INPUT_METHOD,
+                ),
+            )
+        } catch (_: Exception) {
+            null
         }
 
         /**

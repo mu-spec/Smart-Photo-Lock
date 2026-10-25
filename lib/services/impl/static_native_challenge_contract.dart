@@ -26,6 +26,14 @@ enum NativeReadyRejection {
 /// `WakeRecoverySignal` enum.
 enum NativeRecoverySignal { screenOn, userPresent, foreground, retry }
 
+/// `ChallengeAbandonCandidate` (H-1 F1): a possible leave reported while
+/// MainActivity was still resumed, with the exact ready ticket at that time.
+typedef NativeAbandonCandidate = ({
+  PendingLockChallenge ticket,
+  String packageName,
+  int reportedAtMs,
+});
+
 /// A test-only, deterministic model of the native challenge-handoff
 /// contract (Phase 5 / Milestone 3 — Fix #1, H-4).
 ///
@@ -58,6 +66,14 @@ enum NativeRecoverySignal { screenOn, userPresent, foreground, retry }
 /// * **SCREEN_OFF**: invalidates the handoff, revokes every authorization,
 ///   replaces the wake package's ticket with a new generation and shows
 ///   the shield.
+/// * **Unprotected foreground (H-1 F1/F2)**: `ChallengeAbandonPolicy`.
+///   System UI, `android`, the default keyboard and blank reports are
+///   transient: they never clear a ready ticket or forget the wake
+///   identity. A non-transient unprotected report abandons the exact ready
+///   ticket only when MainActivity is no longer resumed; while it is still
+///   resumed the report is a candidate that the next `onPause` confirms
+///   within [abandonConfirmWindowMs] for the exact, still-ready ticket.
+///   Time is the explicit test clock [elapsedMs].
 /// * **SCREEN_ON / USER_PRESENT / retry timer**: native recovery only
 ///   shows the shield and promotes the existing task. **None of them
 ///   calls into Dart.** Promoting a task whose activity is already resumed
@@ -105,6 +121,24 @@ class StaticNativeChallengeContract {
   bool activityResumed = true;
 
   PendingLockChallenge? readyChallenge;
+
+  /// `SystemClock.elapsedRealtime()` for the model. Tests advance it.
+  int elapsedMs = 0;
+
+  /// `ChallengeAbandonPolicy.CONFIRM_WINDOW_MS`.
+  static const int abandonConfirmWindowMs = 1500;
+
+  /// `ChallengeAbandonPolicy.SYSTEM_TRANSIENT_PACKAGES`.
+  static const Set<String> systemTransientPackages = <String>{
+    'android',
+    'com.android.systemui',
+  };
+
+  /// The default keyboard (`Settings.Secure.DEFAULT_INPUT_METHOD`).
+  String? inputMethodPackage;
+
+  /// `WatcherService.abandonCandidate`: (ticket, package, reported at).
+  NativeAbandonCandidate? abandonCandidate;
 
   // -- Platform state -------------------------------------------------------
 
@@ -298,9 +332,31 @@ class StaticNativeChallengeContract {
     _onChallengeActivityAvailable();
   }
 
-  /// `MainActivity.onPause`.
+  /// `MainActivity.onPause`, including
+  /// `WatcherService.onChallengeActivityPaused` (H-1 F1 deferred leave).
   void onActivityPaused() {
     activityResumed = false;
+    final NativeAbandonCandidate? candidate = abandonCandidate;
+    if (candidate == null) return;
+    abandonCandidate = null;
+    if (!enabled) return;
+    final int elapsed = elapsedMs - candidate.reportedAtMs;
+    final bool confirmed = screenInteractive &&
+        readyChallenge == candidate.ticket &&
+        pending == candidate.ticket &&
+        elapsed >= 0 &&
+        elapsed <= abandonConfirmWindowMs;
+    if (!confirmed) return;
+    _abandonReadyChallenge(candidate.ticket);
+    if (pending == null) _hideShield();
+  }
+
+  /// `ChallengeAbandonPolicy.isTransientWindow`.
+  bool isTransientWindow(String packageName) {
+    final String? ime = inputMethodPackage;
+    return packageName.trim().isEmpty ||
+        systemTransientPackages.contains(packageName) ||
+        (ime != null && ime.trim().isNotEmpty && packageName == ime);
   }
 
   /// `WatcherService` ACTION_SCREEN_OFF receiver.
@@ -373,16 +429,24 @@ class StaticNativeChallengeContract {
       return;
     }
     if (protected) {
+      abandonCandidate = null;
       wakeReauthPackage = packageName;
     } else {
-      wakeReauthPackage = null;
+      final bool transient = isTransientWindow(packageName);
+      // F2: transient windows never forget the wake identity.
+      if (!transient) wakeReauthPackage = null;
+      // F1: only a confirmed genuine leave abandons the ready ticket.
       final PendingLockChallenge? ready = readyChallenge;
-      if (ready != null &&
-          clearPendingChallenge(
-            packageName: ready.packageName,
-            generation: ready.generation,
-          )) {
-        readyChallenge = null;
+      if (ready != null && !transient && screenInteractive) {
+        if (activityResumed) {
+          abandonCandidate = (
+            ticket: ready,
+            packageName: packageName,
+            reportedAtMs: elapsedMs,
+          );
+        } else {
+          _abandonReadyChallenge(ready);
+        }
       }
     }
     // ProtectionAccessState.observeForeground with a zero grace period.
@@ -400,6 +464,17 @@ class StaticNativeChallengeContract {
   }
 
   // -- Internals ------------------------------------------------------------
+
+  /// `WatcherService.abandonReadyChallenge`: exact clear, never a grant.
+  void _abandonReadyChallenge(PendingLockChallenge ready) {
+    abandonCandidate = null;
+    if (clearPendingChallenge(
+      packageName: ready.packageName,
+      generation: ready.generation,
+    )) {
+      readyChallenge = null;
+    }
+  }
 
   PendingLockChallenge? _restoreWakeReauthChallenge() {
     final PendingLockChallenge? current = pending;

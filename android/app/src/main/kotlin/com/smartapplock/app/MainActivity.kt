@@ -57,6 +57,8 @@ class MainActivity : FlutterFragmentActivity() {
 
     override fun onPause() {
         ProtectionRuntime.activityResumed = false
+        // H-1 F1: confirms a leave reported just before this pause.
+        WatcherService.onChallengeActivityPaused(this)
         super.onPause()
     }
 
