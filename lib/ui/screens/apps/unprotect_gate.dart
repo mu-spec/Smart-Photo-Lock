@@ -4,6 +4,7 @@ import '../../../data/repositories/protected_apps_repository.dart';
 import '../../../security/credentials/auth_result.dart';
 import '../../../security/credentials/auth_type.dart';
 import '../../../security/credentials/biometric_options.dart';
+import '../../../security/credentials/credential_change_authorization.dart';
 import '../../../security/credentials/credential_manager.dart';
 import '../../../security/credentials/credential_state.dart';
 import '../../../security/credentials/pattern_policy.dart';
@@ -268,6 +269,7 @@ class _AppCredentialVerifier implements CredentialManager {
   Future<Result<void>> enrollPin(
     String pin, {
     PinPolicy policy = PinPolicy.defaults,
+    CredentialChangeAuthorization? authorization,
   }) async =>
       _refused();
 
@@ -275,8 +277,28 @@ class _AppCredentialVerifier implements CredentialManager {
   Future<Result<void>> enrollPattern(
     List<int> nodes, {
     PatternPolicy policy = PatternPolicy.defaults,
+    CredentialChangeAuthorization? authorization,
   }) async =>
       _refused();
+
+  // CR-3: an unprotect confirmation must never mint credential-change
+  // grants.
+  @override
+  Future<Result<CredentialChangeAttempt>> verifyPinForCredentialChange(
+    String pin,
+  ) async =>
+      _refused();
+
+  @override
+  Future<Result<CredentialChangeAttempt>> verifyPatternForCredentialChange(
+    List<int> nodes,
+  ) async =>
+      _refused();
+
+  @override
+  void revokeCredentialChangeAuthorization(
+    CredentialChangeAuthorization authorization,
+  ) {}
 
   @override
   Future<Result<void>> updateBiometricOptions(BiometricOptions? options) async =>

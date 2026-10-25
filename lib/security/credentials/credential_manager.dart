@@ -2,6 +2,7 @@ import '../../utilities/result.dart';
 import '../pin_policy.dart';
 import 'auth_result.dart';
 import 'biometric_options.dart';
+import 'credential_change_authorization.dart';
 import 'credential_state.dart';
 import 'pattern_policy.dart';
 
@@ -18,13 +19,49 @@ abstract interface class CredentialManager {
   // -- enrollment ---------------------------------------------------------
 
   /// Enrolls (or replaces) the PIN credential and makes it primary.
-  Future<Result<void>> enrollPin(String pin, {PinPolicy policy = PinPolicy.defaults});
+  ///
+  /// CR-3: when ANY usable app credential (PIN or pattern) already exists,
+  /// the write is refused with [CredentialChangeNotAuthorized] unless
+  /// [authorization] is a live grant issued by this manager through
+  /// [verifyPinForCredentialChange] or [verifyPatternForCredentialChange].
+  /// The grant is consumed before anything is written. Initial enrollment
+  /// (no usable credential) needs no authorization.
+  Future<Result<void>> enrollPin(
+    String pin, {
+    PinPolicy policy = PinPolicy.defaults,
+    CredentialChangeAuthorization? authorization,
+  });
 
   /// Enrolls (or replaces) the pattern credential and makes it primary.
+  ///
+  /// The CR-3 authorization rules are the same as for [enrollPin].
   Future<Result<void>> enrollPattern(
     List<int> nodes, {
     PatternPolicy policy = PatternPolicy.defaults,
+    CredentialChangeAuthorization? authorization,
   });
+
+  // -- CR-3: credential-change authorization ------------------------------
+
+  /// Verifies the EXISTING PIN for a credential change. The attempt goes
+  /// through the normal authentication path, so attempts are counted and an
+  /// active lockout blocks it. Only an [AuthSuccess] carries a
+  /// [CredentialChangeAuthorization]. Issuing a grant supersedes any
+  /// earlier one.
+  Future<Result<CredentialChangeAttempt>> verifyPinForCredentialChange(
+    String pin,
+  );
+
+  /// Pattern counterpart of [verifyPinForCredentialChange].
+  Future<Result<CredentialChangeAttempt>> verifyPatternForCredentialChange(
+    List<int> nodes,
+  );
+
+  /// Invalidates [authorization] immediately. Revoking an unknown, used or
+  /// already-revoked handle does nothing.
+  void revokeCredentialChangeAuthorization(
+    CredentialChangeAuthorization authorization,
+  );
 
   /// Configures (or removes) the biometric accelerator.
   ///

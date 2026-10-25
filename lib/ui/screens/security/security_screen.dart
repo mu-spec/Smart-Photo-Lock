@@ -291,7 +291,12 @@ class _SecurityScreenState extends State<SecurityScreen>
 
   Future<void> _onPinTap() async {
     if (!_hasPin) {
-      await Navigator.of(context).pushNamed(RouteNames.pinSetup);
+      // CR-3: adding a PIN goes through the change flow. It verifies an
+      // EXISTING app credential first whenever one exists (initial
+      // enrollment, with no credential at all, needs none). The setup
+      // route itself would be refused by the credential manager's write
+      // gate if a credential already exists.
+      await Navigator.of(context).pushNamed(RouteNames.pinChange);
       // Refresh after the setup fall-through so the row flips to
       // "Change PIN" the moment a PIN now exists.
       if (mounted) {
@@ -369,7 +374,12 @@ class _SecurityScreenState extends State<SecurityScreen>
 
   Future<void> _onPatternTap() async {
     if (!_hasPattern) {
-      await Navigator.of(context).pushNamed(RouteNames.patternSetup);
+      // CR-3: adding a pattern goes through the change flow. It verifies an
+      // EXISTING app credential first whenever one exists (initial
+      // enrollment, with no credential at all, needs none). The setup
+      // route itself would be refused by the credential manager's write
+      // gate if a credential already exists.
+      await Navigator.of(context).pushNamed(RouteNames.patternChange);
       // Refresh after the setup fall-through so the row flips to
       // "Change pattern" the moment a pattern now exists.
       if (mounted) {

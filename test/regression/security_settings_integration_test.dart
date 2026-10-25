@@ -23,6 +23,7 @@ import 'package:smart_app_lock/ui/screens/pattern/pattern_setup_screen.dart';
 import 'package:smart_app_lock/ui/screens/pin/pin_unlock_screen.dart';
 import 'package:smart_app_lock/ui/screens/security/security_screen.dart';
 import 'package:smart_app_lock/utilities/result.dart';
+import '../support/credential_change_grant.dart';
 
 /// Phase 2 device-integration regression: exercises the REAL production
 /// manager + settings repository path (no faked UI state) for the five
@@ -57,7 +58,12 @@ void main() {
   test('change PIN: old PIN rejected, new PIN accepted (production path)',
       () async {
     await manager.enrollPin('1234');
-    await manager.enrollPin('5678'); // the change flow's enrollment
+    // The change flow's enrollment, authorized by verifying the old PIN
+    // (CR-3).
+    await manager.enrollPin(
+      '5678',
+      authorization: await grantWithPin(manager, '1234'),
+    );
 
     expect((await manager.authenticatePin('1234')).valueOrNull,
         isA<AuthFailure>());
@@ -71,7 +77,11 @@ void main() {
   test('change pattern: old rejected, new accepted, reverse of new rejected',
       () async {
     await manager.enrollPattern(const <int>[1, 2, 3, 6]);
-    await manager.enrollPattern(const <int>[1, 4, 7, 8]); // the change flow
+    // The change flow, authorized by verifying the old pattern (CR-3).
+    await manager.enrollPattern(
+      const <int>[1, 4, 7, 8],
+      authorization: await grantWithPattern(manager, const <int>[1, 2, 3, 6]),
+    );
 
     expect(
       (await manager.authenticatePattern(const <int>[1, 2, 3, 6])).valueOrNull,

@@ -19,6 +19,7 @@ import 'package:smart_app_lock/ui/screens/apps/unprotect_gate.dart';
 import 'package:smart_app_lock/ui/screens/pattern/pattern_unlock_screen.dart';
 import 'package:smart_app_lock/ui/screens/pin/pin_unlock_screen.dart';
 import 'package:smart_app_lock/utilities/result.dart';
+import '../support/credential_change_grant.dart';
 
 /// CR-2 regression: protection can be removed ONLY after Smart App Lock
 /// app-credential authentication (PIN or pattern) verified by the real
@@ -242,7 +243,11 @@ void main() {
       final AppContainer c = _container(_Disk());
       await c.auth.enrollPin(_pin);
       expect(
-        (await c.auth.enrollPattern(const <int>[1, 2, 3, 6, 9])).isSuccess,
+        (await c.auth.enrollPattern(
+          const <int>[1, 2, 3, 6, 9],
+          authorization: await grantWithPin(c.auth, _pin), // CR-3
+        ))
+            .isSuccess,
         isTrue,
       ); // the pattern is now primary
       await c.protectedApps.add(

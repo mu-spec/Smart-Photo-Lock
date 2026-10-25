@@ -16,6 +16,7 @@ import 'package:smart_app_lock/services/impl/static_watcher_service.dart';
 import 'package:smart_app_lock/ui/screens/pattern/pattern_unlock_screen.dart';
 import 'package:smart_app_lock/ui/screens/pin/pin_unlock_screen.dart';
 import 'package:smart_app_lock/utilities/result.dart';
+import '../support/credential_change_grant.dart';
 
 /// Phase 5D: the basic lock trigger end-to-end — when a protected
 /// application becomes active, Smart App Lock presents the unlock
@@ -359,7 +360,10 @@ void main() {
     final AppContainer container = await pumpApp(tester);
     // PIN enrolled first, pattern second -> primary is the pattern.
     await container.auth.enrollPin('1234');
-    await container.auth.enrollPattern(const <int>[3, 6, 9, 8]);
+    await container.auth.enrollPattern(
+      const <int>[3, 6, 9, 8],
+      authorization: await grantWithPin(container.auth, '1234'), // CR-3
+    );
     await protect(container, 'com.whatsapp');
 
     await openApp(tester, container, 'com.whatsapp');
@@ -374,7 +378,13 @@ void main() {
     final AppContainer container = await pumpApp(tester);
     // Pattern enrolled first, PIN second -> primary is the PIN.
     await container.auth.enrollPattern(const <int>[3, 6, 9, 8]);
-    await container.auth.enrollPin('1234');
+    await container.auth.enrollPin(
+      '1234',
+      authorization: await grantWithPattern(
+        container.auth,
+        const <int>[3, 6, 9, 8],
+      ), // CR-3
+    );
     await protect(container, 'com.whatsapp');
 
     await openApp(tester, container, 'com.whatsapp');

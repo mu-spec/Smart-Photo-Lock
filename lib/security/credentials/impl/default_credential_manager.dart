@@ -7,6 +7,7 @@ import '../../pin_policy.dart';
 import '../auth_result.dart';
 import '../auth_type.dart';
 import '../biometric_options.dart';
+import '../credential_change_authorization.dart';
 import '../credential_hash.dart';
 import '../credential_state.dart';
 import '../credential_state_machine.dart';
@@ -80,6 +81,7 @@ class DefaultCredentialManager implements CredentialManager {
   Future<Result<void>> enrollPin(
     String pin, {
     PinPolicy policy = PinPolicy.defaults,
+    CredentialChangeAuthorization? authorization,
   }) async {
     final PinValidation validation = policy.validate(pin);
     if (validation != PinValidation.valid) {
@@ -87,23 +89,36 @@ class DefaultCredentialManager implements CredentialManager {
         FormatException(policy.messageFor(validation)),
       );
     }
+    // CR-3 write gate: runs before hashing and before any write.
+    final Result<SecuritySettings> loaded = await _settings.getSettings();
+    if (loaded.isFailure) {
+      return Result.failure(loaded.errorOrNull!); // fail closed
+    }
+    final CredentialChangeNotAuthorized? denied =
+        _consumeChangeAuthorization(loaded.valueOrNull!, authorization);
+    if (denied != null) {
+      return Result.failure(denied);
+    }
     final PinHash hash = await _pinHasher.hash(pin);
 
     // The hash and all metadata that describes it must land in ONE settings
     // write. Two writes can leave an old hash paired with a new length or
     // primary method when the second write fails.
-    return _pinStore.save(
+    final Result<void> saved = await _pinStore.save(
       hash,
       pinLength: pin.length,
       makePrimary: true,
       resetAttemptState: true,
     );
+    _credentialSetChanged();
+    return saved;
   }
 
   @override
   Future<Result<void>> enrollPattern(
     List<int> nodes, {
     PatternPolicy policy = PatternPolicy.defaults,
+    CredentialChangeAuthorization? authorization,
   }) async {
     final PatternValidation validation = policy.validate(nodes);
     if (validation != PatternValidation.valid) {
@@ -111,9 +126,19 @@ class DefaultCredentialManager implements CredentialManager {
         FormatException(policy.messageFor(validation)),
       );
     }
+    // CR-3 write gate: runs before hashing and before any write.
+    final Result<SecuritySettings> gateLoaded = await _settings.getSettings();
+    if (gateLoaded.isFailure) {
+      return Result.failure(gateLoaded.errorOrNull!); // fail closed
+    }
+    final CredentialChangeNotAuthorized? denied =
+        _consumeChangeAuthorization(gateLoaded.valueOrNull!, authorization);
+    if (denied != null) {
+      return Result.failure(denied);
+    }
     final CredentialHash hash = await _patternHasher.hash(nodes);
     final Result<SecuritySettings> loaded = await _settings.getSettings();
-    return loaded.fold(
+    final Result<void> saved = await loaded.fold(
       (SecuritySettings s) => _settings.saveSettings(
         s.copyWith(
           patternHash: hash,
@@ -122,8 +147,10 @@ class DefaultCredentialManager implements CredentialManager {
           clearLockout: true,
         ),
       ),
-      Result.failure,
+      (Object e) async => Result<void>.failure(e),
     );
+    _credentialSetChanged();
+    return saved;
   }
 
   @override
@@ -318,8 +345,119 @@ class DefaultCredentialManager implements CredentialManager {
   // -- lifecycle ----------------------------------------------------------
 
   @override
-  Future<Result<void>> clearAll() =>
-      _settings.saveSettings(SecuritySettings.defaults);
+  Future<Result<void>> clearAll() async {
+    _credentialSetChanged();
+    final Result<void> saved =
+        await _settings.saveSettings(SecuritySettings.defaults);
+    _credentialSetChanged();
+    return saved;
+  }
+
+  // -- CR-3: credential-change authorization ------------------------------
+
+  /// How long a credential-change grant stays valid after verification.
+  static const Duration credentialChangeAuthorizationTtl =
+      Duration(minutes: 2);
+
+  /// Live grants, keyed by handle identity. Memory only: a recreated
+  /// process starts empty, so no grant survives process death.
+  final Map<CredentialChangeAuthorization, _ChangeGrant> _changeGrants =
+      Map<CredentialChangeAuthorization, _ChangeGrant>.identity();
+
+  /// Bumped on every credential-set write (successful or not, because a
+  /// failed write may still have partly landed). A grant is bound to the
+  /// epoch it was issued in.
+  int _credentialEpoch = 0;
+
+  @override
+  Future<Result<CredentialChangeAttempt>> verifyPinForCredentialChange(
+    String pin,
+  ) async =>
+      _issueOnSuccess(await authenticatePin(pin), AuthType.pin);
+
+  @override
+  Future<Result<CredentialChangeAttempt>> verifyPatternForCredentialChange(
+    List<int> nodes,
+  ) async =>
+      _issueOnSuccess(await authenticatePattern(nodes), AuthType.pattern);
+
+  @override
+  void revokeCredentialChangeAuthorization(
+    CredentialChangeAuthorization authorization,
+  ) {
+    _changeGrants.remove(authorization);
+  }
+
+  Result<CredentialChangeAttempt> _issueOnSuccess(
+    Result<AuthAttemptResult> attempt,
+    AuthType method,
+  ) {
+    if (attempt.isFailure) {
+      return Result.failure(attempt.errorOrNull!);
+    }
+    final AuthAttemptResult result = attempt.valueOrNull!;
+    if (result is! AuthSuccess || result.type != method) {
+      return Result.success(CredentialChangeAttempt(result));
+    }
+    // At most one live grant: a new verification supersedes older ones.
+    _changeGrants.clear();
+    final CredentialChangeAuthorization handle =
+        CredentialChangeAuthorization.handle(method: method);
+    _changeGrants[handle] = _ChangeGrant(
+      issuedAt: _now(),
+      epoch: _credentialEpoch,
+    );
+    return Result.success(CredentialChangeAttempt(result, handle));
+  }
+
+  /// The CR-3 write gate. Returns null if the write may go ahead.
+  ///
+  /// When a usable app credential exists, the supplied grant is removed
+  /// from the registry (consumed) BEFORE it is validated, so it can never be
+  /// replayed, even after a denied or failed write.
+  CredentialChangeNotAuthorized? _consumeChangeAuthorization(
+    SecuritySettings s,
+    CredentialChangeAuthorization? authorization,
+  ) {
+    final CredentialState state = _stateFrom(s);
+    final bool hasExistingCredential =
+        state.hasEnrolled(AuthType.pin) || state.hasEnrolled(AuthType.pattern);
+    if (!hasExistingCredential) {
+      return null; // initial enrollment
+    }
+    if (authorization == null) {
+      return const CredentialChangeNotAuthorized(
+        CredentialChangeDenial.missing,
+      );
+    }
+    final _ChangeGrant? grant = _changeGrants.remove(authorization);
+    if (grant == null) {
+      return const CredentialChangeNotAuthorized(
+        CredentialChangeDenial.unknown,
+      );
+    }
+    if (grant.epoch != _credentialEpoch) {
+      return const CredentialChangeNotAuthorized(CredentialChangeDenial.stale);
+    }
+    final DateTime now = _now();
+    final Duration age = now.difference(grant.issuedAt);
+    if (age.isNegative || age > credentialChangeAuthorizationTtl) {
+      return const CredentialChangeNotAuthorized(
+        CredentialChangeDenial.expired,
+      );
+    }
+    if (_activeLockout(state, now) != null) {
+      return const CredentialChangeNotAuthorized(
+        CredentialChangeDenial.lockedOut,
+      );
+    }
+    return null;
+  }
+
+  void _credentialSetChanged() {
+    _credentialEpoch++;
+    _changeGrants.clear();
+  }
 
   // -- internals ----------------------------------------------------------
 
@@ -396,4 +534,12 @@ class DefaultCredentialManager implements CredentialManager {
     }
     return Result.success(result);
   }
+}
+
+/// CR-3: registry entry backing a live [CredentialChangeAuthorization].
+final class _ChangeGrant {
+  const _ChangeGrant({required this.issuedAt, required this.epoch});
+
+  final DateTime issuedAt;
+  final int epoch;
 }

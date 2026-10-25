@@ -19,6 +19,7 @@ import 'package:smart_app_lock/security/pin_hasher.dart';
 import 'package:smart_app_lock/services/biometric_service.dart';
 import 'package:smart_app_lock/services/impl/local_auth_biometric_service.dart';
 import 'package:smart_app_lock/utilities/result.dart';
+import '../../support/credential_change_grant.dart';
 
 void main() {
   // Fast hashers + a low lockout threshold so the suite stays quick.
@@ -60,7 +61,10 @@ void main() {
     await manager.enrollPin('1234');
     expect((await manager.status()).valueOrNull!.pinLength, 4);
 
-    await manager.enrollPin('246810');
+    await manager.enrollPin(
+      '246810',
+      authorization: await grantWithPin(manager, '1234'), // CR-3
+    );
     expect((await manager.status()).valueOrNull!.pinLength, 6);
   });
 
@@ -195,7 +199,10 @@ void main() {
   test('both credentials can be enrolled; latest enrollment is primary',
       () async {
     await manager.enrollPin('1234');
-    await manager.enrollPattern(const <int>[1, 4, 7, 8]);
+    await manager.enrollPattern(
+      const <int>[1, 4, 7, 8],
+      authorization: await grantWithPin(manager, '1234'), // CR-3
+    );
 
     final CredentialState state = (await manager.status()).valueOrNull!;
     expect(state.hasEnrolled(AuthType.pin), isTrue);

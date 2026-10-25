@@ -3,8 +3,8 @@ import 'package:flutter/material.dart';
 import '../../../app/app_scope.dart';
 import '../../../security/credentials/auth_type.dart';
 import '../../../security/credentials/credential_manager.dart';
+import '../security/credential_change_flow.dart';
 import '../pattern/pattern_setup_screen.dart';
-import '../pattern/pattern_unlock_screen.dart';
 
 /// Change-pattern flow controller (Phase 2K).
 ///
@@ -15,6 +15,11 @@ import '../pattern/pattern_unlock_screen.dart';
 /// ```
 /// Pops `true` when the new pattern was saved, `false` on cancel/back.
 /// The current pattern must be drawn before anything can change.
+///
+/// CR-3: this is also the "add a pattern" flow. When no pattern exists but
+/// a PIN does, the existing PIN is verified first. Only initial enrollment
+/// (no app credential at all) skips verification. The write itself is
+/// gated in the credential manager by the verified grant.
 class PatternChangeScreen extends StatefulWidget {
   const PatternChangeScreen({super.key, this.credentialManager});
 
@@ -31,6 +36,9 @@ class PatternChangeScreen extends StatefulWidget {
 class _PatternChangeScreenState extends State<PatternChangeScreen> {
   bool _started = false;
 
+  /// CR-3: owns the verified grant while the setup step is open.
+  CredentialChangeSession? _session;
+
   CredentialManager get _manager =>
       widget.credentialManager ?? AppScope.read(context)!.auth;
 
@@ -46,54 +54,74 @@ class _PatternChangeScreenState extends State<PatternChangeScreen> {
     }
     _started = true;
 
-    final state = (await _manager.status()).valueOrNull;
+    final CredentialManager manager = _manager;
+    final NavigatorState navigator = Navigator.of(context);
+    final state = (await manager.status()).valueOrNull;
     if (!mounted) {
       return;
     }
-    // Nothing to change: fall through to initial setup.
-    if (state == null || !state.hasEnrolled(AuthType.pattern)) {
-      final bool? ok = await Navigator.of(context).push<bool>(
-        MaterialPageRoute<bool>(
-          builder: (_) => PatternSetupScreen(credentialManager: _manager),
-        ),
-      );
-      if (mounted) {
-        Navigator.of(context).pop(ok ?? false);
+    if (state == null) {
+      // Fail closed: the credential status could not be read.
+      navigator.pop(false);
+      return;
+    }
+
+    // CR-3 step 1: when ANY app credential exists, verify an existing one
+    // (the current pattern, or the PIN when no pattern is enrolled yet).
+    // This replaces the old fall-through that let "add a pattern" skip
+    // verification when only a PIN existed. Lockouts and attempt counting
+    // are enforced by the manager and biometric is not accepted.
+    final CredentialChangeGateResult gate =
+        await verifyExistingCredentialForChange(
+      navigator,
+      manager,
+      preferred: AuthType.pattern,
+      patternTitle: PatternChangeScreen.verifyTitle,
+    );
+    if (!mounted) {
+      final authorization = gate.authorization;
+      if (authorization != null) {
+        manager.revokeCredentialChangeAuthorization(authorization);
       }
       return;
     }
+    if (gate.outcome == CredentialChangeGateOutcome.denied) {
+      navigator.pop(false);
+      return;
+    }
 
-    // Step 1: verify the current pattern (exact ordered sequence; lockouts
-    // and attempt counting enforced by the unlock screen).
-    final bool? verified = await Navigator.of(context).push<bool>(
-      MaterialPageRoute<bool>(
-        builder: (_) => PatternUnlockScreen(
-          credentialManager: _manager,
-          title: PatternChangeScreen.verifyTitle,
-        ),
-      ),
-    );
-    if (!mounted) {
-      return;
-    }
-    if (verified != true) {
-      Navigator.of(context).pop(false);
-      return;
-    }
+    final bool replacingPattern = state.hasEnrolled(AuthType.pattern) &&
+        gate.outcome == CredentialChangeGateOutcome.verified;
+    final CredentialChangeSession? session = gate.authorization == null
+        ? null
+        : CredentialChangeSession(manager, gate.authorization!);
+    _session = session;
 
     // Step 2: draw and confirm the new pattern.
-    final bool? changed = await Navigator.of(context).push<bool>(
-      MaterialPageRoute<bool>(
-        builder: (_) => PatternSetupScreen(
-          credentialManager: _manager,
-          title: PatternChangeScreen.setupTitle,
-        ),
-      ),
+    final MaterialPageRoute<bool> setupRoute = MaterialPageRoute<bool>(
+      builder: (_) => replacingPattern
+          ? PatternSetupScreen(
+              credentialManager: session?.setupManager ?? manager,
+              title: PatternChangeScreen.setupTitle,
+            )
+          : PatternSetupScreen(
+              credentialManager: session?.setupManager ?? manager,
+            ),
     );
+    session?.attach(navigator, setupRoute);
+    final bool? changed = await navigator.push<bool>(setupRoute);
+    session?.end();
+    _session = null;
     if (!mounted) {
       return;
     }
-    Navigator.of(context).pop(changed ?? false);
+    navigator.pop(changed ?? false);
+  }
+
+  @override
+  void dispose() {
+    _session?.end();
+    super.dispose();
   }
 
   @override

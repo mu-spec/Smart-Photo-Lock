@@ -16,6 +16,7 @@ import 'package:smart_app_lock/security/pin_hasher.dart';
 import 'package:smart_app_lock/security/storage/impl/in_memory_secret_store.dart';
 import 'package:smart_app_lock/services/biometric_service.dart';
 import 'package:smart_app_lock/utilities/result.dart';
+import '../support/credential_change_grant.dart';
 
 /// Phase 2L — Authentication regression.
 ///
@@ -292,7 +293,14 @@ void main() {
 
     test('pattern failures share the PIN lockout (same counters)', () async {
       await harness.manager.enrollPin('1234');
-      await harness.manager.enrollPattern(const <int>[1, 2, 3, 6]);
+      // CR-3: grants belong to the issuing manager instance (and
+      // `harness.manager` builds a new one per access), so verify and
+      // enroll through the same instance.
+      final DefaultCredentialManager owner = harness.manager;
+      await owner.enrollPattern(
+        const <int>[1, 2, 3, 6],
+        authorization: await grantWithPin(owner, '1234'),
+      );
       await harness.manager.authenticatePattern(const <int>[1, 2, 3, 5]);
       await harness.manager.authenticatePattern(const <int>[1, 2, 3, 5]);
       final AuthAttemptResult r3 = (await harness.manager
@@ -418,7 +426,10 @@ void main() {
     test('credentials survive a restart and still verify', () async {
       final DefaultCredentialManager firstRun = harness.newManager();
       await firstRun.enrollPin('1234');
-      await firstRun.enrollPattern(const <int>[1, 2, 3, 6]);
+      await firstRun.enrollPattern(
+        const <int>[1, 2, 3, 6],
+        authorization: await grantWithPin(firstRun, '1234'), // CR-3
+      );
 
       // "Restart": fresh manager over the same persisted store.
       final DefaultCredentialManager restarted = harness.newManager();

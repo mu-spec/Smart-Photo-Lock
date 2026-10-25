@@ -18,6 +18,7 @@ import 'package:smart_app_lock/services/biometric_service.dart';
 import 'package:smart_app_lock/ui/screens/pin/pin_setup_screen.dart';
 import 'package:smart_app_lock/ui/screens/pin/pin_unlock_screen.dart';
 import 'package:smart_app_lock/utilities/result.dart';
+import '../support/credential_change_grant.dart';
 
 /// Phase 2E: PIN unlock screen — uses the configured PIN, handles wrong
 /// entries, lockouts (including pre-existing ones), countdown expiry and
@@ -151,7 +152,11 @@ void main() {
     await tester.pageBack();
     await tester.pumpAndSettle();
 
-    await enrollPin(tester, '246810');
+    // Replacing the PIN needs the current one verified first (CR-3).
+    await _ManagerResults.manager.enrollPin(
+      '246810',
+      authorization: await grantWithPin(_ManagerResults.manager, '1234'),
+    );
     await openUnlock(tester);
     expect(dotsTotal(tester), 6);
     expect(find.text('Enter your 6-digit PIN'), findsOneWidget);
