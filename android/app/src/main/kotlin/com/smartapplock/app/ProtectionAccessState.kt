@@ -54,8 +54,18 @@ object ProtectionAccessState {
      * Records an actual foreground observation and returns whether native
      * presentation must fail closed for it.
      *
-     * Duplicate observations never refresh an authorization. A transition
-     * away applies immediate re-lock or starts the configured grace window.
+     * A transition away applies immediate re-lock or starts the configured
+     * grace window.
+     *
+     * H-2 sliding inactivity window: a same-package observation of the
+     * current foreground package whose authorization exists, is not away
+     * (no grace window running) and has not yet expired slides
+     * `activeUntilElapsedMs` to `now + sessionWindowMs` (monotonic
+     * `elapsedRealtime`). Such observations are a proxy for continued
+     * foreground presence only; they do not prove human activity. Nothing
+     * else extends an authorization: an observation at or after the
+     * deadline challenges and removes it, so an expired authorization is
+     * never revived, and sliding never extends a grace window.
      */
     @Synchronized
     fun observeForeground(
@@ -90,10 +100,29 @@ object ProtectionAccessState {
             return Decision.CHALLENGE
         }
         if (nowElapsedMs < authorization.activeUntilElapsedMs) {
+            // H-2: only continued presence in the SAME foreground package
+            // slides the still-valid window; a transition never does.
+            if (previous == packageName) {
+                slidDeadline(nowElapsedMs, authorization)?.let {
+                    authorization.activeUntilElapsedMs = it
+                }
+            }
             return Decision.ALLOW
         }
         authorizations.remove(packageName)
         return Decision.CHALLENGE
+    }
+
+    /**
+     * `now + window` when that moves the deadline later without overflowing;
+     * otherwise null and the existing deadline is kept (never shortened,
+     * never wrapped).
+     */
+    private fun slidDeadline(nowElapsedMs: Long, authorization: Authorization): Long? {
+        val window = authorization.sessionWindowMs
+        if (window <= 0L || nowElapsedMs > Long.MAX_VALUE - window) return null
+        val candidate = nowElapsedMs + window
+        return if (candidate > authorization.activeUntilElapsedMs) candidate else null
     }
 
     @Synchronized
