@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:local_auth/local_auth.dart';
 
 import 'package:smart_app_lock/data/repositories/impl/security_settings_repository_impl.dart';
 import 'package:smart_app_lock/data/repositories/security_settings_repository.dart';
@@ -15,6 +16,7 @@ import 'package:smart_app_lock/security/credentials/pattern_hasher.dart';
 import 'package:smart_app_lock/security/pin_hasher.dart';
 import 'package:smart_app_lock/security/storage/impl/in_memory_secret_store.dart';
 import 'package:smart_app_lock/services/biometric_service.dart';
+import 'package:smart_app_lock/services/impl/local_auth_biometric_service.dart';
 import 'package:smart_app_lock/utilities/result.dart';
 import '../support/credential_change_grant.dart';
 
@@ -322,11 +324,13 @@ void main() {
     Future<DefaultCredentialManager> bioManager({
       required bool supported,
       required bool promptResult,
+      Object? failure,
     }) async {
       final DefaultCredentialManager m = harness.newManager(
         biometricService: _FakeBiometricService(
           supported: supported,
           promptResult: promptResult,
+          failure: failure,
         ),
       );
       await m.enrollPin('1234');
@@ -369,12 +373,10 @@ void main() {
       expect(r3, isA<AuthLockedOut>());
     });
 
-    test(
-        'cancellation fails closed and counts (prevents cancel-loop bypass)',
+    test('a rejected prompt (false) fails closed and repeated rejections lock',
         () async {
-      // local_auth semantics: a user cancel makes the prompt return
-      // false — indistinguishable from a rejection. The manager treats it
-      // as a failed attempt so rapid cancelling cannot skip lockouts.
+      // A prompt that resolves `false` is a rejection: it counts, so a
+      // failing prompt can never be used to skip the lockout.
       final DefaultCredentialManager m =
           await bioManager(supported: true, promptResult: false);
 
@@ -383,11 +385,32 @@ void main() {
       expect(c1, isA<AuthFailure>());
       expect((c1 as AuthFailure).remainingAttempts, 2);
 
-      // Cancel repeatedly -> lockout.
       await m.authenticateBiometric();
       final AuthAttemptResult c3 =
           (await m.authenticateBiometric()).valueOrNull!;
       expect(c3, isA<AuthLockedOut>());
+    });
+
+    test(
+        'cancellation fails closed WITHOUT counting (H-3: local_auth reports '
+        'userCanceled, not false)', () async {
+      final DefaultCredentialManager m = await bioManager(
+        supported: true,
+        promptResult: true,
+        failure: mapBiometricError(
+          const LocalAuthException(code: LocalAuthExceptionCode.userCanceled),
+        ),
+      );
+
+      for (int i = 0; i < 3; i++) {
+        final AuthAttemptResult c =
+            (await m.authenticateBiometric()).valueOrNull!;
+        expect(c, isA<AuthFailure>());
+        expect((c as AuthFailure).reason, AuthFailureReason.cancelled);
+      }
+      final CredentialState state = (await m.status()).valueOrNull!;
+      expect(state.failedAttempts, 0);
+      expect(state.lockedOutUntil, isNull);
     });
 
     test('unsupported hardware reports notAvailable without counting',
@@ -566,13 +589,18 @@ class _FakeBiometricService implements BiometricService {
   const _FakeBiometricService({
     required this.supported,
     required this.promptResult,
+    this.failure,
   });
 
   final bool supported;
 
-  /// What the prompt resolves to. `false` covers both rejections and user
-  /// cancellations — exactly like the real local_auth implementation.
+  /// What the prompt resolves to when no [failure] is set (`false` = a
+  /// rejection). local_auth reports a user cancellation as a
+  /// `userCanceled` error, modelled with [failure].
   final bool promptResult;
+
+  /// When non-null, the prompt fails with this platform error.
+  final Object? failure;
 
   @override
   Future<Result<bool>> isSupported() async => Result.success(supported);
@@ -589,5 +617,5 @@ class _FakeBiometricService implements BiometricService {
     required String reason,
     BiometricOptions? options,
   }) async =>
-      Result.success(promptResult);
+      failure == null ? Result.success(promptResult) : Result.failure(failure!);
 }

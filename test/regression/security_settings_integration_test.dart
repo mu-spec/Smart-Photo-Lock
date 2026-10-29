@@ -240,7 +240,10 @@ void main() {
     final AuthAttemptResult result =
         (await canceled.authenticateBiometric()).valueOrNull!;
     expect(result, isA<AuthFailure>());
-    expect((result as AuthFailure).reason, AuthFailureReason.wrongCredential);
+    // H-3: reported as a cancellation and not counted (the earlier
+    // rejection's count is neither incremented nor reset).
+    expect((result as AuthFailure).reason, AuthFailureReason.cancelled);
+    expect((await canceled.status()).valueOrNull!.failedAttempts, 1);
   });
 
   test('unavailable platform -> notAvailable, never counts as an attempt',

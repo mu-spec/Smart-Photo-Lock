@@ -12,12 +12,14 @@ import '../../../protection/protection_health.dart';
 import '../../../security/credentials/auth_type.dart';
 import '../../../security/credentials/biometric_options.dart';
 import '../../../security/credentials/credential_manager.dart';
+import '../../../security/credentials/credential_state.dart';
 import '../../../services/accessibility_lock_service.dart';
 import '../../../services/capability_monitor.dart';
 import '../../../services/installed_apps_service.dart';
 import '../../../services/overlay_lock_service.dart';
 import '../../../services/watcher_service.dart';
 import '../../../utilities/result.dart';
+import 'app_credential_verification.dart';
 
 /// Security tab — the authentication settings surface (Phase 2K).
 ///
@@ -53,6 +55,19 @@ class SecurityScreen extends StatefulWidget {
   static const String protectionReadyMessage =
       'All required app-lock permissions are granted.';
 
+  /// H-3: shown when biometric hardware exists but no usable biometric is
+  /// enrolled. A secure device lock alone never enables biometric unlock.
+  static const String biometricNotEnrolledMessage =
+      'No fingerprint or face unlock is enrolled on this device. '
+      'Enroll one in Android Settings, then try again.';
+  static const String biometricUnavailableMessage =
+      'Biometric authentication is not available on this device.';
+
+  /// H-3 F4: the primary app credential was not verified (Back, cancel,
+  /// wrong credential, lockout) or changed before the save.
+  static const String biometricNotEnabledMessage =
+      'Biometric unlock was not enabled.';
+
   static const String randomizedTitle = 'Randomized keypad';
   static const String randomizedSubtitle =
       'Shuffle PIN digits on the unlock screen';
@@ -83,6 +98,10 @@ class _SecurityScreenState extends State<SecurityScreen>
   bool _hasPin = false;
   bool _hasPattern = false;
   bool _biometricEnrolled = false;
+
+  /// H-3 F4: true while a biometric enable/disable is in progress, so a
+  /// duplicate tap cannot start a second (stale) operation.
+  bool _biometricBusy = false;
 
   /// Phase 4B: usage-access capability state (false until loaded).
   bool _usageAccessGranted = false;
@@ -494,6 +513,18 @@ class _SecurityScreenState extends State<SecurityScreen>
   // -- biometric (Phase 2J) -------------------------------------------------
 
   Future<void> _onBiometricTap() async {
+    if (_biometricBusy) {
+      return;
+    }
+    _biometricBusy = true;
+    try {
+      await _toggleBiometric();
+    } finally {
+      _biometricBusy = false;
+    }
+  }
+
+  Future<void> _toggleBiometric() async {
     final container = AppScope.read(context);
     if (container == null) {
       return;
@@ -535,11 +566,12 @@ class _SecurityScreenState extends State<SecurityScreen>
     if (!mounted) {
       return;
     }
+    // `isSupported` = biometric HARDWARE present (true even with nothing
+    // enrolled), so it is necessary but not sufficient.
     if (supported.isFailure || supported.valueOrNull != true) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Biometric authentication is not available '
-              'on this device.'),
+          content: Text(SecurityScreen.biometricUnavailableMessage),
         ),
       );
       return;
@@ -549,18 +581,71 @@ class _SecurityScreenState extends State<SecurityScreen>
     if (!mounted) {
       return;
     }
-    if (available.isFailure || available.valueOrNull!.isEmpty) {
+    if (available.isFailure) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('No biometric or device credential is enrolled.'),
+          content: Text(SecurityScreen.biometricUnavailableMessage),
         ),
       );
       return;
     }
-    final Set<BiometricKind> kinds = available.valueOrNull!;
-    final BiometricOptions options = BiometricOptions(
-      allowStrongBiometrics: kinds.contains(BiometricKind.strong),
-      allowDeviceCredential: kinds.contains(BiometricKind.deviceCredential),
+    // H-3: require a genuinely ENROLLED, usable biometric
+    // ([BiometricKind.strong] = getAvailableBiometrics() non-empty).
+    // [BiometricKind.deviceCredential] only means a screen lock is set and
+    // must never enable biometric unlock.
+    if (!available.valueOrNull!.contains(BiometricKind.strong)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(SecurityScreen.biometricNotEnrolledMessage),
+        ),
+      );
+      return;
+    }
+
+    // H-3 F4: verify the configured PRIMARY app credential (normal
+    // authentication only; no CR-3 grant is created or touched). The
+    // result is bound to this operation: it is consumed right here.
+    final AppCredentialVerificationResult verification =
+        await verifyPrimaryAppCredential(Navigator.of(context), auth);
+    if (!mounted) {
+      return;
+    }
+    if (!verification.isVerified) {
+      _showBiometricMessage(SecurityScreen.biometricNotEnabledMessage);
+      return;
+    }
+
+    // H-3 F4: re-check immediately before saving. The credential set or
+    // the device's biometric enrollment may have changed while the
+    // verification screen was open.
+    final CredentialState? fresh = (await auth.status()).valueOrNull;
+    if (!mounted) {
+      return;
+    }
+    final AuthType verifiedMethod = verification.method!;
+    final DateTime? lockedUntil = fresh?.lockedOutUntil;
+    if (fresh == null ||
+        fresh.primary != verifiedMethod ||
+        !fresh.hasEnrolled(verifiedMethod) ||
+        (lockedUntil != null && DateTime.now().isBefore(lockedUntil))) {
+      _showBiometricMessage(SecurityScreen.biometricNotEnabledMessage);
+      return;
+    }
+    final Result<Set<BiometricKind>> stillEnrolled =
+        await service.availableKinds();
+    if (!mounted) {
+      return;
+    }
+    if (stillEnrolled.isFailure ||
+        !stillEnrolled.valueOrNull!.contains(BiometricKind.strong)) {
+      _showBiometricMessage(SecurityScreen.biometricNotEnrolledMessage);
+      return;
+    }
+
+    const BiometricOptions options = BiometricOptions(
+      allowStrongBiometrics: true,
+      // H-3: the device credential is never a substitute.
+      allowDeviceCredential: false,
       requireConfirmation: true,
     );
     final Result<void> saved = await auth.updateBiometricOptions(options);
@@ -576,6 +661,12 @@ class _SecurityScreenState extends State<SecurityScreen>
     setState(() => _biometricEnrolled = true);
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Biometric unlock enabled ✓')),
+    );
+  }
+
+  void _showBiometricMessage(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
     );
   }
 

@@ -24,6 +24,16 @@ class BiometricAuthException implements Exception {
     'authInProgress',
   };
 
+  /// H-3: the user or the system ended the prompt without a verdict
+  /// (Back, the prompt's Cancel button, an interruption, or a timeout).
+  /// When a failure carries one of these codes it is NOT an authentication
+  /// rejection: it never counts as a failed attempt and never grants access.
+  static const Set<String> cancellationCodes = <String>{
+    'userCanceled',
+    'systemCanceled',
+    'timeout',
+  };
+
   /// Stable, non-localized code (e.g. `userCanceled`, `temporaryLockout`).
   final String code;
 
@@ -31,6 +41,8 @@ class BiometricAuthException implements Exception {
   final String message;
 
   bool get isAvailabilityError => availabilityCodes.contains(code);
+
+  bool get isCancellation => cancellationCodes.contains(code);
 
   @override
   String toString() => message;

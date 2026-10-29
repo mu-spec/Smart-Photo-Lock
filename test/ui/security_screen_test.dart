@@ -346,7 +346,10 @@ void main() {
       database: database,
     );
     await container.auth.enrollPin('1234');
-    database.failSecuritySettingsWrites = true;
+    // H-3 F4: enabling first verifies the app PIN, and a successful
+    // verification persists its counter reset. Let exactly that one
+    // security write through; the biometric-options save after it fails.
+    database.securityWritesBeforeFailure = 1;
     await pumpWithScope(tester, container: container);
 
     final Finder biometricRow = find.text('Biometric unlock');
@@ -354,6 +357,15 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(biometricRow);
     await tester.pumpAndSettle();
+
+    // H-3 F4: the app PIN is verified before anything is saved.
+    expect(find.byType(PinUnlockScreen), findsOneWidget);
+    for (final String d in '1234'.split('')) {
+      await tester.tap(find.byKey(Key('pin_key_$d')));
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    await tester.pumpAndSettle();
+    expect(find.byType(PinUnlockScreen), findsNothing);
 
     expect(find.text(SecurityScreen.couldNotSaveMessage), findsOneWidget);
     expect(
@@ -651,8 +663,18 @@ class _FailingSettingsDatabase extends InMemoryLocalDatabase {
   bool failSecuritySettingsWrites = false;
   bool failGraceWrites = false;
 
+  /// When non-null, this many further security-settings writes succeed and
+  /// every write after them fails.
+  int? securityWritesBeforeFailure;
+
   @override
   Future<void> setSetting(String key, String value) async {
+    if (key == 'security_settings' && securityWritesBeforeFailure != null) {
+      if (securityWritesBeforeFailure! <= 0) {
+        throw StateError('simulated settings write failure');
+      }
+      securityWritesBeforeFailure = securityWritesBeforeFailure! - 1;
+    }
     if ((key == 'security_settings' && failSecuritySettingsWrites) ||
         (key == 'lock.grace_period_seconds' && failGraceWrites)) {
       throw StateError('simulated settings write failure');

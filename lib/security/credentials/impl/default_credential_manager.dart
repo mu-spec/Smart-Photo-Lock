@@ -329,8 +329,23 @@ class DefaultCredentialManager implements CredentialManager {
           ),
         );
       }
-      // Rejections and cancellations count as failed attempts so
-      // prompt-spamming cannot bypass the escalating lockout (2L policy).
+      // H-3: cancellation (Back, the prompt's Cancel button), system
+      // cancellation and timeout end the prompt without a verdict. They
+      // never grant access, and they are neither counted as a failed app
+      // credential attempt nor allowed to reset existing counters or a
+      // lockout: nothing is persisted. Cancelling reveals nothing about the
+      // app PIN or pattern, and an active lockout still blocks the prompt
+      // (step 2).
+      if (error is BiometricAuthException && error.isCancellation) {
+        return Result.success(
+          AuthFailure(
+            reason: AuthFailureReason.cancelled,
+            remainingAttempts: _remainingAttempts(state),
+          ),
+        );
+      }
+      // Any other platform error is treated as a rejection and counts, so
+      // a failing prompt can never be used to dodge the escalating lockout.
       return _evaluateAndPersist(s, state, false, AuthType.biometric);
     }
 
@@ -506,6 +521,16 @@ class DefaultCredentialManager implements CredentialManager {
       return AuthLockedOut(retryAt: until, lockoutStreak: state.lockoutStreak);
     }
     return null;
+  }
+
+  /// Attempts left before a lockout, without recording an attempt. Callers
+  /// have already handled an ACTIVE lockout, so a non-null
+  /// [CredentialState.lockedOutUntil] here is an expired one, which the
+  /// state machine treats as a fresh count.
+  int _remainingAttempts(CredentialState state) {
+    final int used = state.lockedOutUntil != null ? 0 : state.failedAttempts;
+    final int remaining = _machine.maxFailedAttempts - used;
+    return remaining < 0 ? 0 : remaining;
   }
 
   /// Runs the state machine and persists the resulting counters.

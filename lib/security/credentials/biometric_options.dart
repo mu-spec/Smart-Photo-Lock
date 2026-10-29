@@ -4,8 +4,10 @@ enum BiometricKind {
   /// Hardware-backed strong biometrics: fingerprint, face, iris.
   strong,
 
-  /// Fallback to the device credential (PIN/pattern/password) via the
-  /// system biometric prompt.
+  /// The device is secure (a device PIN/pattern/password is set).
+  ///
+  /// H-3: capability information only. The device credential is NEVER
+  /// accepted as Smart App Lock authentication.
   deviceCredential,
 }
 
@@ -16,7 +18,7 @@ enum BiometricKind {
 class BiometricOptions {
   const BiometricOptions({
     this.allowStrongBiometrics = true,
-    this.allowDeviceCredential = true,
+    this.allowDeviceCredential = false,
     this.requireConfirmation = true,
   });
 
@@ -25,7 +27,11 @@ class BiometricOptions {
   /// Accept hardware-backed biometrics (fingerprint/face/iris).
   final bool allowStrongBiometrics;
 
-  /// Allow the device credential as a biometric-prompt fallback.
+  /// Legacy flag, kept only so stored documents keep decoding.
+  ///
+  /// H-3: defaults to false and is NEVER honoured. The platform bridge
+  /// always requests a biometric-only prompt, so a stored `true` (written
+  /// by builds before H-3) cannot enable a device-credential fallback.
   final bool allowDeviceCredential;
 
   /// Require explicit user confirmation after passive biometrics (face).
@@ -60,7 +66,7 @@ class BiometricOptions {
   factory BiometricOptions.fromJson(Map<String, dynamic> json) =>
       BiometricOptions(
         allowStrongBiometrics: json['allowStrongBiometrics'] as bool? ?? true,
-        allowDeviceCredential: json['allowDeviceCredential'] as bool? ?? true,
+        allowDeviceCredential: json['allowDeviceCredential'] as bool? ?? false,
         requireConfirmation: json['requireConfirmation'] as bool? ?? true,
       );
 

@@ -8,12 +8,17 @@ import '../biometric_service.dart';
 /// Flutter wrapper over the AndroidX **BiometricPrompt** (authentication)
 /// and **BiometricManager** (capability detection) APIs.
 ///
-/// Capability mapping:
-///  * `canCheckBiometrics`      → hardware supports biometrics
-///  * `getAvailableBiometrics()` → enrolled biometric types (face,
-///    fingerprint, iris, strong, weak)
-///  * `isDeviceSupported()`      → the system can use device credentials
-///    (PIN/pattern/password) as a prompt fallback
+/// Capability mapping (local_auth_android semantics):
+///  * `canCheckBiometrics`      → biometric HARDWARE is present (true even
+///    when nothing is enrolled)
+///  * `getAvailableBiometrics()` → biometrics that are ENROLLED and usable
+///    now (Class 2 or better) → [BiometricKind.strong]
+///  * `isDeviceSupported()`      → the device is SECURE (screen lock set) or
+///    a biometric is usable → [BiometricKind.deviceCredential]. This is a
+///    capability report only: it never makes biometric unlock available.
+///
+/// H-3: [authenticate] always requests a biometric-only prompt; the device
+/// credential is never accepted as Smart App Lock authentication.
 ///
 /// Fails closed: every platform error surfaces as a [Failure] — the caller
 /// never receives a fabricated success. Platform exceptions are mapped to
@@ -63,8 +68,11 @@ class LocalAuthBiometricService implements BiometricService {
     try {
       final bool ok = await _auth.authenticate(
         localizedReason: reason,
-        // Device-credential fallback allowed? If not, biometric-only prompt.
-        biometricOnly: !opts.allowDeviceCredential,
+        // H-3: ALWAYS biometric-only. The Android device PIN/pattern/password
+        // must never satisfy Smart App Lock authentication, so
+        // `allowDeviceCredential` (including legacy persisted `true`
+        // values) is deliberately ignored here, at the platform bridge.
+        biometricOnly: true,
         // Android: maps to BiometricPrompt.setConfirmationRequired.
         sensitiveTransaction: opts.requireConfirmation,
       );

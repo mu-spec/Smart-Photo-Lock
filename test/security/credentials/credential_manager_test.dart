@@ -507,19 +507,25 @@ void main() {
     expect((await m.status()).valueOrNull!.failedAttempts, 0);
   });
 
-  test('user cancellation still counts as a failed attempt (2L policy)',
-      () async {
-    final DefaultCredentialManager m = await managerWithFailingBio(
-      mapBiometricError(
-        const LocalAuthException(code: LocalAuthExceptionCode.userCanceled),
-      ),
-    );
-    final AuthAttemptResult result =
-        (await m.authenticateBiometric()).valueOrNull!;
-    expect(result, isA<AuthFailure>());
-    expect((result as AuthFailure).reason, AuthFailureReason.wrongCredential);
-    expect((await m.status()).valueOrNull!.failedAttempts, 1);
-  });
+  // H-3 (approved policy, replaces the 2L "cancellation counts" rule):
+  // cancellation, system cancellation and timeout never unlock AND never
+  // count as a failed app credential attempt.
+  for (final LocalAuthExceptionCode code in <LocalAuthExceptionCode>[
+    LocalAuthExceptionCode.userCanceled,
+    LocalAuthExceptionCode.systemCanceled,
+    LocalAuthExceptionCode.timeout,
+  ]) {
+    test('${code.name} never unlocks and is not counted (H-3)', () async {
+      final DefaultCredentialManager m = await managerWithFailingBio(
+        mapBiometricError(LocalAuthException(code: code)),
+      );
+      final AuthAttemptResult result =
+          (await m.authenticateBiometric()).valueOrNull!;
+      expect(result, isA<AuthFailure>());
+      expect((result as AuthFailure).reason, AuthFailureReason.cancelled);
+      expect((await m.status()).valueOrNull!.failedAttempts, 0);
+    });
+  }
 
   test('device-level platform errors count and never unlock', () async {
     final DefaultCredentialManager m = await managerWithFailingBio(

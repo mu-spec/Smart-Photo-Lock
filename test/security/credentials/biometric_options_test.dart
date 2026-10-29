@@ -3,13 +3,15 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:smart_app_lock/security/credentials/biometric_options.dart';
 
 void main() {
-  test('defaults allow strong biometrics + device credential', () {
+  // H-3: the device credential is never a default (and the platform
+  // bridge never honours it at all).
+  test('defaults allow strong biometrics only, never the device credential',
+      () {
     const BiometricOptions options = BiometricOptions.defaults;
     expect(options.allowStrongBiometrics, isTrue);
-    expect(options.allowDeviceCredential, isTrue);
+    expect(options.allowDeviceCredential, isFalse);
     expect(options.requireConfirmation, isTrue);
-    expect(options.allowedKinds,
-        <BiometricKind>{BiometricKind.strong, BiometricKind.deviceCredential});
+    expect(options.allowedKinds, <BiometricKind>{BiometricKind.strong});
   });
 
   test('allowedKinds reflects the configuration', () {
@@ -25,7 +27,7 @@ void main() {
     final BiometricOptions changed = base.copyWith(requireConfirmation: false);
     expect(changed.requireConfirmation, isFalse);
     expect(changed.allowStrongBiometrics, isTrue);
-    expect(changed.allowDeviceCredential, isTrue);
+    expect(changed.allowDeviceCredential, isFalse);
   });
 
   test('JSON round-trip preserves fields', () {
