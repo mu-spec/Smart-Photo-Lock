@@ -8,9 +8,12 @@ import '../protection/lock_trigger.dart';
 import '../security/credentials/auth_type.dart';
 import '../security/credentials/credential_state.dart';
 import '../services/pending_lock_challenge.dart';
+import '../ui/screens/pattern/pattern_unlock_screen.dart';
+import '../ui/screens/pin/pin_unlock_screen.dart';
 import '../utilities/result.dart';
 import 'app_container.dart';
 import 'app_scope.dart';
+import 'challenge_auth_recorder.dart';
 import 'router.dart';
 
 /// Phase 5 / Milestone 3 — Fix #3: QA-only diagnostics switch.
@@ -196,6 +199,11 @@ class _LockChallengeHostState extends State<LockChallengeHost>
   /// a route is presented or closed, so an asynchronous result that
   /// belongs to an earlier route is discarded.
   int _challengeSerial = 0;
+
+  /// HB-2: the exact challenge route object currently presented, or null.
+  /// A Home/background dismissal removes THIS route by identity and never
+  /// whatever route happens to be on top of the navigator.
+  Route<bool>? _activeChallengeRoute;
 
   /// Phase 5M: whether the app is currently in the foreground (drives
   /// the pending re-presentation; tracked explicitly so tests and
@@ -549,13 +557,34 @@ class _LockChallengeHostState extends State<LockChallengeHost>
       'reason=home-background-lifecycle-leave '
       'package=$_lastPresentedPackage lifecycle=$_lastLifecycleState',
     );
-    // Pop the challenge route: its awaited future completes with null
-    // (Phase 5I: null never grants a session), which clears
-    // `_challenging` through the finally block below. canPop guards
-    // the shell from being popped when nothing sits above it.
-    final NavigatorState? navigator = widget.navigatorKey.currentState;
-    if (navigator != null && navigator.canPop()) {
+    // HB-2: dismiss the challenge route BY IDENTITY. Its awaited future
+    // completes with null (Phase 5I: null never grants a session), which
+    // clears `_challenging` through the presentation's finally block.
+    //  * challenge on top            -> pop it;
+    //  * another route above it      -> remove exactly the challenge route;
+    //    the foreign route is never touched;
+    //  * challenge already completing / removed (e.g. a grant in flight)
+    //    -> nothing is dismissed; the presentation's own completion
+    //    closes the challenge. The shell is never popped.
+    final Route<bool>? challengeRoute = _activeChallengeRoute;
+    final NavigatorState? navigator = challengeRoute?.navigator;
+    if (challengeRoute == null ||
+        navigator == null ||
+        !challengeRoute.isActive) {
+      _diag(
+        '${_diagActiveChallengeId ?? 'challenge#?'} DISMISS no-op '
+        '(challenge route already completing or removed)',
+      );
+      return;
+    }
+    if (challengeRoute.isCurrent) {
       navigator.pop();
+    } else {
+      _diag(
+        '${_diagActiveChallengeId ?? 'challenge#?'} DISMISS by identity '
+        '(another route is above the challenge; it is left untouched)',
+      );
+      navigator.removeRoute(challengeRoute);
     }
   }
 
@@ -785,6 +814,9 @@ class _LockChallengeHostState extends State<LockChallengeHost>
         _armPresentationSettle();
       }
       bool passed = false;
+      // HB-1: one independent recorder per presented challenge route.
+      ChallengeAuthRecorder? recorder;
+      Route<bool>? challengeRoute;
       try {
         // Phase 5F: route by the user's PRIMARY credential (the one they
         // enrolled last), not a hardcoded PIN preference. Both PIN and
@@ -802,8 +834,24 @@ class _LockChallengeHostState extends State<LockChallengeHost>
         } else {
           route = RouteNames.patternUnlock; // pattern-only user
         }
+        // HB-1: the route is constructed explicitly so its unlock screen
+        // authenticates through THIS challenge's recorder (which forwards
+        // to the real manager and records only a genuine success).
+        final bool patternRoute = route == RouteNames.patternUnlock;
+        final ChallengeAuthRecorder routeRecorder = patternRoute
+            ? ChallengeAuthRecorder.forPatternRoute(container.auth)
+            : ChallengeAuthRecorder.forPinRoute(container.auth);
+        recorder = routeRecorder;
+        final MaterialPageRoute<bool> presentedRoute = MaterialPageRoute<bool>(
+          settings: RouteSettings(name: route),
+          builder: (BuildContext context) => patternRoute
+              ? PatternUnlockScreen(credentialManager: routeRecorder)
+              : PinUnlockScreen(credentialManager: routeRecorder),
+        );
+        challengeRoute = presentedRoute;
+        _activeChallengeRoute = presentedRoute;
         final Future<bool?>? unlockFuture =
-            widget.navigatorKey.currentState?.pushNamed<bool>(route);
+            widget.navigatorKey.currentState?.push<bool>(presentedRoute);
         // Keep the native overlay shield until the Flutter challenge has
         // reached a rendered frame. Native also verifies that MainActivity
         // is resumed; if a background launch was blocked, the shield stays.
@@ -813,13 +861,26 @@ class _LockChallengeHostState extends State<LockChallengeHost>
           }
         });
         final bool? unlocked = await unlockFuture;
-        // Phase 5I: the unlock session is granted ONLY on an explicit
-        // authentication success. The unlock screens pop `true` exclusively
-        // from their `AuthSuccess` branches (wrong credential, lockout,
-        // cancellation and service failures all resolve false/null) — and
-        // the host re-checks `mounted` after the await so a torn-down tree
-        // can never grant.
-        final bool authenticated = unlocked == true;
+        // HB-1: the route is finished — close its recorder at once. Any
+        // verification still running can no longer be recorded, and the
+        // recorded success (if any) is consumed exactly once here.
+        final bool recordedSuccess = routeRecorder.close();
+        if (identical(_activeChallengeRoute, presentedRoute)) {
+          _activeChallengeRoute = null;
+        }
+        // Phase 5I + HB-1: the unlock session is granted ONLY when the
+        // route completed with `true` AND this same challenge's recorder
+        // observed a genuine, permitted authentication success. A bare
+        // `pop(true)`, a stale or foreign route result, a cancellation or
+        // a late verification can never grant. The host re-checks
+        // `mounted` after the await so a torn-down tree can never grant.
+        final bool authenticated = unlocked == true && recordedSuccess;
+        if (unlocked == true && !recordedSuccess) {
+          _diag(
+            '$diagId REJECTED route result true without a recorded '
+            'authentication on this challenge (fail-closed)',
+          );
+        }
         if (authenticated) {
           if (!mounted) {
             return;
@@ -854,6 +915,13 @@ class _LockChallengeHostState extends State<LockChallengeHost>
           await container.installedAppsService.launchApp(packageName);
         }
       } finally {
+        // HB-1/HB-2: never leave a recorder open or a stale route tracked,
+        // whatever path left the presentation.
+        recorder?.close();
+        if (challengeRoute != null &&
+            identical(_activeChallengeRoute, challengeRoute)) {
+          _activeChallengeRoute = null;
+        }
         _afterChallengeClosed(passed);
       }
     } finally {
