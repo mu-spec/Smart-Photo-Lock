@@ -49,6 +49,10 @@ class PatternUnlockScreen extends StatefulWidget {
 
   static const String readyHint = 'Draw your pattern to unlock';
   static const String wrongPatternPrefix = 'Incorrect pattern';
+  /// Shown when a verification finished while this screen was covered by
+  /// another route: the result is discarded and must be re-earned.
+  static const String verificationInterruptedMessage =
+      'Verification was interrupted. Please try again.';
   static const String verifyFailedMessage =
       'Could not verify your pattern. Please try again.';
   static const String lockedOutTitle = 'Too many attempts';
@@ -72,6 +76,10 @@ class _PatternUnlockScreenState extends State<PatternUnlockScreen>
   _UnlockView _view = _UnlockView.loading;
   List<int> _nodes = <int>[];
   bool _verifying = false;
+
+  /// Late-pop fix: this screen has already completed its route (success,
+  /// Back or an explicit Back button). Completion is one-shot.
+  bool _routeCompleted = false;
   String? _error;
   DateTime? _lockoutUntil;
   Duration _lockoutRemaining = Duration.zero;
@@ -185,6 +193,9 @@ class _PatternUnlockScreenState extends State<PatternUnlockScreen>
       return;
     }
     setState(() => _verifying = true);
+    // The route this verification belongs to. A result may only ever
+    // complete this exact route.
+    final ModalRoute<Object?>? submittedRoute = ModalRoute.of(context);
     final result =
         await _manager.authenticateBiometric(reason: 'Unlock Smart App Lock');
     if (!mounted) {
@@ -193,7 +204,7 @@ class _PatternUnlockScreenState extends State<PatternUnlockScreen>
     final outcome = result.valueOrNull;
 
     if (outcome is AuthSuccess) {
-      Navigator.of(context).pop(true);
+      _completeWithSuccess(submittedRoute);
       return;
     }
     if (outcome is AuthLockedOut) {
@@ -223,6 +234,9 @@ class _PatternUnlockScreenState extends State<PatternUnlockScreen>
 
   Future<void> _submit(List<int> nodes) async {
     setState(() => _verifying = true);
+    // The route this verification belongs to. A result may only ever
+    // complete this exact route.
+    final ModalRoute<Object?>? submittedRoute = ModalRoute.of(context);
     final result = await _manager.authenticatePattern(nodes);
     if (!mounted) {
       return;
@@ -230,7 +244,7 @@ class _PatternUnlockScreenState extends State<PatternUnlockScreen>
     final outcome = result.valueOrNull;
 
     if (outcome is AuthSuccess) {
-      Navigator.of(context).pop(true);
+      _completeWithSuccess(submittedRoute);
       return;
     }
     if (outcome is AuthLockedOut) {
@@ -303,6 +317,58 @@ class _PatternUnlockScreenState extends State<PatternUnlockScreen>
     final int minutes = total ~/ 60;
     final int seconds = total % 60;
     return '$minutes:${seconds.toString().padLeft(2, '0')}';
+  }
+
+  // -- route completion (late-pop fix) --------------------------------------
+
+  /// Completes THIS screen's route at most once, and only while that route
+  /// is the current (topmost, present) route of its navigator.
+  ///
+  /// `Navigator.pop` pops whichever route is on top. A verification that
+  /// finishes after this screen was dismissed (its route is then popping but
+  /// the widget is still mounted during the exit transition), replaced,
+  /// removed or covered must therefore never call it: that would close an
+  /// unrelated route or deliver `true` to a different challenge. When
+  /// [expected] is given, the current route must also be that exact route.
+  bool _completeRoute(bool result, {ModalRoute<Object?>? expected}) {
+    if (_routeCompleted || !mounted) {
+      return false;
+    }
+    final ModalRoute<Object?>? route = ModalRoute.of(context);
+    if (route == null || !route.isCurrent) {
+      return false;
+    }
+    if (expected != null && !identical(route, expected)) {
+      return false;
+    }
+    _routeCompleted = true;
+    Navigator.of(context).pop(result);
+    return true;
+  }
+
+  /// Delivers a success only to the route that started the verification.
+  ///
+  /// Otherwise the success is rejected, never forwarded. If this screen's
+  /// route is still on the stack (covered by another route), the screen
+  /// returns to a fresh entry and the user must verify again once it is
+  /// visible; the old success is never reused.
+  void _completeWithSuccess(ModalRoute<Object?>? submittedRoute) {
+    if (submittedRoute != null &&
+        _completeRoute(true, expected: submittedRoute)) {
+      return;
+    }
+    if (!mounted || _routeCompleted) {
+      return;
+    }
+    final ModalRoute<Object?>? route = ModalRoute.of(context);
+    if (route == null || !route.isActive) {
+      return; // dismissed, replaced or removed: its result is already final
+    }
+    setState(() {
+      _verifying = false;
+      _nodes = <int>[];
+      _error = PatternUnlockScreen.verificationInterruptedMessage;
+    });
   }
 
   // -- build ---------------------------------------------------------------
@@ -487,7 +553,7 @@ class _PatternUnlockScreenState extends State<PatternUnlockScreen>
           child: DsButton(
             label: PatternUnlockScreen.backLabel,
             variant: DsButtonVariant.ghost,
-            onPressed: () => Navigator.of(context).pop(false),
+            onPressed: () => _completeRoute(false),
           ),
         ),
       ],
@@ -557,7 +623,7 @@ class _PatternUnlockScreenState extends State<PatternUnlockScreen>
           label: PatternUnlockScreen.backLabel,
           variant: DsButtonVariant.outline,
           expand: true,
-          onPressed: () => Navigator.of(context).pop(false),
+          onPressed: () => _completeRoute(false),
         ),
       ],
     );

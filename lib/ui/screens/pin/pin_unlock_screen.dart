@@ -50,6 +50,10 @@ class PinUnlockScreen extends StatefulWidget {
   final math.Random? random;
 
   static const String wrongPinPrefix = 'Incorrect PIN';
+  /// Shown when a verification finished while this screen was covered by
+  /// another route: the result is discarded and must be re-earned.
+  static const String verificationInterruptedMessage =
+      'Verification was interrupted. Please try again.';
   static const String verifyFailedMessage =
       'Could not verify your PIN. Please try again.';
   static const String lockedOutTitle = 'Too many attempts';
@@ -70,6 +74,10 @@ class _PinUnlockScreenState extends State<PinUnlockScreen>
   int? _pinLength;
   String _entered = '';
   bool _verifying = false;
+
+  /// Late-pop fix: this screen has already completed its route (success,
+  /// Back or an explicit Back button). Completion is one-shot.
+  bool _routeCompleted = false;
   String? _error;
   DateTime? _lockoutUntil;
   Duration _lockoutRemaining = Duration.zero;
@@ -169,6 +177,9 @@ class _PinUnlockScreenState extends State<PinUnlockScreen>
 
   Future<void> _submit() async {
     setState(() => _verifying = true);
+    // The route this verification belongs to. A result may only ever
+    // complete this exact route.
+    final ModalRoute<Object?>? submittedRoute = ModalRoute.of(context);
     final result = await _manager.authenticatePin(_entered);
     if (!mounted) {
       return;
@@ -176,7 +187,7 @@ class _PinUnlockScreenState extends State<PinUnlockScreen>
     final outcome = result.valueOrNull;
 
     if (outcome is AuthSuccess) {
-      Navigator.of(context).pop(true);
+      _completeWithSuccess(submittedRoute);
       return;
     }
     if (outcome is AuthLockedOut) {
@@ -240,6 +251,9 @@ class _PinUnlockScreenState extends State<PinUnlockScreen>
       return;
     }
     setState(() => _verifying = true);
+    // The route this verification belongs to. A result may only ever
+    // complete this exact route.
+    final ModalRoute<Object?>? submittedRoute = ModalRoute.of(context);
     final result =
         await _manager.authenticateBiometric(reason: 'Unlock Smart App Lock');
     if (!mounted) {
@@ -248,7 +262,7 @@ class _PinUnlockScreenState extends State<PinUnlockScreen>
     final outcome = result.valueOrNull;
 
     if (outcome is AuthSuccess) {
-      Navigator.of(context).pop(true);
+      _completeWithSuccess(submittedRoute);
       return;
     }
     if (outcome is AuthLockedOut) {
@@ -316,6 +330,62 @@ class _PinUnlockScreenState extends State<PinUnlockScreen>
     return '$minutes:${seconds.toString().padLeft(2, '0')}';
   }
 
+  // -- route completion (late-pop fix) --------------------------------------
+
+  /// Completes THIS screen's route at most once, and only while that route
+  /// is the current (topmost, present) route of its navigator.
+  ///
+  /// `Navigator.pop` pops whichever route is on top. A verification that
+  /// finishes after this screen was dismissed (its route is then popping but
+  /// the widget is still mounted during the exit transition), replaced,
+  /// removed or covered must therefore never call it: that would close an
+  /// unrelated route or deliver `true` to a different challenge. When
+  /// [expected] is given, the current route must also be that exact route.
+  bool _completeRoute(bool result, {ModalRoute<Object?>? expected}) {
+    if (_routeCompleted || !mounted) {
+      return false;
+    }
+    final ModalRoute<Object?>? route = ModalRoute.of(context);
+    if (route == null || !route.isCurrent) {
+      return false;
+    }
+    if (expected != null && !identical(route, expected)) {
+      return false;
+    }
+    _routeCompleted = true;
+    Navigator.of(context).pop(result);
+    return true;
+  }
+
+  /// Delivers a success only to the route that started the verification.
+  ///
+  /// Otherwise the success is rejected, never forwarded. If this screen's
+  /// route is still on the stack (covered by another route), the screen
+  /// returns to a fresh entry and the user must verify again once it is
+  /// visible; the old success is never reused.
+  void _completeWithSuccess(ModalRoute<Object?>? submittedRoute) {
+    if (submittedRoute != null &&
+        _completeRoute(true, expected: submittedRoute)) {
+      return;
+    }
+    if (!mounted || _routeCompleted) {
+      return;
+    }
+    final ModalRoute<Object?>? route = ModalRoute.of(context);
+    if (route == null || !route.isActive) {
+      return; // dismissed, replaced or removed: its result is already final
+    }
+    setState(() {
+      _verifying = false;
+      _entered = '';
+      if (_randomized) {
+        // Fresh layout: the interrupted entry's layout was visible.
+        _digitOrder = shuffledDigitOrder(_random);
+      }
+      _error = PinUnlockScreen.verificationInterruptedMessage;
+    });
+  }
+
   // -- build ---------------------------------------------------------------
 
   @override
@@ -338,7 +408,7 @@ class _PinUnlockScreenState extends State<PinUnlockScreen>
         if (didPop) {
           return;
         }
-        Navigator.of(context).pop(false);
+        _completeRoute(false);
       },
       child: Scaffold(
         appBar: AppBar(title: Text(widget.title)),
@@ -497,7 +567,7 @@ class _PinUnlockScreenState extends State<PinUnlockScreen>
           child: DsButton(
             label: PinUnlockScreen.backLabel,
             variant: DsButtonVariant.ghost,
-            onPressed: () => Navigator.of(context).pop(false),
+            onPressed: () => _completeRoute(false),
           ),
         ),
       ],
@@ -567,7 +637,7 @@ class _PinUnlockScreenState extends State<PinUnlockScreen>
           label: PinUnlockScreen.backLabel,
           variant: DsButtonVariant.outline,
           expand: true,
-          onPressed: () => Navigator.of(context).pop(false),
+          onPressed: () => _completeRoute(false),
         ),
       ],
     );
