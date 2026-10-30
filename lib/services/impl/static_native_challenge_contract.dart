@@ -26,6 +26,34 @@ enum NativeReadyRejection {
 /// `WakeRecoverySignal` enum.
 enum NativeRecoverySignal { screenOn, userPresent, foreground, retry }
 
+/// F3: mirrors the Kotlin `RestartRecoveryDecision` enum.
+enum NativeRestartDecision {
+  skipProtectionDisabled,
+  skipPendingTicket,
+  skipUiResumed,
+  challengeProtectedForegroundEvidence,
+  challengeRememberedForegroundUnknown,
+  challengeRememberedEvidenceNotNewer,
+  challengeRememberedEvidenceUnordered,
+  noneNewerUnprotectedEvidence,
+  noneRememberedOtherBoot,
+  noneNoProtectedTarget,
+}
+
+/// F3: the Kotlin `ForegroundEvidence.App`, i.e. the latest activity resume
+/// since boot that `RestartForegroundEvidenceSelector` accepted (own,
+/// transient, pre-boot and future-dated events already excluded). A null
+/// evidence models `ForegroundEvidence.Unknown`.
+class NativeForegroundEvidence {
+  const NativeForegroundEvidence({
+    required this.packageName,
+    required this.eventWallMs,
+  });
+
+  final String packageName;
+  final int eventWallMs;
+}
+
 /// `ChallengeAbandonCandidate` (H-1 F1): a possible leave reported while
 /// MainActivity was still resumed, with the exact ready ticket at that time.
 typedef NativeAbandonCandidate = ({
@@ -112,7 +140,117 @@ class StaticNativeChallengeContract {
   Set<String> protectedPackages = <String>{};
   PendingLockChallenge? pending;
   int _lastGeneration = 0;
-  String? wakeReauthPackage;
+  String? _wakeReauthPackage;
+
+  /// F3 boot-scope stamp persisted with the wake identity. The boot count
+  /// is -1 when `Settings.Global.BOOT_COUNT` was unavailable.
+  int? wakeReauthBootCount;
+  int? wakeReauthStampElapsedMs;
+  int? wakeReauthStampWallMs;
+
+  String? get wakeReauthPackage => _wakeReauthPackage;
+
+  /// `ProtectionStateStore.rememberWakeReauthPackage`. An unchanged package
+  /// is re-stamped when its stamp is missing or from another boot.
+  set wakeReauthPackage(String? packageName) {
+    final String? normalized =
+        (packageName == null || packageName.trim().isEmpty)
+            ? null
+            : packageName;
+    if (normalized == null) {
+      _wakeReauthPackage = null;
+      wakeReauthBootCount = null;
+      wakeReauthStampElapsedMs = null;
+      wakeReauthStampWallMs = null;
+      return;
+    }
+    if (_wakeReauthPackage == normalized &&
+        sameBoot(
+          storedBootCount: wakeReauthBootCount,
+          currentBootCount: bootCount ?? -1,
+          storedElapsedMs: wakeReauthStampElapsedMs,
+          storedWallMs: wakeReauthStampWallMs,
+          nowElapsedMs: elapsedMs,
+          nowWallMs: wallClockMs,
+        )) {
+      return;
+    }
+    _wakeReauthPackage = normalized;
+    wakeReauthBootCount = bootCount ?? -1;
+    wakeReauthStampElapsedMs = elapsedMs;
+    wakeReauthStampWallMs = wallClockMs;
+  }
+
+  /// Restores the persisted identity and stamp verbatim (process restart).
+  void restorePersistedWakeIdentity({
+    required String? packageName,
+    required int? bootCount,
+    required int? stampElapsedMs,
+    required int? stampWallMs,
+  }) {
+    _wakeReauthPackage = packageName;
+    wakeReauthBootCount = bootCount;
+    wakeReauthStampElapsedMs = stampElapsedMs;
+    wakeReauthStampWallMs = stampWallMs;
+  }
+
+  // -- Device facts (survive process death; a reboot changes them) ---------
+
+  /// `Settings.Global.BOOT_COUNT`; null models "unavailable".
+  int? bootCount = 1;
+
+  /// `System.currentTimeMillis()` is `elapsedMs + wallClockOffsetMs`. Tests
+  /// change the offset to model a wall-clock change.
+  int wallClockOffsetMs = 1800000000000;
+  int get wallClockMs => elapsedMs + wallClockOffsetMs;
+
+  /// F3 Usage Access result at restart; null is `ForegroundEvidence.Unknown`.
+  NativeForegroundEvidence? usageForegroundEvidence;
+
+  /// F3 diagnostics: the one restart decision made by this process.
+  NativeRestartDecision? lastRestartDecision;
+  int restartDecisions = 0;
+  bool _restartLatchAcquired = false; // process-scoped OneShotLatch
+
+  /// `WakeIdentityBootScope.WALL_CLOCK_TOLERANCE_MS`.
+  static const int wallClockToleranceMs = 10000;
+
+  /// `WakeIdentityBootScope.sameBoot`.
+  static bool sameBoot({
+    required int? storedBootCount,
+    required int? currentBootCount,
+    required int? storedElapsedMs,
+    required int? storedWallMs,
+    required int nowElapsedMs,
+    required int nowWallMs,
+  }) {
+    if (storedElapsedMs == null || storedElapsedMs > nowElapsedMs) return false;
+    if (storedBootCount != null &&
+        storedBootCount >= 0 &&
+        currentBootCount != null &&
+        currentBootCount >= 0) {
+      return storedBootCount == currentBootCount;
+    }
+    return wallClockConsistent(
+      storedElapsedMs: storedElapsedMs,
+      storedWallMs: storedWallMs,
+      nowElapsedMs: nowElapsedMs,
+      nowWallMs: nowWallMs,
+    );
+  }
+
+  /// `WakeIdentityBootScope.wallClockConsistent`.
+  static bool wallClockConsistent({
+    required int? storedElapsedMs,
+    required int? storedWallMs,
+    required int nowElapsedMs,
+    required int nowWallMs,
+  }) {
+    if (storedElapsedMs == null || storedWallMs == null) return false;
+    final int drift =
+        (nowWallMs - nowElapsedMs) - (storedWallMs - storedElapsedMs);
+    return drift.abs() <= wallClockToleranceMs;
+  }
 
   // -- ProtectionRuntime (process-local) ------------------------------------
 
@@ -401,6 +539,79 @@ class StaticNativeChallengeContract {
     if (ticket != null && isProtected(ticket.packageName)) {
       _recover(ticket.packageName, NativeRecoverySignal.userPresent);
     }
+  }
+
+  /// `WatcherService.onStartCommand`: the persisted-ticket path (shield +
+  /// `recoverProtected(RETRY)`), then F3's one restart decision per process.
+  void serviceStart() {
+    recoveryRetryTick();
+    if (_restartLatchAcquired) return;
+    _restartLatchAcquired = true;
+    restartDecisions++;
+    final NativeRestartDecision decision = _decideRestart();
+    lastRestartDecision = decision;
+    final String? target = _restartTarget;
+    if (target == null) return;
+    // `ProtectionStateStore.createRestartRecoveryChallenge`: never replaces.
+    if (pending != null) return;
+    final PendingLockChallenge ticket = replacePendingChallenge(target);
+    wakeReauthPackage = ticket.packageName;
+    _showShield();
+    _recover(ticket.packageName, NativeRecoverySignal.retry);
+  }
+
+  String? _restartTarget;
+
+  /// `RestartRecoveryPolicy.decide` with the same order as Kotlin.
+  NativeRestartDecision _decideRestart() {
+    _restartTarget = null;
+    if (!enabled) return NativeRestartDecision.skipProtectionDisabled;
+    if (pending != null) return NativeRestartDecision.skipPendingTicket;
+    if (activityResumed) return NativeRestartDecision.skipUiResumed;
+    final NativeForegroundEvidence? evidence = usageForegroundEvidence;
+    if (evidence != null &&
+        evidence.packageName.isNotEmpty &&
+        isProtected(evidence.packageName)) {
+      _restartTarget = evidence.packageName;
+      return NativeRestartDecision.challengeProtectedForegroundEvidence;
+    }
+    final String? remembered = _wakeReauthPackage;
+    if (remembered == null ||
+        remembered.trim().isEmpty ||
+        !isProtected(remembered)) {
+      return NativeRestartDecision.noneNoProtectedTarget;
+    }
+    final bool rememberedSameBoot = sameBoot(
+      storedBootCount: wakeReauthBootCount,
+      currentBootCount: bootCount ?? -1,
+      storedElapsedMs: wakeReauthStampElapsedMs,
+      storedWallMs: wakeReauthStampWallMs,
+      nowElapsedMs: elapsedMs,
+      nowWallMs: wallClockMs,
+    );
+    if (!rememberedSameBoot) {
+      return NativeRestartDecision.noneRememberedOtherBoot;
+    }
+    if (evidence == null) {
+      _restartTarget = remembered;
+      return NativeRestartDecision.challengeRememberedForegroundUnknown;
+    }
+    final int? stamp = wakeReauthStampWallMs;
+    final bool consistent = wallClockConsistent(
+      storedElapsedMs: wakeReauthStampElapsedMs,
+      storedWallMs: stamp,
+      nowElapsedMs: elapsedMs,
+      nowWallMs: wallClockMs,
+    );
+    if (!consistent || stamp == null) {
+      _restartTarget = remembered;
+      return NativeRestartDecision.challengeRememberedEvidenceUnordered;
+    }
+    if (evidence.eventWallMs > stamp) {
+      return NativeRestartDecision.noneNewerUnprotectedEvidence;
+    }
+    _restartTarget = remembered;
+    return NativeRestartDecision.challengeRememberedEvidenceNotNewer;
   }
 
   /// One firing of the `WatcherService.recoveryRetry` runnable, which

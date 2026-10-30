@@ -185,6 +185,10 @@ class WatcherService : Service() {
                 WakeRecoverySignal.RETRY,
             )
         }
+        // F3: a fresh process with no ticket may still have the protected
+        // app on screen (death during authorized use, or a screen cycle
+        // missed while dead). One fail-closed decision per process.
+        restoreAfterProcessRestartIfNeeded(this)
         handler.removeCallbacks(poll)
         handler.post(poll)
         Log.d(TAG, "Native protection watcher started")
@@ -285,6 +289,89 @@ class WatcherService : Service() {
         // H-1 F1: a possible leave reported while the challenge Activity was
         // still resumed; confirmed only by the matching onPause.
         @Volatile private var abandonCandidate: ChallengeAbandonCandidate? = null
+        // F3: the companion is process-scoped, so this latch admits exactly
+        // one restart decision per process (sticky restart, a11y rebind, boot
+        // or Dart start, whichever reaches onStartCommand first).
+        private val restartRecoveryLatch = OneShotLatch()
+
+        /**
+         * F3 restart restore. Never authorizes, never replaces an existing
+         * ticket (screen-off/wake tickets keep their generation), and only
+         * creates a fresh-generation ticket behind an opaque shield; the
+         * shield hides only after the exact ready handoff. Errors never
+         * escape: a crash loop here would stop Android restarting us.
+         */
+        private fun restoreAfterProcessRestartIfNeeded(context: Context) {
+            if (!restartRecoveryLatch.tryAcquire()) return
+            try {
+                val nowElapsed = SystemClock.elapsedRealtime()
+                val nowWall = System.currentTimeMillis()
+                val enabled = ProtectionStateStore.isEnabled(context)
+                val pendingExists = ProtectionStateStore.pendingChallenge(context) != null
+                val uiResumed = ProtectionRuntime.activityResumed
+                val remembered = ProtectionStateStore.rememberedWakeIdentity(context)
+                val sameBoot = remembered != null && WakeIdentityBootScope.sameBoot(
+                    storedBootCount = remembered.bootCount,
+                    currentBootCount = ProtectionStateStore.currentBootCount(context),
+                    storedElapsedMs = remembered.stampElapsedMs,
+                    storedWallMs = remembered.stampWallMs,
+                    nowElapsedMs = nowElapsed,
+                    nowWallMs = nowWall,
+                )
+                val clockConsistent = remembered != null &&
+                    WakeIdentityBootScope.wallClockConsistent(
+                        storedElapsedMs = remembered.stampElapsedMs,
+                        storedWallMs = remembered.stampWallMs,
+                        nowElapsedMs = nowElapsed,
+                        nowWallMs = nowWall,
+                    )
+                // UsageEvents is queried only when it can change the outcome.
+                val evidence = if (enabled && !pendingExists && !uiResumed) {
+                    InstalledAppsChannel.restartForegroundEvidence(
+                        context,
+                        nowWallMs = nowWall,
+                        nowElapsedMs = nowElapsed,
+                        imePackage = defaultInputMethodPackage(context),
+                    )
+                } else {
+                    ForegroundEvidence.Unknown
+                }
+                val result = RestartRecoveryPolicy.decide(
+                    RestartRecoveryInput(
+                        protectionEnabled = enabled,
+                        pendingExists = pendingExists,
+                        uiActivityResumed = uiResumed,
+                        rememberedPackage = remembered?.packageName,
+                        rememberedSameBoot = sameBoot,
+                        rememberedStampWallMs = remembered?.stampWallMs,
+                        wallClockConsistent = clockConsistent,
+                        evidence = evidence,
+                    ),
+                ) { ProtectionStateStore.isProtected(context, it) }
+                // Diagnostics: the decision only, never package names.
+                Log.d(TAG, "Restart recovery decision=${result.decision}")
+                val target = result.targetPackage ?: return
+                val ticket = ProtectionStateStore.createRestartRecoveryChallenge(
+                    context,
+                    target,
+                ) ?: return
+                ProtectionStateStore.rememberWakeReauthPackage(context, ticket.packageName)
+                ProtectionOverlayController.show(context)
+                recoverProtected(context, ticket.packageName, WakeRecoverySignal.RETRY)
+            } catch (e: Exception) {
+                Log.w(TAG, "Restart recovery failed: ${e.javaClass.simpleName}")
+                try {
+                    // Fail closed: a persisted ticket keeps the shield and
+                    // the bounded recovery retry.
+                    if (ProtectionStateStore.pendingChallenge(context) != null) {
+                        ProtectionOverlayController.show(context)
+                        activeInstance?.scheduleRecoveryRetry()
+                    }
+                } catch (inner: Exception) {
+                    Log.w(TAG, "Restart recovery fallback failed: ${inner.javaClass.simpleName}")
+                }
+            }
+        }
 
         fun start(context: Context): Boolean = try {
             val intent = Intent(context, WatcherService::class.java)

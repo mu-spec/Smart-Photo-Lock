@@ -2,6 +2,7 @@ package com.smartapplock.app
 
 import android.content.Context
 import android.os.SystemClock
+import android.provider.Settings
 
 /** Minimal non-secret state required to recover enforcement without Dart. */
 object ProtectionStateStore {
@@ -22,6 +23,10 @@ object ProtectionStateStore {
     private const val KEY_PENDING_GENERATION = "pending_challenge_generation"
     private const val KEY_NEXT_GENERATION = "next_challenge_generation"
     private const val KEY_WAKE_REAUTH_PACKAGE = "wake_reauth_package"
+    // F3 boot scope of the wake identity (non-secret device counters only).
+    private const val KEY_WAKE_REAUTH_BOOT_COUNT = "wake_reauth_boot_count"
+    private const val KEY_WAKE_REAUTH_STAMP_ELAPSED = "wake_reauth_stamp_elapsed"
+    private const val KEY_WAKE_REAUTH_STAMP_WALL = "wake_reauth_stamp_wall"
     private const val KEY_LAST_ERROR = "last_error"
 
     fun configure(context: Context, enabled: Boolean, packages: Set<String>) {
@@ -119,12 +124,42 @@ object ProtectionStateStore {
     fun rememberWakeReauthPackage(context: Context, packageName: String?) {
         val preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val normalized = packageName?.takeIf { it.isNotBlank() }
-        if (preferences.getString(KEY_WAKE_REAUTH_PACKAGE, null) == normalized) return
         val editor = preferences.edit()
         if (normalized == null) {
+            if (preferences.getString(KEY_WAKE_REAUTH_PACKAGE, null) == null &&
+                !preferences.contains(KEY_WAKE_REAUTH_STAMP_ELAPSED)
+            ) {
+                return
+            }
             editor.remove(KEY_WAKE_REAUTH_PACKAGE)
+                .remove(KEY_WAKE_REAUTH_BOOT_COUNT)
+                .remove(KEY_WAKE_REAUTH_STAMP_ELAPSED)
+                .remove(KEY_WAKE_REAUTH_STAMP_WALL)
         } else {
+            // F3: the identity is boot-scoped. An unchanged package is
+            // re-stamped when its stamp is missing or from another boot, so
+            // an identity carried over a reboot becomes usable again as soon
+            // as the same app is reported in this boot.
+            val nowElapsed = SystemClock.elapsedRealtime()
+            val nowWall = System.currentTimeMillis()
+            val bootCount = currentBootCount(context)
+            val stored = readRememberedWakeIdentity(preferences)
+            if (stored?.packageName == normalized &&
+                WakeIdentityBootScope.sameBoot(
+                    storedBootCount = stored.bootCount,
+                    currentBootCount = bootCount,
+                    storedElapsedMs = stored.stampElapsedMs,
+                    storedWallMs = stored.stampWallMs,
+                    nowElapsedMs = nowElapsed,
+                    nowWallMs = nowWall,
+                )
+            ) {
+                return
+            }
             editor.putString(KEY_WAKE_REAUTH_PACKAGE, normalized)
+                .putInt(KEY_WAKE_REAUTH_BOOT_COUNT, bootCount)
+                .putLong(KEY_WAKE_REAUTH_STAMP_ELAPSED, nowElapsed)
+                .putLong(KEY_WAKE_REAUTH_STAMP_WALL, nowWall)
         }
         // This state is written on foreground transitions, not every poll.
         // Synchronous persistence ensures SCREEN_OFF/process death cannot
@@ -139,6 +174,78 @@ object ProtectionStateStore {
     private fun rememberedWakeReauthPackage(context: Context): String? =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getString(KEY_WAKE_REAUTH_PACKAGE, null)
+
+    /** The persisted wake identity with its F3 boot-scope stamp. */
+    data class RememberedWakeIdentity(
+        val packageName: String,
+        val bootCount: Int?,
+        val stampElapsedMs: Long?,
+        val stampWallMs: Long?,
+    )
+
+    /**
+     * Raw remembered identity (protection is checked by the caller's
+     * policy). Missing stamp fields stay null: a legacy identity written
+     * before F3 can never be proven to belong to this boot.
+     */
+    fun rememberedWakeIdentity(context: Context): RememberedWakeIdentity? =
+        readRememberedWakeIdentity(
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE),
+        )
+
+    private fun readRememberedWakeIdentity(
+        preferences: android.content.SharedPreferences,
+    ): RememberedWakeIdentity? {
+        val packageName = preferences.getString(KEY_WAKE_REAUTH_PACKAGE, null)
+            ?.takeIf { it.isNotBlank() } ?: return null
+        return RememberedWakeIdentity(
+            packageName = packageName,
+            bootCount = if (preferences.contains(KEY_WAKE_REAUTH_BOOT_COUNT)) {
+                preferences.getInt(KEY_WAKE_REAUTH_BOOT_COUNT, -1)
+            } else {
+                null
+            },
+            stampElapsedMs = if (preferences.contains(KEY_WAKE_REAUTH_STAMP_ELAPSED)) {
+                preferences.getLong(KEY_WAKE_REAUTH_STAMP_ELAPSED, 0L)
+            } else {
+                null
+            },
+            stampWallMs = if (preferences.contains(KEY_WAKE_REAUTH_STAMP_WALL)) {
+                preferences.getLong(KEY_WAKE_REAUTH_STAMP_WALL, 0L)
+            } else {
+                null
+            },
+        )
+    }
+
+    // A process never outlives a boot, so a known boot count is cached.
+    @Volatile private var cachedBootCount: Int? = null
+
+    /** `Settings.Global.BOOT_COUNT` (API 24), or -1 when unavailable. */
+    fun currentBootCount(context: Context): Int {
+        cachedBootCount?.let { return it }
+        val value = try {
+            Settings.Global.getInt(context.contentResolver, Settings.Global.BOOT_COUNT, -1)
+        } catch (e: Exception) {
+            -1
+        }
+        if (value >= 0) cachedBootCount = value
+        return value
+    }
+
+    /**
+     * F3: creates a fresh-generation ticket for [packageName] only when no
+     * ticket exists. An existing ticket (including a screen-off/wake ticket)
+     * is never replaced and is returned as null, so the caller does nothing.
+     */
+    @Synchronized
+    fun createRestartRecoveryChallenge(
+        context: Context,
+        packageName: String,
+    ): PendingChallenge? {
+        if (pendingChallenge(context) != null) return null
+        return replacePendingChallenge(context, packageName)
+    }
 
     /** Restores a pending ticket from the separate wake identity if needed. */
     @Synchronized

@@ -223,3 +223,251 @@ object ChallengeAbandonPolicy {
         return elapsed in 0L..CONFIRM_WINDOW_MS
     }
 }
+
+// -- F3: fail-closed restore in a fresh WatcherService process ---------------
+
+/**
+ * What UsageEvents can say about the foreground at a process restart. It is
+ * historical: [App] is only the latest activity resume since boot that is
+ * not this app, a system/framework window or the keyboard. It is never
+ * proof of the current foreground on its own; see [RestartRecoveryPolicy].
+ */
+sealed class ForegroundEvidence {
+    /** No Usage Access, query failure, clock anomaly or no usable event. */
+    object Unknown : ForegroundEvidence()
+
+    data class App(val packageName: String, val eventWallMs: Long) : ForegroundEvidence()
+}
+
+/**
+ * Pure selection over UsageEvents in stream order. Only activity resumes
+ * count. Own, transient (H-1 classification) and blank packages can never
+ * prove a foreground change and are skipped. A future-dated event means the
+ * wall clock moved after it was logged, so ordering is unreliable and the
+ * whole result is [ForegroundEvidence.Unknown] (fail closed).
+ */
+class RestartForegroundEvidenceSelector(
+    private val ownPackage: String,
+    private val imePackage: String?,
+    private val nowWallMs: Long,
+    private val lowerBoundWallMs: Long,
+) {
+    private var bestPackage: String? = null
+    private var bestWallMs = Long.MIN_VALUE
+    private var clockAnomaly = false
+
+    fun offer(packageName: String?, eventWallMs: Long, isActivityResume: Boolean) {
+        if (!isActivityResume || packageName.isNullOrBlank() || eventWallMs <= 0L) return
+        if (eventWallMs > nowWallMs + FUTURE_TOLERANCE_MS) {
+            clockAnomaly = true
+            return
+        }
+        if (eventWallMs < lowerBoundWallMs) return
+        if (packageName == ownPackage) return
+        if (ChallengeAbandonPolicy.isTransientWindow(packageName, imePackage)) return
+        if (eventWallMs >= bestWallMs) {
+            bestWallMs = eventWallMs
+            bestPackage = packageName
+        }
+    }
+
+    fun result(): ForegroundEvidence {
+        val packageName = bestPackage
+        return if (clockAnomaly || packageName == null) {
+            ForegroundEvidence.Unknown
+        } else {
+            ForegroundEvidence.App(packageName, bestWallMs)
+        }
+    }
+
+    companion object {
+        const val MAX_LOOKBACK_MS = 24L * 60L * 60L * 1_000L
+        const val FUTURE_TOLERANCE_MS = 10_000L
+
+        /** Events from before this boot, or older than the cap, are ignored. */
+        fun lowerBoundWallMs(nowWallMs: Long, nowElapsedMs: Long): Long =
+            maxOf(nowWallMs - MAX_LOOKBACK_MS, nowWallMs - nowElapsedMs)
+    }
+}
+
+/**
+ * F3 UsageEvents query window for the restart decision: one query over
+ * [begin, end). `queryEvents` treats begin as inclusive and end as
+ * EXCLUSIVE, so the end must lie well beyond
+ * [RestartForegroundEvidenceSelector.FUTURE_TOLERANCE_MS]: future-dated
+ * resumes (the wall clock was set back after they were logged) have to reach
+ * the selector, which turns them into [ForegroundEvidence.Unknown] (fail
+ * closed) instead of letting an older unprotected resume look newer than
+ * the identity stamp.
+ *
+ * The end is a bounded horizon, not `Long.MAX_VALUE`: it mirrors the 24 h
+ * lookback, keeps the scanned span (at most ~48 h) bounded on every
+ * implementation, and avoids depending on how an OEM UsageStats service
+ * treats extreme end times. A single resume between 10 s and 24 h in the
+ * future is enough to fail closed.
+ *
+ * Mitigation only, not a clock-rollback guarantee: Android may rebase
+ * (AOSP time-change correction), omit or filter future-dated events, and a
+ * rollback that leaves no resume beyond the tolerance is undetectable here.
+ */
+object RestartUsageEventsQuery {
+    const val FUTURE_HORIZON_MS = 24L * 60L * 60L * 1_000L
+
+    fun beginWallMs(nowWallMs: Long, nowElapsedMs: Long): Long =
+        RestartForegroundEvidenceSelector.lowerBoundWallMs(nowWallMs, nowElapsedMs)
+
+    /** Null when the window cannot be represented; the caller fails closed. */
+    fun endWallMs(nowWallMs: Long): Long? =
+        if (nowWallMs > Long.MAX_VALUE - FUTURE_HORIZON_MS) null else nowWallMs + FUTURE_HORIZON_MS
+
+    /**
+     * Runs exactly one [query] over the window and selects the evidence.
+     * Events outside the window that an implementation still returns are
+     * handled by the selector (old: ignored, future: Unknown).
+     */
+    fun collect(
+        ownPackage: String,
+        imePackage: String?,
+        nowWallMs: Long,
+        nowElapsedMs: Long,
+        query: (beginWallMs: Long, endWallMs: Long, sink: (String?, Long, Boolean) -> Unit) -> Unit,
+    ): ForegroundEvidence {
+        val begin = beginWallMs(nowWallMs, nowElapsedMs)
+        val end = endWallMs(nowWallMs) ?: return ForegroundEvidence.Unknown
+        val selector = RestartForegroundEvidenceSelector(
+            ownPackage = ownPackage,
+            imePackage = imePackage,
+            nowWallMs = nowWallMs,
+            lowerBoundWallMs = begin,
+        )
+        query(begin, end) { packageName, eventWallMs, isActivityResume ->
+            selector.offer(packageName, eventWallMs, isActivityResume)
+        }
+        return selector.result()
+    }
+}
+
+/** Boot scoping and wall-clock ordering for the remembered wake identity. */
+object WakeIdentityBootScope {
+    const val WALL_CLOCK_TOLERANCE_MS = 10_000L
+
+    /**
+     * True only when the identity provably belongs to the current boot.
+     * `Settings.Global.BOOT_COUNT` decides when both sides know it; an
+     * elapsedRealtime regression always means another boot. Without a boot
+     * count, the boot-time wall anchor (wall - elapsed) must match.
+     */
+    fun sameBoot(
+        storedBootCount: Int?,
+        currentBootCount: Int?,
+        storedElapsedMs: Long?,
+        storedWallMs: Long?,
+        nowElapsedMs: Long,
+        nowWallMs: Long,
+    ): Boolean {
+        if (storedElapsedMs == null || storedElapsedMs > nowElapsedMs) return false
+        if (storedBootCount != null && storedBootCount >= 0 &&
+            currentBootCount != null && currentBootCount >= 0
+        ) {
+            return storedBootCount == currentBootCount
+        }
+        return wallClockConsistent(storedElapsedMs, storedWallMs, nowElapsedMs, nowWallMs)
+    }
+
+    /** No wall-clock change (beyond tolerance) since the stamp was written. */
+    fun wallClockConsistent(
+        storedElapsedMs: Long?,
+        storedWallMs: Long?,
+        nowElapsedMs: Long,
+        nowWallMs: Long,
+    ): Boolean {
+        if (storedElapsedMs == null || storedWallMs == null) return false
+        val drift = (nowWallMs - nowElapsedMs) - (storedWallMs - storedElapsedMs)
+        return kotlin.math.abs(drift) <= WALL_CLOCK_TOLERANCE_MS
+    }
+}
+
+data class RestartRecoveryInput(
+    val protectionEnabled: Boolean,
+    val pendingExists: Boolean,
+    val uiActivityResumed: Boolean,
+    val rememberedPackage: String?,
+    val rememberedSameBoot: Boolean,
+    val rememberedStampWallMs: Long?,
+    val wallClockConsistent: Boolean,
+    val evidence: ForegroundEvidence,
+)
+
+enum class RestartRecoveryDecision(val challenges: Boolean) {
+    SKIP_PROTECTION_DISABLED(false),
+    SKIP_PENDING_TICKET(false),
+    SKIP_UI_RESUMED(false),
+    CHALLENGE_PROTECTED_FOREGROUND_EVIDENCE(true),
+    CHALLENGE_REMEMBERED_FOREGROUND_UNKNOWN(true),
+    CHALLENGE_REMEMBERED_EVIDENCE_NOT_NEWER(true),
+    CHALLENGE_REMEMBERED_EVIDENCE_UNORDERED(true),
+    NONE_NEWER_UNPROTECTED_EVIDENCE(false),
+    NONE_REMEMBERED_OTHER_BOOT(false),
+    NONE_NO_PROTECTED_TARGET(false),
+}
+
+data class RestartRecoveryResult(
+    val decision: RestartRecoveryDecision,
+    val targetPackage: String?,
+)
+
+/**
+ * F3 one-shot restart decision. Evidence is asymmetric: a protected latest
+ * resume may ADD a challenge (fail closed); an unprotected one may only
+ * SUPPRESS the remembered same-boot identity when it is strictly newer than
+ * the identity stamp under a provably unchanged wall clock. Stale, equal,
+ * unordered and unknown evidence fall back to the remembered identity.
+ * An existing ticket is never replaced and nothing is ever authorized here.
+ */
+object RestartRecoveryPolicy {
+    fun decide(
+        input: RestartRecoveryInput,
+        isProtected: (String) -> Boolean,
+    ): RestartRecoveryResult {
+        if (!input.protectionEnabled) return none(RestartRecoveryDecision.SKIP_PROTECTION_DISABLED)
+        if (input.pendingExists) return none(RestartRecoveryDecision.SKIP_PENDING_TICKET)
+        if (input.uiActivityResumed) return none(RestartRecoveryDecision.SKIP_UI_RESUMED)
+
+        val evidence = input.evidence
+        if (evidence is ForegroundEvidence.App && evidence.packageName.isNotBlank() &&
+            isProtected(evidence.packageName)
+        ) {
+            return challenge(
+                RestartRecoveryDecision.CHALLENGE_PROTECTED_FOREGROUND_EVIDENCE,
+                evidence.packageName,
+            )
+        }
+        val remembered = input.rememberedPackage
+            ?.takeIf { it.isNotBlank() && isProtected(it) }
+            ?: return none(RestartRecoveryDecision.NONE_NO_PROTECTED_TARGET)
+        if (!input.rememberedSameBoot) return none(RestartRecoveryDecision.NONE_REMEMBERED_OTHER_BOOT)
+        if (evidence !is ForegroundEvidence.App) {
+            return challenge(RestartRecoveryDecision.CHALLENGE_REMEMBERED_FOREGROUND_UNKNOWN, remembered)
+        }
+        val stamp = input.rememberedStampWallMs
+        if (!input.wallClockConsistent || stamp == null) {
+            return challenge(RestartRecoveryDecision.CHALLENGE_REMEMBERED_EVIDENCE_UNORDERED, remembered)
+        }
+        if (evidence.eventWallMs > stamp) {
+            return none(RestartRecoveryDecision.NONE_NEWER_UNPROTECTED_EVIDENCE)
+        }
+        return challenge(RestartRecoveryDecision.CHALLENGE_REMEMBERED_EVIDENCE_NOT_NEWER, remembered)
+    }
+
+    private fun none(decision: RestartRecoveryDecision) = RestartRecoveryResult(decision, null)
+
+    private fun challenge(decision: RestartRecoveryDecision, target: String) =
+        RestartRecoveryResult(decision, target)
+}
+
+/** Exactly one successful [tryAcquire] per instance (per process when static). */
+class OneShotLatch {
+    private val acquired = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    fun tryAcquire(): Boolean = acquired.compareAndSet(false, true)
+}

@@ -305,6 +305,51 @@ object InstalledAppsChannel {
     }
 
     /**
+     * F3: one-shot foreground evidence for a fresh WatcherService process.
+     * Total and fail-closed: no Usage Access, a query failure, a clock
+     * anomaly or no usable event all return [ForegroundEvidence.Unknown].
+     * The bounded query window lives in [RestartUsageEventsQuery], selection
+     * and its limits in [RestartForegroundEvidenceSelector], and how the
+     * result may be used in [RestartRecoveryPolicy].
+     */
+    fun restartForegroundEvidence(
+        context: Context,
+        nowWallMs: Long,
+        nowElapsedMs: Long,
+        imePackage: String?,
+    ): ForegroundEvidence {
+        if (!hasUsageAccess(context)) return ForegroundEvidence.Unknown
+        return try {
+            val usageStats =
+                context.getSystemService(Context.USAGE_STATS_SERVICE)
+                    as UsageStatsManager
+            // Window and selection are pure (RestartUsageEventsQuery); this
+            // adapter only runs the single bounded query and forwards events.
+            RestartUsageEventsQuery.collect(
+                ownPackage = context.packageName,
+                imePackage = imePackage,
+                nowWallMs = nowWallMs,
+                nowElapsedMs = nowElapsedMs,
+            ) { begin, end, sink ->
+                val events = usageStats.queryEvents(begin, end)
+                val event = UsageEvents.Event()
+                while (events.hasNextEvent()) {
+                    events.getNextEvent(event)
+                    val isResume = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        event.eventType == UsageEvents.Event.ACTIVITY_RESUMED
+                    } else {
+                        @Suppress("DEPRECATION")
+                        event.eventType == UsageEvents.Event.MOVE_TO_FOREGROUND
+                    }
+                    sink(event.packageName, event.timeStamp, isResume)
+                }
+            }
+        } catch (e: Exception) {
+            ForegroundEvidence.Unknown
+        }
+    }
+
+    /**
      * Phase 5E: opens [packageName] through its MAIN/LAUNCHER intent —
      * the "allow access" half of the lock flow, called after a
      * successful PIN challenge. Total: false when the app has no
