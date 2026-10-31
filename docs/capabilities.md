@@ -117,3 +117,13 @@ Changes to this architecture must retain automated checks for:
 8. process-recreation, reboot, screen, Home, Back, and task-switching behavior,
    followed by physical-device QA for Android lifecycle behavior that cannot be
    proven by a Dart unit test.
+
+## Platform limitations
+
+- **Android Force Stop** (Settings, or an OEM cleaner that force-stops):
+  Android puts the package into the stopped state and removes its enabled
+  Accessibility service. The watcher, `START_STICKY` restart and boot receiver
+  do not run, so **protection is unavailable while the app is force-stopped**,
+  until the user opens Smart App Lock again (Accessibility may need to be
+  re-enabled). The app cannot prevent this. Force Stop is therefore not a
+  valid process-death (F3) test.

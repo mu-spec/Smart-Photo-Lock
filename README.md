@@ -5,8 +5,11 @@ Development follows the PRD phase plan; this repository is the production
 Android project.
 
 **Current status: Phase 1 complete (1A–1G), Phase 2 complete (2A–2L),
-Phase 3 complete (3A–3H), Phase 4 complete (4A–4G), Phase 5 complete
-(5A–5U)** — production scaffold, architecture, navigation, design
+Phase 3 complete (3A–3H), Phase 4 complete (4A–4G), Phase 5
+implemented (5A–5U); Phase 5 manual QA round CLOSED WITH LIMITATIONS**
+(not fully security-verified, not production-release-ready; open release
+gates: F3 process-death device verification and successful biometric
+verification; see `docs/regression.md`, final QA round) — production scaffold, architecture, navigation, design
 system, persistence, secure storage, full authentication with settings,
 installed-apps management, the complete capability/permission layer,
 and the **core lock engine**: foreground detection (usage-stats +
@@ -66,8 +69,8 @@ top of the protected app) remains for a later phase.
 | 5D | Basic lock trigger (protected app active → authentication challenge) | ✅ |
 | 5E | PIN integration (PIN gates protected-app access; lockout denies; app relaunched on success) | ✅ |
 | 5F | Pattern integration (primary-credential challenge routing; pattern gates + launch) | ✅ |
-| 5G | Biometric integration (biometric accelerator on both unlock screens in the lock flow) | ✅ |
-| 5H | Successful unlock session (inactivity-based window; re-entry refreshes, expiry re-locks) | ✅ |
+| 5G | Biometric integration (biometric accelerator on both unlock screens in the lock flow) | ✅ code · ⚠️ device UNVERIFIED (release gate) |
+| 5H | Successful unlock session (inactivity-based window; re-entry refreshes, expiry re-locks) | ✅ · expiry event-driven (accepted limitation) |
 | 5I | Authentication failure (failed auth never grants a session; enrollment ≠ authentication) | ✅ |
 | 5J | Immediate re-lock (leaving a protected app ends its unlock session at once) | ✅ |
 | 5K | Screen-off re-lock (screen turns off → every unlock session revoked; enforced on resume) | ✅ |
@@ -75,12 +78,12 @@ top of the protected app) remains for a later phase.
 | 5M | Home-button hardening (challenge dismissed on leave; requirements re-queued, never dropped) | ✅ |
 | 5N | Back-navigation hardening (Back cannot dismiss a challenge; re-presents in the foreground) | ✅ |
 | 5O | Recents hardening (FLAG_SECURE challenge snapshots; task-switch re-challenge) | ✅ |
-| 5P | Gesture navigation hardening (cancelled gestures never dismiss; paused/hidden count as leaves) | ✅ |
+| 5P | Gesture navigation hardening (cancelled gestures never dismiss; paused/hidden count as leaves) | ✅ code · no device result in final round |
 | 5Q | Rapid switching (ordered transition processing; no stacked challenges; grace-aware re-entry) | ✅ |
 | 5R | Screen off/on (sleep revokes all sessions; wake enforces the re-lock immediately) | ✅ |
-| 5S | Reboot recovery (lazy restore: baseline enforcement + persisted state, where Android allows) | ✅ |
-| 5T | Process recreation (shared-store recovery, secure re-arm on resume, fail-closed fresh states) | ✅ |
-| 5U | Core lock regression (12-scenario end-to-end gauntlet: no bypass, no stacking, graceful recovery) | ✅ |
+| 5S | Reboot recovery (lazy restore: baseline enforcement + persisted state, where Android allows) | ✅ code · no device result in final round |
+| 5T | Process recreation (shared-store recovery, secure re-arm on resume, fail-closed fresh states) | ✅ code · ⚠️ device UNVERIFIED (release gate) |
+| 5U | Core lock regression (12-scenario end-to-end gauntlet: no bypass, no stacking, graceful recovery) | ✅ simulated · QA closed with limitations |
 
 ### Phase 1A ✅ — Create Android Project
 

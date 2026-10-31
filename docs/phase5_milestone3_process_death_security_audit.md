@@ -483,3 +483,26 @@ Logs: `/home/user/Phase5_M3_T5_Reconcile/`.
 - **W1/W2/W4 and Test C** (§4) are unchanged by F1/F2.
 - **F3 and F4** are not approved.
 - The fix and these two files are **uncommitted**.
+
+---
+
+## 16. Final QA round status (2026-10-31, `main` @ `505dafff8ca62139f1c521fdf92eb9d308d71ee6`)
+
+- **F3 process-death recovery on device: UNVERIFIED.** No verified process
+  death occurred in the final manual QA round. `am kill` was denied on
+  Android 9 / ColorOS, the release APK is non-debuggable and ADB is
+  non-root.
+- The earlier user-reported restart results (P1, P2 above) predate the F3
+  commit (`408cdc8`) and were not logcat-verified, so they do not verify the
+  current F3 code.
+- F3 fail-closed authorization remains supported by code and simulated
+  tests only. P7 (zero crash-to-shield exposure) and P9 (restart
+  reliability on ColorOS) remain UNVERIFIED.
+- Force Stop is not a valid test method (§7; `docs/capabilities.md`,
+  Platform limitations).
+- **Release gate:** one logcat-verified, non-force-stop process death on
+  the current build. Required lines: `ActivityManager: Process
+  com.smartapplock.app (pid N) has died`, the WatcherService restart,
+  `SmartAppLockWatcher: Restart recovery decision=…`, and the challenge
+  before protected content is usable. See `docs/regression.md`, final QA
+  round.

@@ -995,6 +995,16 @@ evaluate(package):
   evaluation).
 - `AppContainer.inMemory(accessClock: ...)` is the test seam for
   deterministic session windows in end-to-end flows.
+- **Expiry is event-driven, not a strict timer (accepted limitation,
+  Phase 5 final QA).** Neither layer runs a session timer. An expired
+  session is enforced only at the next foreground observation of the
+  protected package: an Accessibility `TYPE_WINDOW_STATE_CHANGED` event
+  (new Activity, dialog or popup) or a UsageEvents resume inside the 60 s
+  lookback. Leave and return, screen-off and process death also end it.
+  Navigation inside one Activity produces neither, so a protected app stays
+  usable after expiry until one of those happens (observed on device:
+  CamScanner, Oppo Android 9). The native H-2 sliding window and the
+  OD6/U1-R closure keep this rule. It is not an entry bypass.
 
 ## 5I. Authentication failure
 

@@ -772,6 +772,12 @@ launches the challenge presents the instant Smart App Lock becomes
 visible. The watcher foreground service (background detection while
 Smart App Lock is not running) is a later phase.
 
+> **Superseded by the final manual QA round (end of this file).** The
+> 5U checkpoint above was established by simulated tests, not device
+> evidence. Walk-through row 11 is not a valid process-death test:
+> Android Force Stop leaves protection unavailable until recovery
+> (documented platform limitation).
+
 ---
 
 # Phase 5 — Deep Audit (5A–5U)
@@ -1150,3 +1156,83 @@ finds the still-pending ticket and reconstructs one route before the shield can
 drop. A detector-confirmed transition to an unprotected Home/Recents target may
 cancel the unresolved presentation, but never grants access or changes the
 protected-app configuration.
+
+---
+
+# Phase 5 / M2 — Final manual QA round: CLOSED WITH LIMITATIONS
+
+Build under test: `main` @ `505dafff8ca62139f1c521fdf92eb9d308d71ee6`
+(OD6 + U1-R fix). Device: Oppo CPH2083, Android 9 (ColorOS), release
+APK. Device results are as reported by the tester. Automated results
+are simulated (JVM / flutter_test) and are not device evidence.
+
+**Round status: CLOSED WITH LIMITATIONS.** Phase 5 is **not** fully
+security-verified and **not** production-release-ready. Two release
+gates remain open (below): the PRD has no clause permitting their
+deferral (every milestone gate: "Implement or verify every
+requirement in this milestone").
+
+## Automated evidence @ 505daff (simulated)
+
+| Check | Result |
+|---|---|
+| Kotlin JVM policy tests | 177 passed |
+| Flutter test suite | 993 passed |
+| Native type-check (android-all) | PASS |
+| `flutter analyze` | PASS (no issues) |
+| OD6 / U1-R mutation checks | 6 / 6 killed |
+
+## Device evidence
+
+| Area | Result | Category |
+|---|---|---|
+| PIN / pattern authentication | PASS | Verified |
+| Wrong-credential lockout | PASS | Verified |
+| Screen-off / wake | PASS | Verified |
+| Home / Recents / Back protection | PASS | Verified |
+| Grace expiry after leaving the app | PASS | Verified |
+| Rapid app switching | PASS | Verified |
+| Accessibility off: Usage Access fallback | PASS | Verified |
+| OD6: expired session, Home and quick re-entry | PASS (challenges) | Verified |
+| Expired session, observed new Activity | PASS (challenges), supported by logcat | Verified |
+| H-2: same-Activity navigation after expiry | No challenge | **Conditionally accepted limitation**: expiry is event-driven, not a strict timer (`docs/architecture.md` §5H) |
+| F3: process-death recovery | No verified process death occurred | **UNVERIFIED: release gate** |
+| Fingerprint authentication | OS-level enrollment could not be completed | **UNVERIFIED: release gate** |
+| Android Force Stop | Protection unavailable while force-stopped, until recovery | **Platform limitation** (`docs/capabilities.md`) |
+| Gesture navigation (5P), reboot recovery (5S) | No device result supplied in this round | Not covered this round (device UNVERIFIED) |
+
+Accepted limitation, precisely: after a session expires, a protected
+app stays usable without a new challenge while the user stays inside
+it, the screen stays on, and the app produces no Accessibility
+window-state event (new Activity, dialog or popup) and no new Activity
+resume. The first such event, any leave and return, or screen-off
+challenges. It is not an entry bypass: entering the app always required
+authentication.
+
+F3 detail: `am kill` was denied on Android 9 / ColorOS, the release APK
+is non-debuggable and ADB is non-root, so no non-force-stop process
+death could be produced. Earlier user-reported restart results predate
+the F3 commit and were not logcat-verified
+(`docs/phase5_milestone3_process_death_security_audit.md` §16).
+
+## Remaining release gates (before any production release)
+
+1. **F3 process-death recovery on the current build**, logcat-verified:
+   `ActivityManager: Process com.smartapplock.app (pid N) has died` (not
+   `Force stopping …`), the WatcherService restart, `SmartAppLockWatcher:
+   Restart recovery decision=…`, and the challenge shown before protected
+   content is usable. This needs a build or device where a non-force-stop
+   process death can be produced (for example a debuggable build with
+   `run-as`, or a device that permits `am kill`).
+2. **Successful biometric authentication** on a device with completed
+   fingerprint enrollment: success completes the challenge and opens the
+   app; repeated mismatch keeps the PIN/pattern required with no lockout
+   reset; cancel or Back stays locked; after screen-off/wake a fresh
+   challenge appears.
+
+## Next PRD milestone
+
+Phase 6 — Bypass Hardening, **Milestone 1 — Alternate Entry Paths**:
+notification entry, deep links, share intents, widgets and shortcuts.
+No open security-critical regression is known; the two Phase 5 release
+gates above stay open until verified.
