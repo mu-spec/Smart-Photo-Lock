@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -421,6 +422,9 @@ class WatcherService : Service() {
             context: Context,
             packageName: String,
             source: ForegroundSource = ForegroundSource.ACCESSIBILITY,
+            // F4 P1: Accessibility event class. Native memory only; it is
+            // never logged, persisted or forwarded to Dart.
+            windowClass: String? = null,
         ) {
             if (!ProtectionStateStore.isEnabled(context) ||
                 packageName == context.packageName
@@ -489,11 +493,19 @@ class WatcherService : Service() {
                     packageName,
                     defaultInputMethodPackage(context),
                 )
+                // F4 P1: an overlay, dialog or unresolved window proves no
+                // leave either. Only Home, a UsageEvents resume or a resolved
+                // Activity of this package is a genuine leave. This affects
+                // F1/F2 only; observeForeground below still runs.
+                val provesNothing = transient || WindowLeavePolicy.provesNothing(
+                    transient = false,
+                    kind = foregroundWindowKind(context, packageName, source, windowClass),
+                )
                 // F2: keep the wake identity across transient windows so
                 // SCREEN_OFF still knows which protected app needs re-auth.
                 if (ChallengeAbandonPolicy.mayForgetWakeIdentity(
                         protectedTarget = false,
-                        transient = transient,
+                        transient = provesNothing,
                     )
                 ) {
                     ProtectionStateStore.rememberWakeReauthPackage(context, null)
@@ -504,7 +516,7 @@ class WatcherService : Service() {
                     when (
                         ChallengeAbandonPolicy.readyTicketAction(
                             protectedTarget = false,
-                            transient = transient,
+                            transient = provesNothing,
                             challengeActivityResumed = ProtectionRuntime.activityResumed,
                             screenInteractive = screenInteractive,
                         )
@@ -716,6 +728,41 @@ class WatcherService : Service() {
             abandonCandidate = null
         }
 
+        /** The default Home activity's package: safe exit and F4 P1. */
+        private fun resolveHomePackage(context: Context): String? = try {
+            val homeIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+            context.packageManager.resolveActivity(homeIntent, 0)
+                ?.activityInfo?.packageName
+        } catch (_: Exception) {
+            null
+        }
+
+        /**
+         * F4 P1 window kind. Only an Activity declared by the reporting
+         * package counts; any failure (including API 30+ package-visibility
+         * NameNotFound) is UNCONFIRMED. The class name is never logged.
+         */
+        private fun foregroundWindowKind(
+            context: Context,
+            packageName: String,
+            source: ForegroundSource,
+            windowClass: String?,
+        ): ForegroundWindowKind {
+            val kind = WindowLeavePolicy.classify(
+                packageName = packageName,
+                fromUsageEvents = source == ForegroundSource.USAGE_EVENTS,
+                homePackage = resolveHomePackage(context),
+                windowClass = windowClass.takeIf { source == ForegroundSource.ACCESSIBILITY },
+                resolveActivity = { pkg, cls ->
+                    @Suppress("DEPRECATION")
+                    val info = context.packageManager.getActivityInfo(ComponentName(pkg, cls), 0)
+                    ResolvedActivity(info.packageName, info.name)
+                },
+            )
+            Log.d(TAG, "window kind=$kind for $packageName")
+            return kind
+        }
+
         private fun defaultInputMethodPackage(context: Context): String? = try {
             ChallengeAbandonPolicy.imePackageFromSetting(
                 Settings.Secure.getString(
@@ -741,12 +788,7 @@ class WatcherService : Service() {
                 addCategory(Intent.CATEGORY_HOME)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
-            val homePackage = try {
-                context.packageManager.resolveActivity(homeIntent, 0)
-                    ?.activityInfo?.packageName
-            } catch (_: Exception) {
-                null
-            } ?: return false
+            val homePackage = resolveHomePackage(context) ?: return false
             if (ProtectionStateStore.isProtected(context, homePackage)) return false
 
             val request = SafeExitRequest(pending, homePackage)

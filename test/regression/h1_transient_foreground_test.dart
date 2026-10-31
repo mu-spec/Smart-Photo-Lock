@@ -153,12 +153,28 @@ void main() {
     });
 
     test(
-        'SIMULATED: an unlisted OEM overlay while resumed is only a '
-        'candidate (documented residual: it forgets the wake identity)', () {
+        'SIMULATED: an unlisted OEM overlay window while resumed (F4 P1: '
+        'unconfirmed) keeps the ticket and the wake identity, no candidate',
+        () {
       final StaticNativeChallengeContract native = configured();
       final PendingLockChallenge ticket = readyChallenge(native);
-      native.reportForeground('com.coloros.gesture');
+      native.reportForeground('com.coloros.gesture',
+          windowKind: NativeWindowKind.unconfirmed);
       expect(native.pending, ticket);
+      expect(native.abandonCandidate, isNull);
+      expect(native.wakeReauthPackage, _pkg);
+      expect(native.authorizePackage(ticket), isTrue);
+    });
+
+    test(
+        'SIMULATED: an unlisted OEM Activity window while resumed is only a '
+        'candidate and forgets the wake identity (confirmed leave)', () {
+      final StaticNativeChallengeContract native = configured();
+      final PendingLockChallenge ticket = readyChallenge(native);
+      native.reportForeground('com.coloros.gesture',
+          windowKind: NativeWindowKind.activity);
+      expect(native.pending, ticket);
+      expect(native.abandonCandidate?.ticket, ticket);
       expect(native.wakeReauthPackage, isNull);
       expect(native.authorizePackage(ticket), isTrue);
     });
@@ -259,7 +275,8 @@ void main() {
 
       native.screenOn();
       native.dismissKeyguard();
-      expect(native.recoveryAttempts, contains(NativeRecoverySignal.userPresent));
+      expect(
+          native.recoveryAttempts, contains(NativeRecoverySignal.userPresent));
       expect(native.pending?.packageName, _pkg);
       expect(native.shieldVisible, isTrue);
     });

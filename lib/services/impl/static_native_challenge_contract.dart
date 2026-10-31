@@ -26,6 +26,22 @@ enum NativeReadyRejection {
 /// `WakeRecoverySignal` enum.
 enum NativeRecoverySignal { screenOn, userPresent, foreground, retry }
 
+/// Kotlin `ForegroundWindowKind` (F4 P1): what one unprotected report proves
+/// about its window. Only [unconfirmed] fails to prove a genuine leave.
+enum NativeWindowKind {
+  /// The resolved default Home package, whatever its window.
+  home,
+
+  /// A UsageEvents activity resume (activity-level, historical).
+  usageActivity,
+
+  /// An Accessibility class resolved to an Activity of the package.
+  activity,
+
+  /// Null/blank class, failed lookup, non-activity window or mismatch.
+  unconfirmed,
+}
+
 /// F3: mirrors the Kotlin `RestartRecoveryDecision` enum.
 enum NativeRestartDecision {
   skipProtectionDisabled,
@@ -275,6 +291,10 @@ class StaticNativeChallengeContract {
   /// The default keyboard (`Settings.Secure.DEFAULT_INPUT_METHOD`).
   String? inputMethodPackage;
 
+  /// `WatcherService.resolveHomePackage` (the safe-exit Home resolver).
+  /// A report from this package is always [NativeWindowKind.home].
+  String? homePackage;
+
   /// `WatcherService.abandonCandidate`: (ticket, package, reported at).
   NativeAbandonCandidate? abandonCandidate;
 
@@ -497,6 +517,21 @@ class StaticNativeChallengeContract {
         (ime != null && ime.trim().isNotEmpty && packageName == ime);
   }
 
+  /// `WindowLeavePolicy.classify`: the resolved Home package wins over the
+  /// supplied window kind; a blank package never proves a leave.
+  NativeWindowKind windowKindFor(String packageName, NativeWindowKind kind) {
+    if (packageName.trim().isEmpty) return NativeWindowKind.unconfirmed;
+    final String? home = homePackage;
+    if (home != null && home.trim().isNotEmpty && packageName == home) {
+      return NativeWindowKind.home;
+    }
+    return kind;
+  }
+
+  /// `WindowLeavePolicy.confirmsLeave`.
+  bool confirmsLeave(NativeWindowKind kind) =>
+      kind != NativeWindowKind.unconfirmed;
+
   /// `WatcherService` ACTION_SCREEN_OFF receiver.
   void screenOff() {
     screenInteractive = false;
@@ -625,7 +660,15 @@ class StaticNativeChallengeContract {
   /// `WatcherService.reportForeground` from an Accessibility event.
   /// Production calls this natively before Flutter's event sink receives
   /// the same package.
-  void reportForeground(String packageName) {
+  ///
+  /// [windowKind] is the classification production derives from the
+  /// event's window class (`WindowLeavePolicy.classify`). The default
+  /// models an Activity window of the reporting package, i.e. genuine
+  /// navigation; overlays pass [NativeWindowKind.unconfirmed].
+  void reportForeground(
+    String packageName, {
+    NativeWindowKind windowKind = NativeWindowKind.activity,
+  }) {
     if (!enabled) return;
     final bool protected = isProtected(packageName);
     if (!protected &&
@@ -643,12 +686,14 @@ class StaticNativeChallengeContract {
       abandonCandidate = null;
       wakeReauthPackage = packageName;
     } else {
-      final bool transient = isTransientWindow(packageName);
-      // F2: transient windows never forget the wake identity.
-      if (!transient) wakeReauthPackage = null;
+      // H-1 transient OR F4 unconfirmed: the report proves no leave.
+      final bool provesNothing = isTransientWindow(packageName) ||
+          !confirmsLeave(windowKindFor(packageName, windowKind));
+      // F2: such windows never forget the wake identity.
+      if (!provesNothing) wakeReauthPackage = null;
       // F1: only a confirmed genuine leave abandons the ready ticket.
       final PendingLockChallenge? ready = readyChallenge;
-      if (ready != null && !transient && screenInteractive) {
+      if (ready != null && !provesNothing && screenInteractive) {
         if (activityResumed) {
           abandonCandidate = (
             ticket: ready,

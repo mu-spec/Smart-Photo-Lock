@@ -224,6 +224,80 @@ object ChallengeAbandonPolicy {
     }
 }
 
+// -- F4 P1: window-kind confirmation of a genuine leave ----------------------
+
+/**
+ * What one unprotected foreground report proves about the window it came
+ * from. Accessibility reports every window (OEM gesture/screenshot layers,
+ * chat heads, launcher-hosted panels), so the reporting package alone never
+ * proves that the protected app was left. Only [UNCONFIRMED] fails to prove
+ * a leave.
+ */
+enum class ForegroundWindowKind {
+    /** The package of the resolved default Home activity, whatever window. */
+    HOME,
+
+    /**
+     * A UsageEvents activity resume. Activity-level, but historical: it is
+     * the latest resume in the lookback, never proof of the current
+     * foreground, and WatcherService ignores it for 5 s after any
+     * Accessibility event. Treated as leave evidence exactly as before F4.
+     */
+    USAGE_ACTIVITY,
+
+    /** Accessibility class positively resolved to an Activity of the package. */
+    ACTIVITY,
+
+    /** Null/blank class, failed lookup, non-activity window or mismatch. */
+    UNCONFIRMED,
+}
+
+/** PackageManager's answer for a (package, class) Activity lookup. */
+data class ResolvedActivity(val packageName: String, val className: String)
+
+/**
+ * F4 P1. Decides only whether an unprotected, non-transient report may
+ * forget the wake identity (F2) or abandon the ready ticket (F1). It never
+ * touches authorization: every report still reaches
+ * `ProtectionAccessState.observeForeground`, so an UNCONFIRMED window
+ * revokes or starts the grace window exactly like any other change.
+ * Every uncertain answer is UNCONFIRMED, which keeps state (fail closed).
+ */
+object WindowLeavePolicy {
+    fun classify(
+        packageName: String,
+        fromUsageEvents: Boolean,
+        homePackage: String?,
+        windowClass: String?,
+        resolveActivity: (packageName: String, className: String) -> ResolvedActivity?,
+    ): ForegroundWindowKind {
+        if (packageName.isBlank()) return ForegroundWindowKind.UNCONFIRMED
+        // Home comes only from the safe-exit Home resolver, never a name.
+        if (!homePackage.isNullOrBlank() && packageName == homePackage) {
+            return ForegroundWindowKind.HOME
+        }
+        if (fromUsageEvents) return ForegroundWindowKind.USAGE_ACTIVITY
+        if (windowClass.isNullOrBlank()) return ForegroundWindowKind.UNCONFIRMED
+        val resolved = try {
+            resolveActivity(packageName, windowClass)
+        } catch (_: Exception) {
+            null
+        } ?: return ForegroundWindowKind.UNCONFIRMED
+        return if (resolved.packageName == packageName && resolved.className == windowClass) {
+            ForegroundWindowKind.ACTIVITY
+        } else {
+            ForegroundWindowKind.UNCONFIRMED
+        }
+    }
+
+    fun confirmsLeave(kind: ForegroundWindowKind): Boolean =
+        kind != ForegroundWindowKind.UNCONFIRMED
+
+    /** H-1 transient OR F4 unconfirmed: the report can never prove a leave. */
+    fun provesNothing(transient: Boolean, kind: ForegroundWindowKind): Boolean =
+        transient || !confirmsLeave(kind)
+}
+
 // -- F3: fail-closed restore in a fresh WatcherService process ---------------
 
 /**

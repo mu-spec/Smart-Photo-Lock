@@ -41,12 +41,16 @@ class AccessibilityLockService : AccessibilityService() {
         if (packageName == applicationContext.packageName) {
             return // never report our own app
         }
-        // Native recovery receives the same narrowly scoped package-only
-        // signal even when no Flutter EventChannel listener exists.
+        // Native recovery receives the same narrowly scoped package signal
+        // even when no Flutter EventChannel listener exists. F4 P1: the
+        // event's window class (no screen content) lets native code tell an
+        // Activity from an overlay. It stays in native memory: never logged,
+        // persisted or sent to Dart (the sink below gets the package only).
         WatcherService.reportForeground(
             this,
             packageName,
             ForegroundSource.ACCESSIBILITY,
+            event.className?.toString(),
         )
         val sink = eventSink ?: return
         // Mobile-QA diagnostics: trace the real-device pipeline.
