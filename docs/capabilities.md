@@ -127,3 +127,12 @@ Changes to this architecture must retain automated checks for:
   until the user opens Smart App Lock again (Accessibility may need to be
   re-enabled). The app cannot prevent this. Force Stop is therefore not a
   valid process-death (F3) test.
+- **Alternate entry paths** (Phase 6 / M1): Smart App Lock cannot intercept
+  intents sent to other apps. A notification, deep link, share, shortcut or
+  widget entry is enforced when the protected app's Activity reaches the
+  foreground, so the target app may already have received (and acted on) the
+  intent before the shield appears. Notification actions that open no UI,
+  notification content and launcher-rendered widget content are not covered
+  by a foreground lock (notification privacy is PRD Phase 14). Bubbles and
+  show-when-locked or full-screen-intent Activities over the keyguard are not
+  device-verified.

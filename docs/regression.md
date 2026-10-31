@@ -1236,3 +1236,224 @@ Phase 6 — Bypass Hardening, **Milestone 1 — Alternate Entry Paths**:
 notification entry, deep links, share intents, widgets and shortcuts.
 No open security-critical regression is known; the two Phase 5 release
 gates above stay open until verified.
+
+---
+
+# Phase 6 / M1 — Alternate Entry Paths
+
+PRD v2.1, Phase 6 — Bypass Hardening, Milestone 1. Scope, verbatim:
+Notification Entry ("Open protected apps from notifications. Verify
+authentication."), Deep Links ("Test protected applications launched using
+deep links."), Share Intents ("Test protected apps entered through Android
+Share."), Widgets & Shortcuts ("Test supported launcher shortcuts/widgets.").
+Acceptance gate: implement or verify every requirement; run relevant
+automated checks and targeted physical QA; record evidence and unresolved
+risks; do not advance while a security-critical regression remains open.
+
+**Status: implemented and verified by simulated tests only. Physical-device
+QA for this milestone has not been run** (checklist below). The Phase 5
+release gates (F3 process death, successful biometric) remain open and are
+not affected by this milestone.
+
+## How alternate entries are enforced
+
+Android delivers every in-scope entry by resuming an Activity of the target
+package, often inside the caller's task (share targets, deep links).
+Smart App Lock does not and cannot intercept those intents. Enforcement is
+entry-agnostic: the resulting window is a foreground report for the
+protected package (Accessibility `TYPE_WINDOW_STATE_CHANGED`, or the
+UsageEvents `ACTIVITY_RESUMED` fallback), and `WatcherService.reportForeground`
+applies the unchanged native policy (`ProtectionAccessState.observeForeground`,
+pending ticket, shield, challenge promotion). Only `authorizePackage`
+(exact ticket + accepted ready hand-off, after a recorded credential success)
+grants. No code path keys on how an app was launched, so no entry path can
+create a grant. Code review found no missing enforcement for protected apps.
+
+## Finding fixed: Smart App Lock's own exported Activity accepted external navigation
+
+`MainActivity` is exported (launcher entry). The Flutter embedding, by
+default, turns Intent data into a pushed route (deep linking defaults to
+enabled) and reads the `route` extra as the initial route. Any installed app,
+a shortcut-maker launcher shortcut or `am start` could therefore drive this
+app's navigator. Reproduced in simulation before the fix: a deep link pushed
+`/diagnostics/detection` above an on-screen lock challenge; a platform
+initial route opened `/pin/setup` at cold start. No grant was possible
+(credential writes are CR-3-gated; grants need the exact native ticket), so
+this was a hardening issue, not an authorization bypass.
+
+Fix: `MainActivity.shouldHandleDeeplinking() = false` and
+`getInitialRoute() = "/"` (native boundary); `ExternalRouteGuard` consumes
+platform route pushes and `AppRouter.onGenerateInitialRoutes` ignores the
+platform initial route (Dart defense in depth). Back (`popRoute`) and
+in-app `Navigator` use are unchanged. `ACTION_RECOVER_CHALLENGE` is still
+matched against the pending ticket and can only re-raise the shield.
+
+## Pre-commit review finding fixed: launch extras could crash the whole process
+
+Found by source review (Flutter 3.47.7 embedding sources, the workspace
+toolchain; the developer build's Flutter version is not pinned). During
+`super.onCreate`, `FlutterFragmentActivity` reads caller-controlled extras
+from `getIntent()`, and these malformed values throw on the main thread:
+
+- an unknown `cached_engine_id` or `cached_engine_group_id`
+  (`IllegalStateException`);
+- a `background_mode` that is not an enum name (`IllegalArgumentException`);
+- a non-List `dart_entrypoint_args` (`ClassCastException`);
+- a disallowed `dart-flags` value (engine `FATAL`, release allowlist; only
+  when the engine initializes).
+
+The watcher and the Accessibility service run in the same process, so one
+`am start` (or a crafted shortcut) from any app could kill all protection
+until restart. Recovery from that restart is the unverified F3 path, and on
+Android 10+ a crashed Accessibility service can be left disabled. This is
+not an authorization bypass: no grant, route or content results. A physical
+user can already Force Stop (a documented platform limitation), but a
+crash-on-demand also reaches protection when Settings itself is protected,
+and it is available to any installed app.
+
+`background_mode=transparent` exposes nothing: the theme has no
+`windowIsTranslucent`. Shell arguments other than `dart-flags`
+(`start-paused`, `vm-service-port`, ...) target the Dart VM service, which
+release builds do not include. None of this was reproduced on a device.
+
+Fix: `MainActivity.onCreate` replaces `getIntent()` with a rebuilt Intent
+before `super.onCreate`, and `onNewIntent` forwards only the rebuilt Intent.
+The rebuilt Intent keeps only the action. For `ACTION_RECOVER_CHALLENGE` it
+also keeps the two recovery extras, read defensively by `LaunchIntentPolicy`
+and still matched exactly by `RecoveryIntentPolicy`; a hostile bundle drops
+the hint. No caller data, `route` or embedding extras reach Flutter. The
+deep-link and initial-route overrides stay as defense in depth.
+
+## Automated evidence (simulated)
+
+| Check | Result |
+|---|---|
+| Kotlin JVM policy tests | 194 passed (177 existing + 12 `AlternateEntryPathTest.kt` + 5 `LaunchIntentPolicyTest.kt`) |
+| Flutter test suite (full, at implementation) | 1020 passed (993 existing + 27 new), 0 failed, 0 skipped. Not re-run after review |
+| Flutter focused set after the pre-commit review | 334 passed, 0 failed (19 files: the M1 test, now 30 tests, plus every suite that pumps `SmartAppLockApp`, CR-3 enrollment, and PIN/pattern/security/permission UI) |
+| New Flutter tests | 30 passed (`test/regression/alternate_entry_paths_test.dart`) |
+| Native type-check (android-all + Flutter stubs) | PASS (60 classes) |
+| `flutter analyze` | PASS (no issues) |
+| RED before fix | 7 of 7 group C (own-Activity) tests failed on a7b177e; groups A/B passed (existing enforcement) |
+| Mutation checks | 14 / 14 killed (implementation: 3 Dart guard + 3 Kotlin policy; review: 4 launch-sanitizer wiring/policy + 2 more policy + 2 Dart guard lifecycle) |
+
+Covered paths (both the Dart native-contract model and the production Dart
+wiring, plus the Kotlin policy): notification tap from Home and heads-up
+inside another app, notification action without UI, deep link in the caller
+task, ACTION_SEND via the framework chooser, ACTION_SEND_MULTIPLE via the
+Android 14+ IntentResolver, launcher shortcut, widget click; rapid mixed
+entry storms (one ticket, one challenge, no grant); a stale success after a
+different protected entry; entry into protected B from authorized A; grace
+is per package and is never extended by other entries; zero-grace shade
+re-entry; H-2 same-package semantics unchanged; uncorroborated UsageEvents
+cannot revive grace; spoofed recovery intents never match. The Kotlin tests
+replay the policy calls of `reportForeground`; `WatcherService` itself is not
+executed. None of this is device evidence.
+
+## Known limitations and open items
+
+- **No pre-delivery interception (OS limit).** The target Activity receives
+  the intent and may act on it (open a chat, import shared content) before
+  the shield covers it; exposure is bounded by detection latency.
+- **No Activity, no lock (OS limit).** Notification content and actions that
+  open no UI (inline reply, mark-read, media controls) and widget content
+  rendered by the launcher are not covered by a foreground lock. Notification
+  privacy is PRD Phase 14.
+- **Destination after authentication (functional, unchanged).** After success
+  the host calls `launchApp` (launcher intent + `NEW_TASK`). For entries that
+  run in the caller's task (share, many deep links) this is expected to open
+  the protected app's own task instead of returning to the entered screen;
+  some notification/shortcut task layouts may also get the launcher Activity
+  on top. Never a security issue (authorization is per package); not changed
+  in this milestone because changing post-authentication navigation needs
+  device validation. Device QA below records the actual behaviour.
+- **UNVERIFIED surfaces:** bubbles (Android 11+), full-screen-intent /
+  show-when-locked Activities over the keyguard, direct-share targets in the
+  chooser, Recents thumbnails of a caller task that holds a protected share
+  Activity (Phase 6 M2).
+- **Observation for Phase 6 M2 (not changed in M1).** Our own package is
+  never a foreground transition (5D design). Own reports are dropped in
+  `AccessibilityLockService`, `WatcherService.reportForeground` and the
+  UsageEvents selector. So while Smart App Lock's own UI is in front,
+  `observeForeground` does not run: no leave is recorded, grace 0 does not
+  revoke, and the away clock does not start. Back-navigation between the
+  protected task and our task may produce a direct switch with no other
+  report. That happens when `launchApp` started the protected app from our
+  Activity: Back from its root shows our shell, and Back again may return
+  to the protected task. Re-entry would then be allowed without a
+  credential. The bound is the unextended session deadline (2 minutes from
+  the last same-package observation, no slides while our UI is in front).
+  This is not an entry bypass, because it needs a legitimate unlock first.
+  Device reachability is UNVERIFIED. It belongs to M2 task-switching
+  hardening.
+- **Destination is never caller-chosen.** The launch-extra sanitizer drops
+  data and extras from external intents, so Smart App Lock always opens at
+  its shell (or the challenge).
+
+## Physical-device QA required for milestone acceptance
+
+Use a build that contains this change. Each step passes only if all of the
+following hold:
+
+- the protected app is challenged before its content is usable;
+- wrong credentials do not open it;
+- cancel/Back exits to Home;
+- correct credentials open it.
+
+Also record where the user lands after success (destination preserved or
+not). Report each step separately even when steps are run in one session.
+Grace is 0 unless a step says otherwise.
+
+**S1 — Notification entry**
+1. Device unlocked on Home: tap the protected app's notification in the
+   shade. Enter a wrong PIN, then Back (expect Home). Tap again and enter
+   the correct credential.
+2. Inside an unprotected app, tap the heads-up notification. Then tap a
+   notification repeatedly: expect exactly one challenge and no grant.
+3. Use inline reply or mark-read: expect no challenge. Record this as an OS
+   limitation (Phase 14).
+4. Run this step separately, with a secure keyguard. Turn the screen off,
+   tap the notification on the lock screen and unlock the device: expect
+   the challenge before content.
+
+**S2 — Caller-task entries (deep link, share)**
+1. Deep link from a browser, or
+   `adb shell am start -a android.intent.action.VIEW -d <url>`.
+2. Gallery → Share (one item) → protected app.
+3. Gallery → Share (several items) → protected app.
+
+**S3 — Launcher shortcuts, widget and grace**
+1. Use a long-press shortcut and a pinned shortcut, with rapid repeats.
+2. Tap the widget. Record whether widget content is visible while locked.
+3. Set grace > 0. Authorize via a shortcut and go Home. Re-enter by
+   notification inside grace (expect allowed), then after grace (expect a
+   challenge). Enter a different protected app inside A's grace (expect a
+   challenge).
+
+**S4 — Own-Activity external-intent negatives (mandatory, separate, adb)**
+
+This scenario cannot be combined with S1–S3: it feeds hostile input to
+Smart App Lock itself, and any failure is a process death that would
+invalidate the other results. It is not F3 evidence.
+
+Before starting, note `adb shell pidof com.smartapplock.app` and clear the
+crash log with `adb logcat -b crash -c`. Run every command three times:
+
+- cold: Smart App Lock's task swiped from Recents (do not force-stop);
+- warm: app open;
+- during a challenge: open a protected app, then run the command while the
+  challenge is shown.
+
+Commands (each prefixed with `adb shell am start -n com.smartapplock.app/.MainActivity`):
+`-d /pin/setup`, `--es route /pin/setup`, `--es cached_engine_id x`,
+`--es cached_engine_group_id x`, `--es background_mode bogus`,
+`--es background_mode transparent`, `--es dart_entrypoint_args x`,
+`--es dart-flags --bogus`.
+
+Expected for every command:
+
+- only the shell or the challenge is shown, and the window stays opaque;
+- `adb logcat -b crash -d` is empty;
+- the PID is unchanged, except after a cold swipe-away on OEMs that kill
+  the process;
+- opening a protected app afterwards is challenged immediately.

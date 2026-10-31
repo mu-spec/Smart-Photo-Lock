@@ -135,4 +135,17 @@ abstract final class AppRouter {
         return null;
     }
   }
+
+  /// Phase 6 / M1 (Alternate Entry Paths): the app always starts at the
+  /// shell. [initialRouteName] can come from outside the app — Android
+  /// intent data (Flutter deep linking) or Flutter's `route` intent extra
+  /// on the exported launcher Activity — so it is deliberately ignored.
+  /// Lock challenges are presented by `LockChallengeHost` from the native
+  /// pending ticket, never from a route name.
+  static List<Route<dynamic>> onGenerateInitialRoutes(
+    String initialRouteName,
+  ) =>
+      <Route<dynamic>>[
+        onGenerateRoute(const RouteSettings(name: RouteNames.home))!,
+      ];
 }

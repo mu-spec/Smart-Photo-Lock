@@ -29,6 +29,9 @@ import java.lang.ref.WeakReference
 class MainActivity : FlutterFragmentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Phase 6 / M1 review: must run before super.onCreate, which is where
+        // the Flutter embedding reads launch extras from getIntent().
+        setIntent(sanitizedLaunchIntent(intent))
         super.onCreate(savedInstanceState)
         currentActivity = WeakReference(this)
         acceptRecoveryIntent(intent, "onCreate")
@@ -46,9 +49,10 @@ class MainActivity : FlutterFragmentActivity() {
     }
 
     override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        setIntent(intent)
-        acceptRecoveryIntent(intent, "onNewIntent")
+        val launch = sanitizedLaunchIntent(intent)
+        super.onNewIntent(launch)
+        setIntent(launch)
+        acceptRecoveryIntent(launch, "onNewIntent")
         // singleTop/reorder-to-front may deliver a new intent without
         // recreating Flutter. Keep the native retry path armed while the
         // existing host pulls and reconstructs its pending challenge.
@@ -69,6 +73,54 @@ class MainActivity : FlutterFragmentActivity() {
         }
         super.onDestroy()
     }
+
+    /**
+     * Phase 6 / M1 (Alternate Entry Paths): this Activity is exported (it is
+     * the launcher entry), so any app, launcher shortcut or `am start` can
+     * send it an explicit intent with arbitrary data and extras. By default
+     * the Flutter embedding turns Intent data into a pushed route (deep
+     * linking is enabled unless the manifest opts out) and reads the `route`
+     * extra as the initial route, which lets an external caller drive this
+     * app's navigator, for example push a setup or diagnostics screen above
+     * an active lock challenge.
+     *
+     * External intents never choose a destination here: deep linking is off
+     * and the initial route is always the shell. Challenge routing comes only
+     * from the native pending ticket; ACTION_RECOVER_CHALLENGE is matched
+     * against that ticket in [acceptRecoveryIntent] and can only re-raise the
+     * shield, never authorize. The Dart side ignores platform route pushes as
+     * defense in depth (`ExternalRouteGuard`, `AppRouter.onGenerateInitialRoutes`).
+     */
+    override fun shouldHandleDeeplinking(): Boolean = false
+
+    /**
+     * Phase 6 / M1 review: rebuilds an external launch Intent so the Flutter
+     * embedding never sees caller-supplied data or extras. Those include
+     * `cached_engine_id`, `cached_engine_group_id`, `background_mode`,
+     * `dart_entrypoint_args`, `route` and the shell arguments such as
+     * `dart-flags`. A malformed value would otherwise throw during startup
+     * and kill the whole process, watcher and Accessibility service included.
+     * Only the action is kept, plus the two recovery extras for
+     * [ACTION_RECOVER_CHALLENGE] (see [LaunchIntentPolicy]). Our own
+     * [foregroundForRecovery] path sets its trusted Intent directly.
+     */
+    private fun sanitizedLaunchIntent(source: Intent?): Intent {
+        val retained = LaunchIntentPolicy.retain(
+            action = source?.action,
+            recoveryAction = ACTION_RECOVER_CHALLENGE,
+            readRecoveryPackage = { source?.getStringExtra(EXTRA_PACKAGE_NAME) },
+            readRecoveryGeneration = {
+                source?.getLongExtra(EXTRA_GENERATION, -1L) ?: -1L
+            },
+        )
+        return Intent(this, MainActivity::class.java).apply {
+            action = retained.action
+            retained.recoveryPackage?.let { putExtra(EXTRA_PACKAGE_NAME, it) }
+            retained.recoveryGeneration?.let { putExtra(EXTRA_GENERATION, it) }
+        }
+    }
+
+    override fun getInitialRoute(): String = INITIAL_ROUTE
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -96,6 +148,8 @@ class MainActivity : FlutterFragmentActivity() {
 
     companion object {
         private const val TAG = "SmartAppLockActivity"
+        /** The shell route (`RouteNames.home`); see [getInitialRoute]. */
+        private const val INITIAL_ROUTE = "/"
         const val ACTION_RECOVER_CHALLENGE =
             "com.smartapplock.app.action.RECOVER_CHALLENGE"
         const val EXTRA_PACKAGE_NAME = "protectedPackageName"

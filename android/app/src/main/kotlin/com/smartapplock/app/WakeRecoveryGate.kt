@@ -44,6 +44,51 @@ object RecoveryIntentPolicy {
         pending.generation == generation
 }
 
+/**
+ * Phase 6 / M1 review: decides what MainActivity keeps from an incoming
+ * launch Intent before the Flutter embedding reads it.
+ *
+ * MainActivity is exported, so any caller can attach extras the embedding
+ * reads during startup (`cached_engine_id`, `cached_engine_group_id`,
+ * `background_mode`, `dart_entrypoint_args`, `dart-flags` and the other
+ * shell arguments). Malformed values throw inside `super.onCreate`, and the
+ * crash takes down the whole process, including the watcher and the
+ * Accessibility service. Only the action is kept. The two recovery extras
+ * are kept only for [MainActivity.ACTION_RECOVER_CHALLENGE], and they are
+ * read defensively. They can still only re-raise the shield through
+ * [RecoveryIntentPolicy], never authorize.
+ */
+object LaunchIntentPolicy {
+    data class Retained(
+        val action: String?,
+        val recoveryPackage: String?,
+        val recoveryGeneration: Long?,
+    )
+
+    fun retain(
+        action: String?,
+        recoveryAction: String,
+        readRecoveryPackage: () -> String?,
+        readRecoveryGeneration: () -> Long,
+    ): Retained {
+        if (action != recoveryAction) return Retained(action, null, null)
+        return try {
+            val packageName = readRecoveryPackage()?.takeIf { it.isNotBlank() }
+            val generation = readRecoveryGeneration()
+            if (packageName == null || generation < 0L) {
+                Retained(action, null, null)
+            } else {
+                Retained(action, packageName, generation)
+            }
+        } catch (_: RuntimeException) {
+            // Unparcelling a hostile extras bundle (for example
+            // BadParcelableException or ClassCastException) must not crash
+            // the process; the recovery hint is simply dropped.
+            Retained(action, null, null)
+        }
+    }
+}
+
 /** A route is safe to hand off only when it is current and not keyguard-covered. */
 object ChallengeReadyPolicy {
     fun canHandOff(

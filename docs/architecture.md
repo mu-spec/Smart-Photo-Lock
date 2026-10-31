@@ -1964,3 +1964,36 @@ Known limits (not device-verified):
 
 Tests (JVM, SIMULATED model of the report chain over the real policies):
 `android/app/src/test/.../GraceRenewalClosureTest.kt`.
+
+## Phase 6 / M1 — Alternate entry paths
+
+Enforcement of protected apps is entry-agnostic. A notification tap, deep
+link, share target, launcher shortcut or widget click reaches the protected
+app as an Activity resume of that package (often in the caller's task), which
+the detectors report like any other foreground change; the native policy,
+ticket, shield and exact-ticket authorization are unchanged. Smart App Lock
+never intercepts another app's intents and nothing keys on the launch path.
+
+Own exported Activity hardening:
+
+```
+external intent (data / extras) ─▶ MainActivity
+  ├─ onCreate / onNewIntent              Intent rebuilt BEFORE super:
+  │                                       action only (+ recovery hint via
+  │                                       LaunchIntentPolicy); no data, no
+  │                                       embedding extras (cached_engine_id,
+  │                                       background_mode, dart-flags, ...)
+  ├─ shouldHandleDeeplinking() = false   no data → route push
+  ├─ getInitialRoute() = "/"             `route` extra ignored
+  └─ ACTION_RECOVER_CHALLENGE            matched to the pending ticket;
+                                          shield only, never a grant
+Dart (defense in depth)
+  ├─ ExternalRouteGuard                  platform route pushes consumed
+  └─ AppRouter.onGenerateInitialRoutes   always starts at the shell
+```
+
+Lock challenges come only from `LockChallengeHost` and the native pending
+ticket. Back and in-app navigation are unchanged. Tests:
+`android/app/src/test/.../AlternateEntryPathTest.kt`,
+`android/app/src/test/.../LaunchIntentPolicyTest.kt`,
+`test/regression/alternate_entry_paths_test.dart` (both SIMULATED).

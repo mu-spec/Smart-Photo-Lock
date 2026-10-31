@@ -31,6 +31,24 @@ class _SmartAppLockAppState extends State<SmartAppLockApp> {
   /// Held on the State so the key identity survives rebuilds.
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
 
+  /// Phase 6 / M1: consumes platform route pushes (see [ExternalRouteGuard]).
+  final ExternalRouteGuard _externalRouteGuard = ExternalRouteGuard();
+
+  @override
+  void initState() {
+    super.initState();
+    // Registered here, before MaterialApp's WidgetsApp registers its own
+    // observer (a parent's initState runs before its children mount), so
+    // the guard sees every platform route push first.
+    WidgetsBinding.instance.addObserver(_externalRouteGuard);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(_externalRouteGuard);
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final Widget app = MaterialApp(
@@ -42,6 +60,8 @@ class _SmartAppLockAppState extends State<SmartAppLockApp> {
       themeMode: ThemeMode.system,
       initialRoute: RouteNames.home,
       onGenerateRoute: AppRouter.onGenerateRoute,
+      // Phase 6 / M1: a platform-supplied initial route is ignored.
+      onGenerateInitialRoutes: AppRouter.onGenerateInitialRoutes,
     );
 
     final AppContainer? container = widget.container;
@@ -58,4 +78,25 @@ class _SmartAppLockAppState extends State<SmartAppLockApp> {
           );
     return wrapped;
   }
+}
+
+/// Phase 6 / Milestone 1 (Alternate Entry Paths) — defense in depth for
+/// Smart App Lock's own exported launcher Activity.
+///
+/// Any app, launcher shortcut or `am start` can send `MainActivity` an
+/// explicit intent with arbitrary data. With Flutter deep linking enabled
+/// (the embedding default) the intent data arrives here as a
+/// `pushRoute` / `pushRouteInformation` navigation message, and
+/// `WidgetsApp` would `pushNamed` it — for example a setup or diagnostics
+/// screen above an active lock challenge. `MainActivity` disables deep
+/// linking natively; this observer is the Dart-side backstop.
+///
+/// Every platform route push is reported as handled and ignored. Nothing
+/// in this app uses platform route pushes: lock challenges are presented
+/// only by `LockChallengeHost` from the native pending ticket, and screens
+/// navigate in-process with `Navigator`. Back (`popRoute`) is unaffected.
+class ExternalRouteGuard with WidgetsBindingObserver {
+  @override
+  Future<bool> didPushRouteInformation(RouteInformation routeInformation) =>
+      Future<bool>.value(true);
 }
