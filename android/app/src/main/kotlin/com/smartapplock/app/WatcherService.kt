@@ -549,6 +549,13 @@ class WatcherService : Service() {
                 packageName = packageName,
                 protected = protected,
                 nowElapsedMs = now,
+                // U1-R: an uncorroborated protected UsageEvents report is
+                // still enforced but never revives grace or slides H-2.
+                mayRenew = usageLeaveCorroboration.mayRenewAuthorization(
+                    packageName = packageName,
+                    protected = protected,
+                    fromUsageEvents = source == ForegroundSource.USAGE_EVENTS,
+                ) { accessibilityEnabledOrUnknown(context) },
             )
             if (!protected || decision == ProtectionAccessState.Decision.ALLOW) {
                 resetRecovery()

@@ -340,6 +340,19 @@ class UsageLeaveCorroboration {
         if (lastAccessibilityAppPackage == packageName) return true
         return !accessibilityEnabled()
     }
+
+    /**
+     * U1-R: whether a foreground report may renew an authorization (grace
+     * re-entry or H-2 slide). Only a protected UsageEvents report that the
+     * Accessibility evidence above does not corroborate is refused; it is
+     * still enforced, so it can revoke or challenge but never renew.
+     */
+    fun mayRenewAuthorization(
+        packageName: String,
+        protected: Boolean,
+        fromUsageEvents: Boolean,
+        accessibilityEnabled: () -> Boolean,
+    ): Boolean = !protected || !fromUsageEvents || corroborates(packageName, accessibilityEnabled)
 }
 
 // -- F3: fail-closed restore in a fresh WatcherService process ---------------

@@ -55,7 +55,10 @@ object ProtectionAccessState {
      * presentation must fail closed for it.
      *
      * A transition away applies immediate re-lock or starts the configured
-     * grace window.
+     * grace window. OD6: only an authorization still valid at departure
+     * (`now < activeUntilElapsedMs`) gets a grace window; one already at or
+     * past its deadline is removed, so a leave and quick return can never
+     * revive an expired session.
      *
      * H-2 sliding inactivity window: a same-package observation of the
      * current foreground package whose authorization exists, is not away
@@ -66,19 +69,27 @@ object ProtectionAccessState {
      * else extends an authorization: an observation at or after the
      * deadline challenges and removes it, so an expired authorization is
      * never revived, and sliding never extends a grace window.
+     *
+     * U1-R: [mayRenew] is false for a protected UsageEvents report that the
+     * latest Accessibility evidence does not corroborate. Such a report is
+     * still enforced (it may revoke or challenge) but it can neither re-admit
+     * an away authorization within grace nor slide the H-2 deadline.
      */
     @Synchronized
     fun observeForeground(
         packageName: String,
         protected: Boolean,
         nowElapsedMs: Long = SystemClock.elapsedRealtime(),
+        mayRenew: Boolean = true,
     ): Decision {
         val previous = currentForegroundPackage
         if (previous != packageName) {
             currentForegroundPackage = packageName
             val previousAuthorization = previous?.let(authorizations::get)
             if (previousAuthorization != null) {
-                if (gracePeriodMs == 0L) {
+                if (gracePeriodMs == 0L ||
+                    nowElapsedMs >= previousAuthorization.activeUntilElapsedMs
+                ) {
                     authorizations.remove(previous)
                 } else {
                     previousAuthorization.awaySinceElapsedMs = nowElapsedMs
@@ -90,7 +101,7 @@ object ProtectionAccessState {
         val authorization = authorizations[packageName] ?: return Decision.CHALLENGE
         val awaySince = authorization.awaySinceElapsedMs
         if (awaySince != null) {
-            if (gracePeriodMs > 0L && nowElapsedMs - awaySince < gracePeriodMs) {
+            if (mayRenew && gracePeriodMs > 0L && nowElapsedMs - awaySince < gracePeriodMs) {
                 authorization.awaySinceElapsedMs = null
                 authorization.activeUntilElapsedMs =
                     nowElapsedMs + authorization.sessionWindowMs
@@ -102,7 +113,7 @@ object ProtectionAccessState {
         if (nowElapsedMs < authorization.activeUntilElapsedMs) {
             // H-2: only continued presence in the SAME foreground package
             // slides the still-valid window; a transition never does.
-            if (previous == packageName) {
+            if (previous == packageName && mayRenew) {
                 slidDeadline(nowElapsedMs, authorization)?.let {
                     authorization.activeUntilElapsedMs = it
                 }

@@ -1901,10 +1901,56 @@ Known limits (not device-verified):
   (fail closed) until the service reports.
 - A late Accessibility report for X that coincides with a stale UsageEvents X
   still confirms the leave.
-- Unresolved, out of scope: U1-R. A stale protected UsageEvents report while
-  another app is visible can revive a grace window and slide H-2 (grace > 0),
-  in native and Dart. Recorded for focused QA / OD6 review.
+- U1-R (a stale protected UsageEvents report reviving grace or sliding H-2)
+  is addressed natively by the OD6/U1-R closure section below.
 
 Tests (JVM, SIMULATED model of the report chain over the real policies):
 `android/app/src/test/.../UsageLeaveCorroborationTest.kt`,
 `WindowLeavePolicyTest.kt` (`u1c*`).
+
+## Phase 5 closure — OD6 / U1-R: grace never revives an expired or uncorroborated authorization
+
+Problems (both need grace > 0; the default grace is immediate):
+- OD6: grace was armed on departure for any existing authorization, so an
+  authorization whose deadline had already passed unobserved (one quiet P
+  screen for longer than the 60 s usage lookback plus the 120 s window) was
+  re-admitted, with a fresh session, by a leave and a return within grace.
+- U1-R: a protected UsageEvents report while another app is visible (a stale
+  latest resume) re-admitted the away authorization within grace and slid H-2
+  on every poll, although `UsageLeaveCorroboration` contradicted it.
+
+Policy (native only, `ProtectionAccessState` + `WatcherService` +
+`WakeRecoveryGate.kt`):
+- On departure, only an authorization still valid (`now < activeUntil`)
+  starts a grace window; at or past its deadline it is removed.
+- `observeForeground(..., mayRenew)`: `WatcherService` passes
+  `UsageLeaveCorroboration.mayRenewAuthorization`, which is false only for a
+  protected UsageEvents report that the latest non-transient Accessibility
+  package does not corroborate while Accessibility is enabled (or its state is
+  unreadable). Such a report is still enforced: it may revoke or challenge,
+  but it never re-admits an away authorization and never slides H-2.
+- Unchanged: `observeForeground` runs for every report; genuine within-grace
+  re-entry, same-app sliding, the Accessibility-off fallback, the session
+  window, grace values, biometric, credential and Dart.
+- Native is the enforcing gate: a native CHALLENGE persists a pending ticket,
+  shows the shield and foregrounds the challenge; the shield is released only
+  by an exact-ticket ready hand-off or when no ticket is pending, and only
+  `authorizePackage` (exact ticket + hand-off) grants. Dart's own session and
+  grace state stays advisory and is not changed.
+
+Known limits (not device-verified):
+- With grace > 0 a stale protected UsageEvents report now produces the same
+  exitable false challenge over the visible app that grace 0 already did.
+- Enabled-but-silent Accessibility (or a fresh process before its first
+  report): protected UsageEvents reports cannot renew, so grace re-entry and
+  H-2 sliding fall back to challenges (fail closed).
+- After one quiet P screen outlasts the session (about 60 s usage lookback +
+  120 s window), Home and a return within grace now challenge, as an in-app
+  navigation already did.
+- Dart still revives its own expired session within grace; this is advisory
+  only, because the native CHALLENGE gates presentation.
+- The native gate still requires the overlay permission (unchanged): without
+  it, recovery records an error and cannot cover protected content.
+
+Tests (JVM, SIMULATED model of the report chain over the real policies):
+`android/app/src/test/.../GraceRenewalClosureTest.kt`.
