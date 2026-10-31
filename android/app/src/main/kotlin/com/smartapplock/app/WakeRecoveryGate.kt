@@ -241,7 +241,8 @@ enum class ForegroundWindowKind {
      * A UsageEvents activity resume. Activity-level, but historical: it is
      * the latest resume in the lookback, never proof of the current
      * foreground, and WatcherService ignores it for 5 s after any
-     * Accessibility event. Treated as leave evidence exactly as before F4.
+     * Accessibility event. U1-C: leave evidence only when corroborated (see
+     * [UsageLeaveCorroboration]); an uncorroborated resume is [UNCONFIRMED].
      */
     USAGE_ACTIVITY,
 
@@ -267,11 +268,15 @@ object WindowLeavePolicy {
     fun classify(
         packageName: String,
         fromUsageEvents: Boolean,
+        usageCorroborated: Boolean,
         homePackage: String?,
         windowClass: String?,
         resolveActivity: (packageName: String, className: String) -> ResolvedActivity?,
     ): ForegroundWindowKind {
         if (packageName.isBlank()) return ForegroundWindowKind.UNCONFIRMED
+        // U1-C: an uncorroborated UsageEvents result proves nothing, not even
+        // Home. Accessibility reports ignore this flag.
+        if (fromUsageEvents && !usageCorroborated) return ForegroundWindowKind.UNCONFIRMED
         // Home comes only from the safe-exit Home resolver, never a name.
         if (!homePackage.isNullOrBlank() && packageName == homePackage) {
             return ForegroundWindowKind.HOME
@@ -296,6 +301,45 @@ object WindowLeavePolicy {
     /** H-1 transient OR F4 unconfirmed: the report can never prove a leave. */
     fun provesNothing(transient: Boolean, kind: ForegroundWindowKind): Boolean =
         transient || !confirmsLeave(kind)
+}
+
+// -- U1-C: corroboration of UsageEvents leave evidence ------------------------
+
+/**
+ * U1-C. A UsageEvents result is the latest activity resume in a 60 s
+ * lookback, never proof of the current foreground: an OEM backend can keep
+ * returning a package that is not on screen. While Accessibility is enabled,
+ * an unprotected UsageEvents report may prove a leave (F1/F2) only when the
+ * latest non-transient Accessibility report named the same package. With
+ * Accessibility disabled, UsageEvents stays the fallback leave evidence
+ * (unchanged). Authorization is never affected: every report still reaches
+ * `ProtectionAccessState.observeForeground`.
+ *
+ * Process memory only: the package of the latest non-transient Accessibility
+ * report. Never persisted, logged or sent to Dart; no window class is kept.
+ * A fresh process starts empty, so nothing is corroborated while
+ * Accessibility is enabled (fail closed: the identity and the ticket stay).
+ *
+ * `accessibilityEnabled` is the Settings-listed state, not proof that the
+ * service is connected and delivering events. An enabled-but-silent service
+ * only yields more UNCONFIRMED usage leaves (kept state), never fewer.
+ */
+class UsageLeaveCorroboration {
+    @Volatile
+    private var lastAccessibilityAppPackage: String? = null
+
+    /** Records [packageName] unless it is H-1 transient (System UI, IME) or blank. */
+    fun onAccessibilityReport(packageName: String, transient: Boolean) {
+        if (transient || packageName.isBlank()) return
+        lastAccessibilityAppPackage = packageName
+    }
+
+    /** [accessibilityEnabled] is read only when no matching report exists. */
+    fun corroborates(packageName: String, accessibilityEnabled: () -> Boolean): Boolean {
+        if (packageName.isBlank()) return false
+        if (lastAccessibilityAppPackage == packageName) return true
+        return !accessibilityEnabled()
+    }
 }
 
 // -- F3: fail-closed restore in a fresh WatcherService process ---------------

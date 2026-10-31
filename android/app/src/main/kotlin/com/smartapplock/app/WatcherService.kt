@@ -283,6 +283,8 @@ class WatcherService : Service() {
             private set
         @Volatile private var activeInstance: WatcherService? = null
         @Volatile private var lastAccessibilityElapsedMs = 0L
+        // U1-C: latest non-transient Accessibility package, process memory only.
+        private val usageLeaveCorroboration = UsageLeaveCorroboration()
         private val recoveryGate = WakeRecoveryGate(RECOVERY_RETRY_MS)
         private val safeExitGate = SafeExitGate()
         private val safeExitHandler = Handler(Looper.getMainLooper())
@@ -426,6 +428,20 @@ class WatcherService : Service() {
             // never logged, persisted or forwarded to Dart.
             windowClass: String? = null,
         ) {
+            if (source == ForegroundSource.ACCESSIBILITY &&
+                packageName != context.packageName
+            ) {
+                // U1-C: remember only the package of the latest non-transient
+                // Accessibility report (process memory; never persisted,
+                // logged or sent to Dart). It never affects authorization.
+                usageLeaveCorroboration.onAccessibilityReport(
+                    packageName,
+                    ChallengeAbandonPolicy.isTransientWindow(
+                        packageName,
+                        defaultInputMethodPackage(context),
+                    ),
+                )
+            }
             if (!ProtectionStateStore.isEnabled(context) ||
                 packageName == context.packageName
             ) {
@@ -751,6 +767,12 @@ class WatcherService : Service() {
             val kind = WindowLeavePolicy.classify(
                 packageName = packageName,
                 fromUsageEvents = source == ForegroundSource.USAGE_EVENTS,
+                // U1-C: a stale UsageEvents result must not prove a leave
+                // while Accessibility is enabled and has not reported it.
+                usageCorroborated = source != ForegroundSource.USAGE_EVENTS ||
+                    usageLeaveCorroboration.corroborates(packageName) {
+                        accessibilityEnabledOrUnknown(context)
+                    },
                 homePackage = resolveHomePackage(context),
                 windowClass = windowClass.takeIf { source == ForegroundSource.ACCESSIBILITY },
                 resolveActivity = { pkg, cls ->
@@ -761,6 +783,17 @@ class WatcherService : Service() {
             )
             Log.d(TAG, "window kind=$kind for $packageName")
             return kind
+        }
+
+        /**
+         * U1-C: the Settings-listed Accessibility state (not proof that the
+         * service is connected). An unreadable state counts as enabled, so an
+         * uncorroborated UsageEvents leave keeps state (fail closed).
+         */
+        private fun accessibilityEnabledOrUnknown(context: Context): Boolean = try {
+            AccessibilityStatusChannel.isAccessibilityEnabled(context)
+        } catch (_: Exception) {
+            true
         }
 
         private fun defaultInputMethodPackage(context: Context): String? = try {

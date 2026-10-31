@@ -1864,3 +1864,47 @@ Verification (run by the developer):
 - `flutter test test/protection/foreground_app_monitor_test.dart --concurrency=1`
 - `flutter test test/ui/lock_challenge_test.dart --concurrency=1`
 - `flutter test --concurrency=1`
+
+## Phase 5 / M2 U1-C — stale UsageEvents must be corroborated to prove a leave
+
+Problem (U1): the native fix #4 arbitration only ignores UsageEvents for 5 s
+after an Accessibility event, but a UsageEvents result is the latest
+activity resume in a 60 s lookback and is re-reported every poll. After the
+5 s window a stale unprotected package (e.g. the background VPN package seen
+on an Oppo A12) was a confirmed F4 `USAGE_ACTIVITY` leave: it erased the
+protected wake re-auth identity (so SCREEN_OFF created no wake ticket) and
+could abandon a ready challenge ticket.
+
+Policy (native only, `WatcherService` + `WakeRecoveryGate.kt`):
+- `UsageLeaveCorroboration` keeps, in process memory only, the package of the
+  latest non-transient Accessibility report (System UI, `android` and the
+  IME are not recorded). It is never persisted, logged or sent to Dart; no
+  window class is kept.
+- An unprotected UsageEvents report is leave evidence only when
+  corroborated: Accessibility is disabled (Settings
+  `ENABLED_ACCESSIBILITY_SERVICES`, existing helper) OR the latest
+  non-transient Accessibility package is the same package. Otherwise
+  `WindowLeavePolicy.classify` returns `UNCONFIRMED`: the wake identity and
+  the pending/ready ticket are kept. This includes a UsageEvents Home report;
+  an Accessibility Home report is still always a confirmed leave.
+- Unchanged: `ProtectionAccessState.observeForeground` still runs for every
+  report (an uncorroborated stale report still revokes or starts grace),
+  protected UsageEvents reports still challenge, the 5 s window, grace, H-2,
+  safe exit, SCREEN_OFF/ON, F3 restart evidence, Dart.
+
+Known limits (not device-verified):
+- Accessibility disabled: UsageEvents remains the fallback and U1 remains.
+- "Enabled" is the Settings state, not proof the service is connected; an
+  enabled-but-silent service keeps more identities (false, exitable wake
+  challenges), never fewer.
+- A fresh process starts with no Accessibility package: uncorroborated
+  (fail closed) until the service reports.
+- A late Accessibility report for X that coincides with a stale UsageEvents X
+  still confirms the leave.
+- Unresolved, out of scope: U1-R. A stale protected UsageEvents report while
+  another app is visible can revive a grace window and slide H-2 (grace > 0),
+  in native and Dart. Recorded for focused QA / OD6 review.
+
+Tests (JVM, SIMULATED model of the report chain over the real policies):
+`android/app/src/test/.../UsageLeaveCorroborationTest.kt`,
+`WindowLeavePolicyTest.kt` (`u1c*`).

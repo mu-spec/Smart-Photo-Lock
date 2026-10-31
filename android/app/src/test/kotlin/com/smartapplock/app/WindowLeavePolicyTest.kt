@@ -15,6 +15,11 @@ import org.junit.Test
  * resolves to an Activity of the reporting package. Everything else is
  * UNCONFIRMED and keeps the wake identity and the ready ticket.
  *
+ * U1-C: a UsageEvents resume proves a leave only when it is corroborated
+ * (Accessibility disabled, or the latest non-transient Accessibility report
+ * named the same package). `corroborated = true` below is the pre-U1-C
+ * meaning, so the F4 expectations are unchanged.
+ *
  * JVM only. These exercise [WindowLeavePolicy] and its composition with the
  * existing H-1/F2/F3 pure policies; they do not run `WatcherService`,
  * PackageManager or Accessibility, and are not device evidence.
@@ -48,9 +53,11 @@ class WindowLeavePolicyTest {
         usage: Boolean = false,
         homePackage: String? = home,
         lookup: (String, String) -> ResolvedActivity? = pm,
+        corroborated: Boolean = true,
     ) = WindowLeavePolicy.classify(
         packageName = pkg,
         fromUsageEvents = usage,
+        usageCorroborated = corroborated,
         homePackage = homePackage,
         windowClass = cls,
         resolveActivity = lookup,
@@ -186,11 +193,15 @@ class WindowLeavePolicyTest {
 
     // -- Composition with H-1 F1/F2 ---------------------------------------------
 
-    private fun provesNothing(pkg: String, cls: String?, usage: Boolean = false) =
-        WindowLeavePolicy.provesNothing(
-            transient = ChallengeAbandonPolicy.isTransientWindow(pkg, ime),
-            kind = classify(pkg, cls, usage),
-        )
+    private fun provesNothing(
+        pkg: String,
+        cls: String?,
+        usage: Boolean = false,
+        corroborated: Boolean = true,
+    ) = WindowLeavePolicy.provesNothing(
+        transient = ChallengeAbandonPolicy.isTransientWindow(pkg, ime),
+        kind = classify(pkg, cls, usage, corroborated = corroborated),
+    )
 
     @Test
     fun anUnconfirmedOverlayKeepsTheWakeIdentityAndTheReadyTicket() {
@@ -354,6 +365,107 @@ class WindowLeavePolicyTest {
         assertEquals(
             ProtectionAccessState.Decision.CHALLENGE,
             ProtectionAccessState.observeForeground(locked, true, 16_000L),
+        )
+    }
+
+    // -- U1-C: UsageEvents leave evidence needs corroboration -------------------
+
+    @Test
+    fun u1cAnUncorroboratedUsageResumeIsUnconfirmedWithoutALookup() {
+        for (pkg in listOf(notes, gesture, "com.cloudflare.onedotonedotonedotone")) {
+            assertEquals(
+                pkg,
+                ForegroundWindowKind.UNCONFIRMED,
+                classify(pkg, null, usage = true, corroborated = false),
+            )
+            assertTrue(pkg, provesNothing(pkg, null, usage = true, corroborated = false))
+        }
+        assertEquals(0, lookups)
+    }
+
+    @Test
+    fun u1cACorroboratedUsageResumeIsStillActivityLevelLeaveEvidence() {
+        assertEquals(
+            ForegroundWindowKind.USAGE_ACTIVITY,
+            classify(notes, null, usage = true, corroborated = true),
+        )
+        assertFalse(provesNothing(notes, null, usage = true, corroborated = true))
+    }
+
+    @Test
+    fun u1cUsageHomeNeedsCorroborationButAccessibilityHomeIsAlwaysHome() {
+        assertEquals(
+            ForegroundWindowKind.UNCONFIRMED,
+            classify(home, null, usage = true, corroborated = false),
+        )
+        assertEquals(
+            ForegroundWindowKind.HOME,
+            classify(home, null, usage = true, corroborated = true),
+        )
+        // The flag describes UsageEvents only: Accessibility Home is unchanged.
+        assertEquals(ForegroundWindowKind.HOME, classify(home, null, corroborated = false))
+        assertEquals(
+            ForegroundWindowKind.HOME,
+            classify(home, "x", lookup = throwing, corroborated = false),
+        )
+    }
+
+    @Test
+    fun u1cCorroborationNeverChangesAccessibilityClassification() {
+        for (corroborated in listOf(true, false)) {
+            assertEquals(
+                ForegroundWindowKind.ACTIVITY,
+                classify(notes, notesActivity, corroborated = corroborated),
+            )
+            assertEquals(
+                ForegroundWindowKind.UNCONFIRMED,
+                classify(gesture, gestureOverlay, corroborated = corroborated),
+            )
+            assertEquals(
+                ForegroundWindowKind.UNCONFIRMED,
+                classify(notes, null, corroborated = corroborated),
+            )
+        }
+    }
+
+    @Test
+    fun u1cABlankUsagePackageIsUnconfirmedWhateverTheCorroboration() {
+        for (corroborated in listOf(true, false)) {
+            assertEquals(
+                ForegroundWindowKind.UNCONFIRMED,
+                classify(" ", null, usage = true, corroborated = corroborated),
+            )
+        }
+    }
+
+    @Test
+    fun u1cAnUncorroboratedUsageLeaveKeepsTheWakeIdentityAndTheReadyTicket() {
+        for (pkg in listOf(notes, home)) {
+            val nothing = provesNothing(pkg, null, usage = true, corroborated = false)
+            assertTrue(pkg, nothing)
+            assertFalse(pkg, ChallengeAbandonPolicy.mayForgetWakeIdentity(false, nothing))
+            assertEquals(
+                pkg,
+                ReadyTicketAction.KEEP,
+                ChallengeAbandonPolicy.readyTicketAction(false, nothing, true, true),
+            )
+            assertEquals(
+                pkg,
+                ReadyTicketAction.KEEP,
+                ChallengeAbandonPolicy.readyTicketAction(false, nothing, false, true),
+            )
+        }
+    }
+
+    @Test
+    fun u1cAnUncorroboratedUsageReportStillRevokesAuthorization() {
+        // observeForeground stays unconditional: the window kind is irrelevant.
+        ProtectionAccessState.setGracePeriod(0L)
+        ProtectionAccessState.authorize(locked, 300_000L, 1_000L)
+        ProtectionAccessState.observeForeground(notes, false, 7_000L)
+        assertEquals(
+            ProtectionAccessState.Decision.CHALLENGE,
+            ProtectionAccessState.observeForeground(locked, true, 7_100L),
         )
     }
 }
