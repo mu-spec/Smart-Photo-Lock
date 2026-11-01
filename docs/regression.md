@@ -1969,3 +1969,58 @@ supported (Android 13+), H9 recorded. H7 stays UNVERIFIED until a device
 with completed biometric enrollment is available; it is not a mandatory
 Oppo acceptance test. Phase 5 F3 and biometric
 success remain UNVERIFIED release gates.
+
+# Phase 7 / M2 — Protection Health dashboard & repair
+
+PRD v2.1, Phase 7 / Milestone 2. Design: `docs/architecture.md` (Phase 7 /
+M2); repair limits: `docs/capabilities.md` (Fix Protection limits). With M2
+the Home screen and the details screen refresh health; the M1 note "no
+production caller refreshes health yet" no longer applies. Automatic refresh
+on return from Android Settings and the health regression round are M3.
+
+## Automated evidence (Phase 7 / M2)
+
+| Suite | Tests | Evidence level | Covers |
+| --- | --- | --- | --- |
+| `test/ui/health/health_presentation_test.dart` | 15 | production Dart (pure + controller over simulated services) | every issue code has wording, a category label and a repair plan; setup / user choice / revoked / stopped / restricted / uncertain wording; overlay never granted vs revoked; no forbidden claims; failed or missing report never SECURE; stale report → ATTENTION; repair outcome resolved / still present / unknown (stale counts as unknown); controller: failure hides the old report, late results after dispose ignored, overlapping refreshes coalesced |
+| `test/ui/health/protection_health_dashboard_test.dart` | 28 | widgets over simulated services (`AppContainer.inMemory`) | MainShell keeps Home / Apps / Security State across tab switches and probes exactly once per return to Home; Home SECURE / ATTENTION REQUIRED / PROTECTION OFFLINE from the real M1 report; first-time setup and no-protected-apps worded neutrally; revoked worded as turned off; UNKNOWN never SECURE; no container → unavailable; loading state; refresh only on show / tab return / tap (no polling); disposed screen; details order by severity with advisories separate; repairs: Security tab, Apps tab, existing Overlay / Accessibility / Usage Access setup screens, allowlisted Settings links, false/failed open → manual-path notice, restart = one synchronization per tap, failed fresh check never reported as success, biometric guidance has no button; viewing and refreshing grants nothing; full app: a PIN challenge opens on top of the details screen and only the exact PIN creates a session; opening Android Settings from a repair creates no session and authorizes nothing; a pattern challenge over the details screen rejects a wrong pattern and grants only on the exact one; Restart protection and a Settings repair keep a pending ticket and never call authorize, mark-ready, show or hide challenge |
+| `test/protection/health/protection_health_monitor_test.dart` | 18 (+1) | production Dart over simulated services | adds: biometric probes skipped when biometric unlock is off (report unchanged) |
+| `test/services/watcher_service_test.dart` | 10 (+4) | method-channel contract (mocked channel) | `openProtectionSettings` sends only the allowlisted id; null → not opened; platform error / missing plugin → failure; opening Settings changes no protection state |
+| `android/app/src/test/.../ProtectionSettingsTargetsTest.kt` | 5 | production Kotlin + source contract | allowlist of 3 targets; unknown target → nothing; notifications API 26 gate; App info fallback; no grant, exemption, enrollment or protection call in the opener |
+
+Mutation checks (Dart): 8/8 killed: repair outcome always "resolved", stale
+fresh check accepted as resolved, failed Settings open reported as opened,
+failed refresh keeps showing the previous report, no refresh when Home tab
+becomes visible, two synchronizations per restart tap, Settings repair
+claiming success, plus one mutant killed only at compile time (replaced by a
+valid one). The restart test gained a `configureCalls` assertion after the
+two-synchronizations mutant first survived. Integration gate: 4/4 killed
+(Home State recreated on tab switch, Security State recreated, Home probing
+when hidden, Restart protection revoking authorizations); the "probing when
+hidden" mutant was caught only by the new MainShell test.
+
+Not covered automatically: real Android Settings intents per OEM, Talkback,
+large font scaling on device, the real watcher restart on ColorOS.
+
+## Phase 7 / M2 device QA (adds to the M1 H-cases; not executed)
+
+Run with the M1 H-cases in the combined Phase 6 + Phase 7 round. Each case
+reuses the H setup; tap **Check again** on Home or the details screen after
+returning from Android Settings (automatic refresh on return is M3).
+
+| # | With | Steps | Expected |
+| --- | --- | --- | --- |
+| D1 | H1 | Healthy setup, open Home, open details | Home: SECURE (calm); details: no issues, scope note says it is not a guarantee |
+| D2 | H2 | Revoke overlay, return, Check again; Fix protection → Allow display over apps → grant → back | PROTECTION OFFLINE, "Display over other apps was turned off"; after grant the notice says the fresh check no longer reports it; Home SECURE |
+| D3 | H3 | Turn Accessibility off; then also Usage Access off; repair via the setup screens | Accessibility off: ATTENTION REQUIRED (usage path still detects); both off: PROTECTION OFFLINE "cannot see which app is open"; restore → SECURE after refresh |
+| D4 | H4 / H5 | Android "Restricted" battery / service stopped by Android | ATTENTION REQUIRED, "Restricted by Android"; Open app settings opens App info; ColorOS guidance shown; "Restart protection" runs once per tap and the notice reflects the fresh check (record result, OEM-dependent) |
+| D5 | H6 | Battery Saver on | status unchanged; shown only under Advisories; Battery Saver settings opens |
+| D6 | H8 (Android 13+) | Deny notifications | ATTENTION REQUIRED; Open notification settings opens the app's notification page; allow → Check again → cleared |
+| D7 | security | With protected app P: open details, open any Android Settings link, press Home, open P; then return to Smart App Lock | P shows the lock challenge; no unlock without PIN/pattern; Smart App Lock shows the dashboard, P is not unlocked |
+| D8 | H7 (compatible device only) | Remove enrolled fingerprints | Advisory only, no button, status unchanged. UNVERIFIED on the Oppo (cannot enroll) |
+
+Also record dark mode and the largest font size on Home and the details
+screen (text readable, buttons ≥ 48 dp). Minimum to accept M2 on device:
+D1–D5 and D7 on the Oppo, D6 where supported; D8 stays UNVERIFIED until a
+compatible device is available. Phase 5 F3 and biometric success remain
+UNVERIFIED release gates; Phase 6 is not device-verified.

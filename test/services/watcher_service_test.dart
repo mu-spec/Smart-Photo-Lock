@@ -215,4 +215,89 @@ void main() {
       expect(service.pendingChallenge, 'com.example.locked');
     });
   });
+
+  group('openProtectionSettings (Phase 7 / M2)', () {
+    test('sends only the allowlisted target id and reports the native answer',
+        () async {
+      final List<MethodCall> calls = <MethodCall>[];
+      messenger.setMockMethodCallHandler(channel, (MethodCall call) async {
+        calls.add(call);
+        return (call.arguments as Map<Object?, Object?>)['target'] !=
+            'battery_saver';
+      });
+      final service = MethodChannelWatcherService();
+
+      for (final ProtectionSettingsTarget target
+          in ProtectionSettingsTarget.values) {
+        final result = await service.openProtectionSettings(target);
+        expect(result.isSuccess, isTrue);
+        expect(
+          result.valueOrNull,
+          target != ProtectionSettingsTarget.batterySaver,
+        );
+      }
+
+      expect(calls.map((MethodCall c) => c.method).toSet(),
+          <String>{'openProtectionSettings'});
+      expect(
+        calls.map((MethodCall c) => c.arguments).toList(),
+        <Object?>[
+          <String, Object?>{'target': 'notifications'},
+          <String, Object?>{'target': 'app_details'},
+          <String, Object?>{'target': 'battery_saver'},
+        ],
+      );
+    });
+
+    test('a null native answer is "not opened", never success', () async {
+      messenger.setMockMethodCallHandler(
+          channel, (MethodCall call) async => null);
+      final service = MethodChannelWatcherService();
+
+      final result = await service
+          .openProtectionSettings(ProtectionSettingsTarget.appDetails);
+
+      expect(result.valueOrNull, isFalse);
+    });
+
+    test('a platform error or missing plugin is a failure', () async {
+      messenger.setMockMethodCallHandler(channel, (MethodCall call) async {
+        throw PlatformException(code: 'boom');
+      });
+      final service = MethodChannelWatcherService();
+      expect(
+        (await service
+                .openProtectionSettings(ProtectionSettingsTarget.notifications))
+            .isFailure,
+        isTrue,
+      );
+
+      messenger.setMockMethodCallHandler(channel, null);
+      expect(
+        (await service
+                .openProtectionSettings(ProtectionSettingsTarget.notifications))
+            .isFailure,
+        isTrue,
+      );
+    });
+
+    test('opening Settings changes no protection state (static fake)',
+        () async {
+      final service = StaticWatcherService()..running = true;
+
+      final result = await service
+          .openProtectionSettings(ProtectionSettingsTarget.appDetails);
+
+      expect(result.valueOrNull, isTrue);
+      expect(service.openedSettings, <ProtectionSettingsTarget>[
+        ProtectionSettingsTarget.appDetails,
+      ]);
+      expect(service.authorizedPackages, isEmpty);
+      expect(service.startCalls, 0);
+      expect(service.stopCalls, 0);
+      expect(service.configureCalls, 0);
+      expect(service.authorizePackageCalls, 0);
+      expect(service.revokeAllAuthorizationsCalls, 0);
+    });
+  });
 }

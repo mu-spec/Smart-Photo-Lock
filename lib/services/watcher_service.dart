@@ -96,6 +96,25 @@ class ProtectionEngineHealth {
   final int? sdkInt;
 }
 
+/// Phase 7 / M2: the only Android Settings screens the health dashboard
+/// may open directly (native allowlist `ProtectionSettingsTargets`).
+/// Overlay, Accessibility and Usage Access use their existing setup screens.
+enum ProtectionSettingsTarget {
+  /// This app's notification settings (App info below API 26).
+  notifications('notifications'),
+
+  /// This app's App info screen (battery / background controls live here).
+  appDetails('app_details'),
+
+  /// The system Battery Saver screen.
+  batterySaver('battery_saver');
+
+  const ProtectionSettingsTarget(this.id);
+
+  /// Wire identifier sent to native code.
+  final String id;
+}
+
 /// Bridge to the native lifecycle and recovery watcher.
 ///
 /// Native code owns the earliest detector-to-shield transition even while
@@ -149,4 +168,10 @@ abstract interface class WatcherService {
 
   /// Current native enforcement health for truthful baseline UI.
   Future<Result<ProtectionEngineHealth>> getHealth();
+
+  /// Phase 7 / M2: opens one allowlisted Android Settings screen after an
+  /// explicit user tap. Resolves `true` when Android started the screen.
+  /// Grants nothing and changes no protection state; only fresh health
+  /// signals can show whether the user changed the setting.
+  Future<Result<bool>> openProtectionSettings(ProtectionSettingsTarget target);
 }

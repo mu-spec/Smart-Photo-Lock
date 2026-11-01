@@ -26,13 +26,19 @@ class _Biometrics implements BiometricService {
   bool hardware = true;
   bool enrolled = true;
   int authenticateCalls = 0;
+  int probeCalls = 0;
 
   @override
-  Future<Result<bool>> isSupported() async => Result.success(hardware);
+  Future<Result<bool>> isSupported() async {
+    probeCalls++;
+    return Result.success(hardware);
+  }
 
   @override
-  Future<Result<Set<BiometricKind>>> availableKinds() async =>
-      Result.success(<BiometricKind>{if (enrolled) BiometricKind.strong});
+  Future<Result<Set<BiometricKind>>> availableKinds() async {
+    probeCalls++;
+    return Result.success(<BiometricKind>{if (enrolled) BiometricKind.strong});
+  }
 
   @override
   Future<Result<bool>> authenticate({
@@ -349,6 +355,28 @@ void main() {
     expect(after.issues.single.code, HealthIssueCode.biometricUnavailable);
     expect(events.length, 2, reason: 'the configuration change is emitted');
     await sub.cancel();
+  });
+
+  test('biometric probes run only when biometric unlock is enabled (M2)',
+      () async {
+    final _Rig rig = await _Rig.configured();
+    final ProtectionHealthMonitor m = rig.monitor();
+    final ProtectionHealthReport off = await m.refresh();
+    expect(rig.biometrics.probeCalls, 0, reason: 'disabled in app: no probe');
+    expect(off.components[HealthComponent.biometric],
+        ComponentStatus.disabledByUser);
+    expect(off.state, ProtectionHealthState.secure);
+    expect(
+      (await rig.container.auth.updateBiometricOptions(
+        BiometricOptions.defaults,
+      ))
+          .isSuccess,
+      isTrue,
+    );
+    rig.biometrics.enrolled = false;
+    final ProtectionHealthReport on = await m.refresh();
+    expect(rig.biometrics.probeCalls, 2, reason: 'enabled: hardware + kinds');
+    expect(on.issues.single.code, HealthIssueCode.biometricUnavailable);
   });
 
   group('native health wire format', () {

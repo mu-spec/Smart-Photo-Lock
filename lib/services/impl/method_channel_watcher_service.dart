@@ -121,6 +121,23 @@ class MethodChannelWatcherService implements WatcherService {
     }
   }
 
+  @override
+  Future<Result<bool>> openProtectionSettings(
+    ProtectionSettingsTarget target,
+  ) async {
+    try {
+      final bool? opened = await _channel.invokeMethod<bool>(
+        'openProtectionSettings',
+        <String, Object?>{'target': target.id},
+      );
+      return Result.success(opened ?? false);
+    } on PlatformException catch (e) {
+      return Result.failure(e);
+    } on MissingPluginException catch (e) {
+      return Result.failure(e);
+    }
+  }
+
   Future<Result<void>> _invokeVoid(
     String method, [
     Map<String, dynamic>? arguments,

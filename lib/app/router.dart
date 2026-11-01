@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../ui/screens/diagnostics/detection_diagnostics_screen.dart';
+import '../ui/screens/health/protection_health_screen.dart';
 import '../ui/screens/pattern/pattern_change_screen.dart';
 import '../ui/screens/pattern/pattern_setup_screen.dart';
 import '../ui/screens/pattern/pattern_unlock_screen.dart';
@@ -56,6 +57,10 @@ abstract final class RouteNames {
   /// Detection diagnostics (Phase 5B): temporary developer screen that
   /// verifies foreground detection on a device.
   static const String detectionDiagnostics = '/diagnostics/detection';
+
+  /// Protection Health details and repair (Phase 7 / M2). Pops with a
+  /// main-shell tab index when a repair continues on another tab.
+  static const String protectionHealth = '/protection/health';
 }
 
 /// Typed route generator consumed by `MaterialApp.onGenerateRoute`.
@@ -124,6 +129,11 @@ abstract final class AppRouter {
         return MaterialPageRoute<bool>(
           settings: settings,
           builder: (BuildContext context) => const PermissionSetupScreen(),
+        );
+      case RouteNames.protectionHealth:
+        return MaterialPageRoute<int>(
+          settings: settings,
+          builder: (BuildContext context) => const ProtectionHealthScreen(),
         );
       case RouteNames.detectionDiagnostics:
         return MaterialPageRoute<dynamic>(

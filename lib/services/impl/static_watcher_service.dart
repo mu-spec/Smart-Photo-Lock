@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import '../../utilities/result.dart';
 import '../pending_lock_challenge.dart';
 import '../watcher_service.dart';
@@ -36,8 +38,18 @@ class StaticWatcherService implements WatcherService {
   bool? ignoringBatteryOptimizations;
   int? sdkInt;
 
+  /// Phase 7 / M2: Settings screens opened via [openProtectionSettings]
+  /// (in order) and the simulated outcome (`false` = Android could not
+  /// start the screen).
+  final List<ProtectionSettingsTarget> openedSettings =
+      <ProtectionSettingsTarget>[];
+  bool settingsOpenResult = true;
+
   /// When non-null, [getHealth] fails with this error (bridge failure).
   Object? getHealthError;
+
+  /// When non-null, [getHealth] waits for it (a slow platform channel).
+  Completer<void>? getHealthGate;
   int getHealthCalls = 0;
   int startCalls = 0;
   int stopCalls = 0;
@@ -162,8 +174,18 @@ class StaticWatcherService implements WatcherService {
   }
 
   @override
+  Future<Result<bool>> openProtectionSettings(
+    ProtectionSettingsTarget target,
+  ) async {
+    openedSettings.add(target);
+    return Result.success(settingsOpenResult);
+  }
+
+  @override
   Future<Result<ProtectionEngineHealth>> getHealth() async {
     getHealthCalls++;
+    final Completer<void>? gate = getHealthGate;
+    if (gate != null) await gate.future;
     final Object? error = getHealthError;
     if (error != null) {
       return Result.failure(error);

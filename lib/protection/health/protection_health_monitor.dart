@@ -127,8 +127,14 @@ class ProtectionHealthMonitor {
     final ProtectionEngineHealth? native = await _read(_watcher.getHealth);
 
     final bool? biometricEnabled = credentials?.hasEnrolled(AuthType.biometric);
-    final bool? hardware = await _read(_biometrics.isSupported);
-    final Set<BiometricKind>? kinds = await _read(_biometrics.availableKinds);
+    // Phase 7 / M2: with biometric unlock turned off in the app the engine
+    // reports `disabled_by_user` whatever the hardware says, so the
+    // platform biometric probes are skipped (no needless call per refresh).
+    final bool probeBiometrics = biometricEnabled != false;
+    final bool? hardware =
+        probeBiometrics ? await _read(_biometrics.isSupported) : null;
+    final Set<BiometricKind>? kinds =
+        probeBiometrics ? await _read(_biometrics.availableKinds) : null;
 
     final HealthSignals signals = HealthSignals(
       observedAt: observedAt,

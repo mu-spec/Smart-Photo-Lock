@@ -187,3 +187,21 @@ SECURE means every observable core signal was positively seen in a fresh
 snapshot. It is not a guarantee against every Android bypass: OEM power
 managers, force-stop and other behaviour outside the public APIs cannot be
 observed.
+
+## Fix Protection limits (Phase 7 / M2)
+
+Repairs only open screens; the user decides there. Smart App Lock never
+grants a permission, requests a battery-optimization exemption or launches
+biometric enrollment.
+
+| Issue | What the app can do | What it cannot do |
+| --- | --- | --- |
+| Overlay / Accessibility / Usage Access | open the existing setup screen, which opens the Android Settings page | grant the capability |
+| Notifications (Android 13+) | open the app's notification settings (App info if unavailable) | allow notifications |
+| Android "Restricted" background | open App info (Battery lives there on AOSP) | change the restriction; reach OEM power managers (for example ColorOS), which have no public API: guidance only, names vary |
+| Battery Saver | open Battery Saver settings (optional) | nothing is required |
+| Fingerprint not enrolled | guidance only | open enrollment (and the Oppo test device cannot complete it) |
+| Protection service stopped / shield not ready / native protection off | re-run the existing protection synchronization once per tap | keep Android or the OEM from stopping it again |
+
+Whether each OEM build resolves these Settings screens is device-dependent
+and UNVERIFIED until the combined device QA round.

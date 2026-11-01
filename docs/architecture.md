@@ -2149,3 +2149,91 @@ methods, `markCapabilityEverGranted` or the biometric prompt. Native
 Tests: `test/protection/health/` (engine: production pure Dart; monitor:
 production Dart over simulated services) and
 `android/app/src/test/.../ProtectionHealthSignalsTest.kt`.
+
+## Phase 7 / M2 — Protection Health dashboard & repair
+
+PRD v2.1, Phase 7 / Milestone 2: Health Dashboard, Issue Details, Fix
+Protection. The UI reads the ONE shared `AppContainer.protectionHealth`
+monitor (Phase 7 / M1); it adds no second health classification.
+
+```
+HomeScreen (tab 0, isActive from MainShell)
+  └─ ProtectionHealthController ──┐   (per screen, view state only)
+ProtectionHealthScreen (/protection/health)
+  └─ ProtectionHealthController ──┴─▶ ProtectionHealthMonitor.refresh()/latest()
+                                        └─ ProtectionHealthEngine (M1)
+HealthPresentation: report → headline/tone, issue → wording/category/repair plan
+```
+
+**Home status mapping** (`HealthPresentation.status`, driven only by the
+report's state and its top issue's M1 `category`):
+
+| Report | Headline | Tone | Message gist |
+| --- | --- | --- | --- |
+| SECURE | SECURE | success | all checks passed on the last check |
+| ATTENTION_REQUIRED | ATTENTION REQUIRED | warning | something needs review (or: last check out of date) |
+| OFFLINE, top = `protection_not_configured` / setup | PROTECTION OFFLINE | neutral | setup is not finished |
+| OFFLINE, top category `user_choice` | PROTECTION OFFLINE | neutral | no apps are protected right now |
+| OFFLINE, top category `setup` (permission never granted) | PROTECTION OFFLINE | danger | a needed permission is not allowed yet |
+| OFFLINE, otherwise (revoked / stopped) | PROTECTION OFFLINE | danger | protection is not working right now |
+| no report yet / checking | Checking protection… | neutral | — |
+| refresh failed or no health source | Status unavailable | warning | could not check; does not mean protection works |
+
+A failed refresh hides the previous report, so an old SECURE is never shown
+after a failure. `latest()` re-applies the 30 s age rule on every build, and
+one timer per report re-renders the screen when it turns stale (it never
+probes). No copy claims "100% secure", "unhackable" or "impossible to
+bypass"; the details screen states that SECURE is not a guarantee against
+every bypass.
+
+**Issue details.** Every M1 issue in engine order (offline → attention →
+advisory; advisories in their own section). Each card shows a category
+label (`Setup needed`, `Your choice`, `Permission turned off`, `Stopped`,
+`Restricted by Android`, `Cannot confirm`, `Advisory`), a title and
+explanation from `code` + `cause`, optional guidance and at most one repair
+button. Raw native errors (`lastError`) and `detail` values are not shown.
+
+**Fix protection** (`HealthPresentation.repair`, from the M1 `action`):
+
+| M1 action | Repair | Mechanism |
+| --- | --- | --- |
+| `configure_protection` | Set up PIN or pattern | pops to the Security tab (existing CR-3 flow) |
+| `choose_protected_apps` | Choose apps | pops to the Apps tab |
+| `open_overlay_settings` | Allow display over apps | existing Overlay setup screen (disclose → Settings → recheck) |
+| `open_accessibility_settings` | Open Accessibility setup | existing Accessibility setup screen (prominent disclosure kept) |
+| `open_usage_access_settings` | Open Usage Access setup | existing Usage Access setup screen |
+| `open_notification_settings` | Open notification settings | `openProtectionSettings(notifications)` |
+| `open_app_battery_settings` | Open app settings + OEM guidance | `openProtectionSettings(app_details)` |
+| `open_battery_saver_settings` | Battery Saver settings (optional) | `openProtectionSettings(battery_saver)` |
+| `open_smart_app_lock` | Restart protection | one `ProtectionBootstrap.synchronize()` per tap (the existing sync used by Security/Apps) |
+| `refresh` | Check again | coalesced monitor refresh |
+| `open_biometric_settings`, none | guidance only | no button; the app never launches biometric enrollment |
+
+`openProtectionSettings` (WatcherChannel) opens one of three allowlisted
+Settings screens (`ProtectionSettingsTargets`): app notification settings
+(API 26+, App info fallback), this app's App info, Battery Saver. It grants
+nothing and touches no protection state; no permission, manifest or SDK
+change.
+
+**Outcome rule.** After an in-app setup screen or a restart, the screen runs
+one fresh check and reports "no longer reports" only when a fresh, non-stale
+report lacks the same issue code + component; otherwise "still reports" or
+"could not check". After opening Android Settings it only says to come back
+and tap Check again (automatic refresh on return is Phase 7 / M3).
+
+**Refresh boundaries (M2).** One coalesced refresh when Home first appears,
+when the Home tab becomes visible again, when the details screen opens or
+closes, after a repair that returns in-app, and on Check again. No polling,
+no app-resume refresh (M3), no background work.
+
+**Monitor refinement.** The monitor skips the two platform biometric probes
+when biometric unlock is off in the app; the engine already reports
+`disabled_by_user` there, so the report is unchanged.
+
+**Security boundary.** Health UI cannot authorize, revoke, clear or consume a
+ticket, or change PIN/pattern, biometric, lockout, hand-off or shield logic.
+The only state-changing repair is the existing protection synchronization,
+which configures native protection from the encrypted Dart settings
+(fail-closed on read failure) and starts the watcher if needed. The new
+route is in-app only (Phase 6 / M1 ignores platform route pushes); lock
+challenges still come only from `LockChallengeHost` and the native ticket.

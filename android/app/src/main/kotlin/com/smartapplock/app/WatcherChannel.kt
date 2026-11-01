@@ -3,7 +3,9 @@ package com.smartapplock.app
 import android.Manifest
 import android.app.ActivityManager
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import io.flutter.embedding.engine.FlutterEngine
@@ -72,6 +74,9 @@ object WatcherChannel {
                             ProtectionStateStore.takePendingChallenge(activity)?.toMap(),
                         )
                         "getHealth" -> result.success(health(activity))
+                        "openProtectionSettings" -> result.success(
+                            openProtectionSettings(activity, call.argument<String>("target")),
+                        )
                         else -> result.notImplemented()
                     }
                 } catch (e: Exception) {
@@ -79,6 +84,31 @@ object WatcherChannel {
                     result.error("watcher_error", e.message, null)
                 }
             }
+    }
+
+    /**
+     * Phase 7 / M2: user-initiated repair link. Opens one allowlisted
+     * Settings screen ([ProtectionSettingsTargets]) and reports whether it
+     * started. Never changes protection state, tickets or permissions.
+     */
+    private fun openProtectionSettings(activity: MainActivity, target: String?): Boolean {
+        var spec = ProtectionSettingsTargets.spec(target, Build.VERSION.SDK_INT)
+        while (spec != null) {
+            try {
+                val intent = Intent(spec.action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                if (spec.packageExtra) {
+                    intent.putExtra(ProtectionSettingsTargets.EXTRA_APP_PACKAGE, activity.packageName)
+                }
+                if (spec.packageData) {
+                    intent.data = Uri.fromParts("package", activity.packageName, null)
+                }
+                activity.startActivity(intent)
+                return true
+            } catch (e: Exception) {
+                spec = spec.fallback
+            }
+        }
+        return false
     }
 
     private fun health(activity: MainActivity): Map<String, Any?> {

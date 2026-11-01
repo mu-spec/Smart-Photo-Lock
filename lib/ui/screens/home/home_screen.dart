@@ -1,29 +1,92 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
+import '../../../app/app_scope.dart';
 import '../../../app/router.dart';
 import '../../../design_system/design_system.dart';
+import '../../../protection/health/protection_health_engine.dart';
+import '../health/health_presentation.dart';
+import '../health/protection_health_controller.dart';
 
 /// Home tab — welcome header, protection status, and quick access to the
 /// other four sections. Built entirely on the design system.
-class HomeScreen extends StatelessWidget {
-  const HomeScreen({super.key, this.onNavigate});
+///
+/// Phase 7 / M2: the status card is driven by the shared Phase 7 / M1
+/// Protection Health monitor. Health is refreshed (one coalesced probe)
+/// when Home first appears, when the Home tab becomes visible again, when
+/// the details screen closes, and on "Check again". There is no polling.
+class HomeScreen extends StatefulWidget {
+  const HomeScreen({super.key, this.onNavigate, this.isActive = true});
 
   /// Tab-switch callback provided by the shell so the quick-access tiles
   /// can jump straight to the matching tab.
   final ValueChanged<int>? onNavigate;
 
+  /// Whether the Home tab is the visible tab (the shell keeps every tab
+  /// alive in an IndexedStack). Becoming active triggers one refresh.
+  final bool isActive;
+
   /// Exact label shown in the header chip (also asserted in widget tests).
   static const String phaseLabel = 'Phase 5 Complete';
 
   @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  ProtectionHealthController? _health;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_health != null) return;
+    _health = ProtectionHealthController(
+      AppScope.read(context)?.protectionHealth,
+    )..addListener(_onHealthChanged);
+    if (widget.isActive) unawaited(_health!.refresh());
+  }
+
+  @override
+  void didUpdateWidget(HomeScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isActive && !oldWidget.isActive) {
+      unawaited(_health?.refresh());
+    }
+  }
+
+  void _onHealthChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    _health?.removeListener(_onHealthChanged);
+    _health?.dispose();
+    super.dispose();
+  }
+
+  Future<void> _openDetails() async {
+    final int? tab =
+        await Navigator.of(context).pushNamed<int>(RouteNames.protectionHealth);
+    if (!mounted) return;
+    if (tab != null) widget.onNavigate?.call(tab);
+    unawaited(_health?.refresh());
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final ValueChanged<int>? onNavigate = widget.onNavigate;
     return SafeArea(
       child: ListView(
         padding: DsInsets.screen,
         children: <Widget>[
           const _Header(),
           const SizedBox(height: DsSpacing.xl),
-          const _StatusCard(),
+          _ProtectionStatusCard(
+            controller: _health,
+            onOpenDetails: _openDetails,
+          ),
           const SizedBox(height: DsSpacing.xl),
           const DsSectionTitle('Quick access'),
           const SizedBox(height: DsSpacing.md),
@@ -149,59 +212,87 @@ class _Header extends StatelessWidget {
   }
 }
 
-/// Live summary of the protection state (placeholder values until the
-/// security and app-list phases feed real data).
-class _StatusCard extends StatelessWidget {
-  const _StatusCard();
+/// Phase 7 / M2 — PROTECTION STATUS card, driven by the M1 health report.
+class _ProtectionStatusCard extends StatelessWidget {
+  const _ProtectionStatusCard({
+    required this.controller,
+    required this.onOpenDetails,
+  });
 
-  @override
-  Widget build(BuildContext context) {
-    return DsCard(
-      title: 'Protection status',
-      child: Column(
-        children: <Widget>[
-          _StatusRow(
-            label: 'Unlock PIN',
-            trailing: const SecurityStatusPill(level: SecurityLevel.notSet),
-          ),
-          _StatusRow(
-            label: 'Protected apps',
-            trailing: const DsStatusPill(label: '0'),
-          ),
-          _StatusRow(
-            label: 'Active profile',
-            trailing: const DsStatusPill(label: 'None'),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _StatusRow extends StatelessWidget {
-  const _StatusRow({required this.label, required this.trailing});
-
-  final String label;
-  final Widget trailing;
+  final ProtectionHealthController? controller;
+  final VoidCallback onOpenDetails;
 
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
     final DsPalette palette = context.dsColors;
-    return Padding(
-      padding: DsInsets.row,
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: <Widget>[
-          Text(
-            label,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: palette.textSecondary,
+    final ProtectionHealthController? health = controller;
+    final ProtectionHealthReport? report = health?.report;
+    final bool checking = health?.checking ?? false;
+    final HealthStatusView status = HealthPresentation.status(
+      report,
+      checking: checking,
+      failed: health?.failed ?? false,
+    );
+    final List<HealthIssue> problems = (report?.issues ?? const <HealthIssue>[])
+        .where((HealthIssue i) => i.severity != HealthIssueSeverity.advisory)
+        .toList();
+    final bool available = health?.available ?? false;
+    final String? actionLabel = !available
+        ? null
+        : report == null
+            ? 'View details'
+            : report.state == ProtectionHealthState.secure
+                ? 'View details'
+                : 'Fix protection';
+
+    return Column(
+      key: const Key('home_protection_status'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(
+          'PROTECTION STATUS',
+          style: theme.textTheme.labelMedium?.copyWith(
+            color: palette.textSecondary,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 1.1,
+          ),
+        ),
+        const SizedBox(height: DsSpacing.sm),
+        Semantics(
+          container: true,
+          label: 'Protection status: ${status.title}',
+          child: SecurityStatusBanner(
+            level: status.level,
+            title: status.title,
+            message: status.message,
+            actionLabel: actionLabel,
+            onAction: actionLabel == null ? null : onOpenDetails,
+            footer: problems.isEmpty
+                ? null
+                : Text(
+                    problems.length == 1
+                        ? HealthPresentation.issue(problems.first).title
+                        : '${HealthPresentation.issue(problems.first).title} '
+                            '(+${problems.length - 1} more)',
+                    key: const Key('home_top_issue'),
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+          ),
+        ),
+        if (available)
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              key: const Key('home_check_again'),
+              onPressed: checking ? null : () => unawaited(health!.refresh()),
+              icon: const Icon(Icons.refresh, size: 18),
+              label: Text(checking ? 'Checking…' : 'Check again'),
             ),
           ),
-          trailing,
-        ],
-      ),
+      ],
     );
   }
 }
