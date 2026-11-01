@@ -1678,3 +1678,220 @@ screen off / on with wake re-lock, grace 0 and grace > 0, and M1 S1 step 1.
 
 Essential steps that cannot be simulated: S5.1, S5.4, S6.1, S6.2, S6.4,
 S7.1.
+
+---
+
+# Phase 6 / M3 — Background Resilience & Bypass Regression
+
+PRD v2.1, Phase 6 / Milestone 3: Battery Saver ("test Android
+battery-saving modes"), Background Restrictions ("test manufacturer /
+background restrictions") and Bypass Regression Suite ("document all
+supported bypass scenarios and expected behavior"). Detecting and surfacing
+restrictions in the UI is PRD Phase 7 / M1 ("Background Restriction
+Health"); battery-impact measurement and OEM stress testing are Phase 17.
+Neither is implemented here.
+
+Status: **code + SIMULATED evidence; physical-device QA pending (combined
+Phase 6 round below). Not device-verified.**
+
+## What background restrictions can stop
+
+| Component | Hosted by | Stopped by | Effect on enforcement |
+| --- | --- | --- | --- |
+| Accessibility detection (`AccessibilityLockService` → `WatcherService.reportForeground`, process-scoped) | system binding | force stop (disables the service); OEM kill (system re-binds, unverified on ColorOS) | earliest detector gone; usage polling (if running) remains |
+| Watcher (`WatcherService`, foreground service): UsageEvents poll, SCREEN_OFF/ON/USER_PRESENT receiver, recovery retry | the service instance | process death (`START_STICKY` restart, F3); AOSP 9+ "Restricted" background usage (FGS removed from the foreground and stopped once idle); OEM power managers (unverified) | screen-off re-lock and wake recovery are native only while it runs; Dart's lock trigger repeats them while the Flutter engine is alive |
+| Authorization mirror (`ProtectionAccessState`) | process memory | process death | erased → fail closed |
+| Overlay shield | process (WindowManager) | process death, overlay permission revoked | recovery re-arms; challenge still required |
+| Boot restart (`ProtectionBootReceiver`) | manifest | force stop; OEM auto-launch denial (ColorOS, unverified) | protection starts when Accessibility binds or the app opens |
+
+Battery Saver (AOSP): defers jobs/alarms, applies background-execution
+limits to all apps, cuts background network and may disable location with
+the screen off. Smart App Lock uses none of those; foreground services and
+bound Accessibility services are not stopped by stock Battery Saver. Doze
+only applies with the screen off; SCREEN_ON leaves it. OEM power-saving modes
+(ColorOS "Power saving" / "Super power saving") are not documented and are
+**UNVERIFIED**.
+
+No battery-optimisation exemption is requested (no
+`REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, no exemption flow): the PRD does not
+require one, and on AOSP an exemption is not documented to lift the
+"Restricted" state for foreground services. No wake locks, alarms, WorkManager jobs or extra
+keep-alive were added. The pre-existing restart attempt at the end of
+`reportForeground` (`if (!isRunning()) start(context)`) is unchanged.
+
+## Finding fixed
+
+**M3-F1 — native sessions outlived a watcher interruption.**
+`WatcherService.onDestroy` unregistered the screen receiver and stopped the
+poll and retry, but left `ProtectionAccessState` intact. Dart stops the
+watcher only after configuring protection off, and the poll calls
+`stopSelf()` only when protection is off. So a teardown while protection is
+still configured was not requested by the app. Android can stop the
+foreground service while the process survives: the bound Accessibility
+service keeps it alive. From then until the watcher restarts, a screen-off
+no longer revoked native authorizations natively. If the Flutter engine was
+also gone, an authorized app (or one in its grace window) was allowed again
+on wake. Process death already failed closed (the mirror is not persisted);
+this interruption did not.
+
+Fix: `WatcherTeardownPolicy` (pure). `onDestroy` while protection is
+configured is `INTERRUPTED`: it revokes every native authorization and grace
+window, records `WatcherTeardownPolicy.INTERRUPTED_MESSAGE` as `lastError`
+(shown by the Security screen while the engine is unavailable), and keeps
+the pending ticket, the ready hand-off and the armed overlay. Accessibility
+reports still raise the shield, and only a credential bound to the exact
+ticket authorizes again. `onDestroy` with protection off is unchanged
+(disarm only). `onStartCommand` clears only that message. Nothing grants,
+renews or extends anything.
+
+Reachability is code-level only: whether, and how often, a given device
+stops the service while the process lives is **UNVERIFIED** (S10.2). The
+cost of fail-closed is that an interrupted session re-challenges on the next
+report of the protected app (for example, the next screen inside it).
+
+## Reviewed and unchanged (already implemented)
+
+- **Process death / sticky restart / a11y rebind / boot / Dart start:**
+  authorization mirror erased; F3 makes one fail-closed restart decision per
+  process (`RestartRecoveryPolicy`, `OneShotLatch`); a persisted ticket
+  re-raises the shield. Tests: `RestartRecoveryPolicyTest`,
+  `RestartEvidenceAndBootScopeTest`, `process_death_recovery_test.dart`,
+  `reboot_recovery_test.dart`.
+- **Stale foreground reports:** UsageEvents are subordinate to an
+  Accessibility report for 5 s; an uncorroborated protected UsageEvents
+  report cannot renew grace or slide H-2 (U1-R); an uncorroborated
+  unprotected one cannot prove a leave (U1-C); stale reports cannot complete
+  a safe exit. Tests: `UsageLeaveCorroborationTest`,
+  `GraceRenewalClosureTest`.
+- **Duplicate start / callbacks:** `onStartCommand` removes the poll before
+  posting it; tickets keep their generation for repeated reports; the
+  restart decision is one per process.
+- **Watcher start failure** (for example Android 12+ background FGS start
+  refused): caught, `lastError` set, `start()` returns false; Accessibility
+  enforcement does not depend on the service. Health reports
+  `serviceRunning=false` → Security screen "Protection engine unavailable".
+- **Heartbeat loss:** the 6 s lease only selects the health label and
+  notification text; it never authorizes.
+- **Boot while locked:** the app is not direct-boot aware; BOOT_COMPLETED
+  arrives after the first unlock.
+- **Permission unavailable** (Usage access, Accessibility, overlay,
+  notifications revoked): covered by `permission_regression_test.dart` and the
+  health evaluation; no state authorizes.
+
+## Automated evidence (simulated)
+
+| Suite | Tests | Covers |
+| --- | --- | --- |
+| `android/app/src/test/.../BackgroundResilienceRegressionTest.kt` | 19 | `WatcherTeardownPolicy`; interruption × session, grace, stale UsageEvents, duplicate teardown, rapid transitions; M1 × M3 (deep-link / hostile / stale recovery intent); M2 × M3 (own-UI fresh-grant exception, multi-window, exact hand-off); source contracts (onDestroy/onStartCommand wiring, no exemption/keep-alive/a11y scope change, start-failure reporting); R-M3-2 vulnerable sequence (pre-fix ALLOW), fix (CHALLENGE), watcher-running control, `MainActivity.onDestroy` contract |
+| `test/regression/background_resilience_test.dart` | 10 | native model `serviceDestroyed` / `activityDestroyed` (Group A, 7, incl. R-M3-2 and its control) and the production Dart host / lock trigger / Security screen against it (Group B, 3): a still-valid Dart session never substitutes for the credential; Dart's screen-off still revokes both layers while the native receiver is gone; a stopped watcher is restarted from the foreground during a challenge, before any credential |
+
+Mutation checks on the new gates: 16/16 killed (10 Kotlin, 5 Dart incl. the
+reachability check on SecurityScreen's `resumed` reload).
+These tests run policies, wiring contracts and a Dart model. They do not run
+Android, Battery Saver, Doze, App Standby, the Restricted state, ColorOS or a
+service stop, and prove none of them.
+
+## Known limitations and open items
+
+- **While the watcher is stopped** (process alive): there is no native
+  SCREEN_OFF revocation and no wake ticket. The Dart lock trigger covers
+  screen cycles while the Flutter engine is alive. Opening Smart App Lock's
+  UI (including every challenge) restarts the watcher from the foreground:
+  SecurityScreen reloads on `resumed` and calls `ProtectionBootstrap`.
+  **R-M3-2 (closed):** a grant made while the watcher stayed down could
+  outlive the engine. The sequence was:
+  1. the foreground restart did not take effect;
+  2. grace > 0;
+  3. the user Backed out of the shell, or the task was removed;
+  4. a screen cycle occurred;
+  5. the user returned to the app inside grace, and it was ALLOWED.
+
+  `MainActivity.onDestroy` now applies
+  `WatcherTeardownPolicy.revokesOnEngineDetach`: with protection on and no
+  watcher running, every native session and grace window is revoked when the
+  engine goes away. With both rules, no native authorization survives a
+  moment in which neither screen-off observer exists.
+- **Restricted / OEM-killed background:** enforcement can be delayed or
+  missing until Android allows the service again. Detection and UI guidance
+  ("Background Restriction Health", `ActivityManager.isBackgroundRestricted`)
+  are Phase 7 / M1, not implemented.
+- **Force stop** disables protection until the app is opened (see
+  `docs/capabilities.md`).
+- **Battery Saver / ColorOS power modes:** no code path depends on them; real
+  behaviour is UNVERIFIED (S9).
+- Phase 5 F3 (process death on device) and biometric remain **UNVERIFIED**.
+
+## Combined Phase 6 physical-device QA matrix (M1 + M2 + M3)
+
+One round, one build containing M1–M3. Step details for S1–S8 are in the M1
+and M2 sections above and are not repeated. Grace 0 unless stated. A step
+FAILS if the protected app (A) is ever usable without a challenge, a wrong
+credential opens it, a challenge stacks or loops, or the user is stuck with
+no way out. Evidence is a screen recording unless "logcat" is stated.
+Record device, Android version, OEM skin and navigation mode once; mark
+unsupported steps N/A with the reason.
+
+**Common pass criterion (✓):** challenge before A's content is usable;
+wrong PIN refused; Back/cancel exits to Home; correct PIN opens A once.
+
+### Group 1 — Oppo A9, Android 9 / ColorOS (required)
+
+| ID | Setup | Minimal actions | Expected secure behaviour | PASS / FAIL |
+| --- | --- | --- | --- | --- |
+| S1.1, S1.2, S1.4 | A has a notification; S1.4 with secure keyguard | tap from shade / heads-up / lock screen; repeat taps | challenge before content, one challenge | ✓; FAIL on any content without challenge |
+| S2.1, S2.2 | browser link or `am start -a VIEW -d`; gallery share | open A via link / share | challenge before A acts visibly | ✓ (record if A acted before the shield: M1 limitation) |
+| S3.1, S3.3 | launcher shortcut; grace 30 s for S3.3 | shortcut ×5 fast; grace in/out | one challenge; inside grace allowed, after grace challenged, other app challenged | ✓ |
+| S4 | adb; note PID; `logcat -b crash -c` | 8 hostile `am start` commands × cold / warm / during challenge | shell or challenge only; opaque | crash log empty, PID unchanged (logcat + `pidof`) |
+| S5.1, S5.2, S5.4, S5.5, S5.6 | A unlocked | Recents return; via U; Back to shell then return (also grace 30 s); 10× quick switch; swipe our task during challenge | challenge every return; grace honoured; no loop | ✓; S5.4 essential |
+| S6.1, S6.4 | ColorOS split screen if offered | challenge in split; leave split; Return to Home | shield + notice in split; no unlock in split; A pane challenged before responding | FAIL if A responds without challenge; N/A if no split screen |
+| S7.1, S7.2, S7.4 | challenge shown | rotate 5×; lockout + rotate; font/dark mode | one challenge, attempts kept, lockout kept | ✓ |
+| S8 | — | Home/Back from challenge, screen off/on, grace 0 / 30 s | unchanged Phase 5 behaviour | ✓ |
+| S9.1 | Battery Saver ON (ColorOS power saving) | open A; wrong then correct PIN; screen off 30 s, on | challenge; wake re-challenges | ✓ |
+| S9.2 | Battery Saver ON, A unlocked in front | screen off ≥ 15 min still (Doze), wake, unlock keyguard | challenge before A content; record seconds to shield | ✓; FAIL if A usable |
+| S9.3 | Battery Saver ON | 10 min in other apps, then open A from Recents and from a notification | challenge; record whether the Smart App Lock notification is still shown | ✓ |
+| S9.4 | A's challenge shown | toggle Battery Saver on/off | challenge kept, no grant, no second challenge | ✓ |
+| S10.1 | protection on, A locked | swipe Smart App Lock from Recents (do not force stop); open A | challenge; record whether the notification returns and Accessibility stays on | ✓; FAIL if A opens unlocked while Accessibility is still enabled |
+| S10.2 | Settings → Battery → Smart App Lock: background restriction ON / "Allow background activity" OFF | unlock A; use A ≥ 3 min with screen changes; screen off/on; then open Smart App Lock | A re-challenged (never silently open) after the service stops; wake challenges; Security screen shows unavailable/limited or the service restarts | ✓; logcat: `Stopping service due to app idle` / `WatcherService destroyed` |
+| S10.2c (R-M3-2) | as S10.2, grace 30 s | after the service stopped: unlock A; Back to the shell; Back again (shell closes); screen off/on within 30 s; open A | A challenged (grace does not survive) | FAIL if A opens without a challenge; logcat `WatcherService destroyed` before the unlock, and no `Native protection watcher started` before the screen cycle |
+| S10.4 | ColorOS auto-launch allowed, then denied | reboot, unlock keyguard, open A (before opening Smart App Lock) | challenge in both cases, or record "unprotected until app opened" when denied | FAIL only if Accessibility is on and A opens unlocked |
+| S10.6 | A unlocked | revoke Usage access; then revoke overlay; reopen A | Usage off: Accessibility still enforces. Overlay off: no grant, Security screen unavailable | FAIL if any revocation opens A |
+| S11 | Battery Saver ON, after one S10.1 swipe | once each: S1.1, S2.1, S3.1, S5.4, S6.1, S7.1 | as each step | ✓ for all |
+
+### Group 2 — Android 10+ (multi-resume; second device)
+
+| ID | Setup | Minimal actions | Expected | PASS / FAIL |
+| --- | --- | --- | --- | --- |
+| S6.1, S6.2, S6.3 | split screen U + Smart App Lock / A + Smart App Lock | open A in a pane; tap between panes; side by side after unlock | shield + notice; A never responds unchallenged; next A report challenged | FAIL if A responds |
+| S1.4, S9.2 | secure keyguard; Battery Saver ON | lock-screen notification; long idle wake | challenge before content | ✓ |
+| S10.2b | Android 12+: battery "Restricted" | as S10.2; also reboot | as S10.2; record any `ForegroundServiceStartNotAllowedException` (logcat) and the Security screen message | as S10.2 |
+| S10.5 | Android 13+: notification permission denied | open A, screen cycle | still enforced; Security shows reduced resilience | ✓ |
+
+### Group 3 — App-dependent (record N/A when the app lacks the surface)
+
+| ID | Surface | Expected |
+| --- | --- | --- |
+| S1.3 | inline reply / mark-read | no challenge; OS limitation (Phase 14) — record |
+| S2.3 | multi-item share | challenge before A's content |
+| S3.1 pinned, S3.2 | pinned shortcut, widget | challenge on entry; record widget content visibility (launcher-rendered, not covered) |
+| S2.1 variants | app links of the specific protected app | challenge before content |
+
+### Group 4 — Unsupported / OEM-dependent (record only; not a release blocker unless content is exposed while protection reports healthy)
+
+| ID | Surface | Record |
+| --- | --- | --- |
+| S6.5 | PiP, OEM freeform / pop-up windows | whether A is usable unchallenged |
+| S7.6 | foldables | challenge kept across fold |
+| S10.3 | Force stop (Settings or phone manager) | protection off until reopened; Accessibility disabled by Android — expected platform limitation |
+| S10.4 denied | ColorOS auto-launch denied | unprotected until Accessibility binds or the app opens |
+| ColorOS super power saving | restricted launcher mode | whether protected apps are reachable at all; behaviour |
+
+### Group 5 — Phase 5 open gates (stay UNVERIFIED unless run and passed)
+
+| ID | Setup | Minimal actions | Expected | PASS / FAIL |
+| --- | --- | --- | --- | --- |
+| F3 | debuggable build (`run-as`) or a device that permits `am kill`; A unlocked in front | non-force-stop process death (release gate 1 above); force stop and S10.1 swipe are not F3 | challenge before A is usable again | logcat: `has died` (not `Force stopping`), watcher restart, `Restart recovery decision=…` |
+| Biometric / S5.7 | fingerprint enrolled and enabled | release gate 2 above: success, repeated mismatch, cancel, screen-off/wake | success opens A once; mismatch keeps PIN/pattern, no lockout reset; cancel stays locked | as release gate 2; stays open until passed |
+
+Minimum to accept M3 code on device: S9.1, S9.2, S10.1, S10.2, S10.2c, S11 on the
+Oppo, plus S10.2b on Android 12+ if available. Minimum for Phase 6 overall:
+those plus the M2 essentials (S5.1, S5.4, S6.1, S6.2, S6.4, S7.1) and S4.

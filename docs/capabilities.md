@@ -64,7 +64,7 @@ degraded, not proof that the service failed to start.
 | Device administrator | Not necessary for the Phases 1–5 app-level lock architecture |
 | Storage permissions / `MANAGE_EXTERNAL_STORAGE` | The app does not need shared-storage access |
 | Camera | Intruder photography is outside the C0/Phases 1–5 baseline |
-| `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` | Not requested; OEM power restrictions remain a documented physical-device risk |
+| `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` | Not requested (Phase 6 / M3 reviewed): not required by the PRD, and on AOSP it is not documented to lift the "Restricted" state for foreground services. OEM power restrictions remain a documented physical-device risk |
 | Root/ADB privileges | Outside the application security model |
 
 ## Request and denial behavior
@@ -145,3 +145,16 @@ Changes to this architecture must retain automated checks for:
   windows, foldables and Recents thumbnails of protected apps are not
   device-verified. `resizeableActivity` is not used: Android 16 ignores it
   on large screens.
+- **Battery Saver and background restrictions** (Phase 6 / M3): stock
+  Battery Saver does not stop foreground or Accessibility services, and no
+  enforcement path uses jobs, alarms or background network. The AOSP 9+
+  "Restricted" background-usage setting, and OEM power managers such as
+  ColorOS's, can stop the watcher service. When that happens while protection
+  is configured, every native session and grace window is revoked (fail
+  closed), the shield and pending challenge are kept, and the Security
+  screen reports the engine as unavailable with the reason. Until the service
+  restarts, native screen-off re-lock pauses; Smart App Lock's own screen-off
+  handling covers it while the app's engine is alive, and sessions are
+  revoked when that engine closes with the service still stopped. Protection is not
+  guaranteed while Android suspends these components. Detecting the
+  restriction is Phase 7 / M1. Device behaviour is not verified.

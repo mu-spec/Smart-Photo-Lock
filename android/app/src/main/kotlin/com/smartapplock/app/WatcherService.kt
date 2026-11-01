@@ -174,6 +174,9 @@ class WatcherService : Service() {
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
+        if (WatcherTeardownPolicy.clearsLastErrorOnStart(ProtectionStateStore.lastError(this))) {
+            ProtectionStateStore.setLastError(this, null)
+        }
         // Keep an invisible, full-size overlay attached. Making it opaque on
         // the first Accessibility callback is shorter than adding/resizing a
         // new window after the protected activity is already drawing.
@@ -206,7 +209,18 @@ class WatcherService : Service() {
         }
         activeInstance = null
         running = false
-        if (!ProtectionStateStore.isEnabled(this)) {
+        // Phase 6 / M3: a teardown while protection is still configured is a
+        // system/OEM interruption. The screen receiver and poll are gone, so
+        // no native session or grace window may outlive it (fail closed, as
+        // after process death). The ticket and armed overlay are kept.
+        val action = WatcherTeardownPolicy.onDestroy(ProtectionStateStore.isEnabled(this))
+        if (action.revokesAuthorizations) {
+            ProtectionAccessState.revokeAll()
+        }
+        if (action.recordsInterruption) {
+            ProtectionStateStore.setLastError(this, WatcherTeardownPolicy.INTERRUPTED_MESSAGE)
+        }
+        if (action.disarmsOverlay) {
             ProtectionOverlayController.disarm()
         }
         Log.d(TAG, "WatcherService destroyed")

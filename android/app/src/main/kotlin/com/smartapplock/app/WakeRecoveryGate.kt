@@ -719,3 +719,74 @@ class OneShotLatch {
 
     fun tryAcquire(): Boolean = acquired.compareAndSet(false, true)
 }
+
+// -- Phase 6 / M3: watcher interruption ---------------------------------------
+
+/**
+ * Phase 6 / M3 (background restrictions). What a `WatcherService.onDestroy`
+ * means for in-memory authorization.
+ *
+ * Dart stops the watcher only after configuring protection off, and the
+ * poll calls `stopSelf()` only when protection is off, so a teardown while
+ * protection is still configured was not requested by the app. Android can
+ * stop the foreground service while the process lives on: on AOSP Android 9+
+ * an app whose background battery use is "Restricted" has its foreground
+ * service removed from the foreground and stopped once it idles, and the
+ * bound Accessibility service keeps the process (and so the authorization
+ * mirror) alive. OEM power managers may do the same (unverified).
+ *
+ * The SCREEN_OFF / SCREEN_ON / USER_PRESENT receiver, the UsageEvents poll
+ * and the recovery retry die with the service, so a later screen-off would
+ * no longer end sessions natively. An interruption therefore revokes every
+ * native authorization and grace window, exactly like process death. The
+ * pending ticket, the ready hand-off and the armed overlay are kept: the
+ * Accessibility path still raises the shield, and only a valid credential
+ * bound to the exact ticket authorizes again.
+ *
+ * Nothing here grants, renews or extends anything.
+ */
+object WatcherTeardownPolicy {
+    enum class Action(
+        val revokesAuthorizations: Boolean,
+        val disarmsOverlay: Boolean,
+        val recordsInterruption: Boolean,
+    ) {
+        /** Protection is off (Dart `stop()` or the poll's `stopSelf()`). */
+        PROTECTION_DISABLED(
+            revokesAuthorizations = false,
+            disarmsOverlay = true,
+            recordsInterruption = false,
+        ),
+
+        /** Protection still configured: a system or OEM interruption. */
+        INTERRUPTED(
+            revokesAuthorizations = true,
+            disarmsOverlay = false,
+            recordsInterruption = true,
+        ),
+    }
+
+    /** Surfaced through `getHealth().lastError` while the watcher is down. */
+    const val INTERRUPTED_MESSAGE =
+        "Android stopped the protection service. Screen-off re-lock and " +
+            "usage-access detection are paused until it restarts. Battery or " +
+            "background restrictions can cause this."
+
+    fun onDestroy(protectionEnabled: Boolean): Action =
+        if (protectionEnabled) Action.INTERRUPTED else Action.PROTECTION_DISABLED
+
+    /** A successful restart clears only the message this policy recorded. */
+    fun clearsLastErrorOnStart(lastError: String?): Boolean =
+        lastError == INTERRUPTED_MESSAGE
+
+    /**
+     * R-M3-2: `MainActivity.onDestroy` tears down the Flutter engine, and with
+     * it the Dart lock trigger's screen-off revocation (`ScreenStateChannel`
+     * is registered on that Activity). If the watcher's native screen
+     * receiver is not running either, nothing would end native sessions or
+     * grace windows at the next screen-off, so they end now. While the
+     * watcher runs, its receiver still covers screen-off and nothing changes.
+     */
+    fun revokesOnEngineDetach(protectionEnabled: Boolean, watcherRunning: Boolean): Boolean =
+        protectionEnabled && !watcherRunning
+}

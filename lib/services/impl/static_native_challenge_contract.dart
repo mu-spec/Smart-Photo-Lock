@@ -141,6 +141,15 @@ typedef NativeAbandonCandidate = ({
 ///   (`OwnUiForegroundPolicy`), unless it returns to the fresh grant of the
 ///   ticket that was pending at the previous pause (current foreground ==
 ///   [pendingPackageAtPause]).
+/// * **Phase 6 / M3 interruption**: [serviceDestroyed] models
+///   `WatcherService.onDestroy` + `WatcherTeardownPolicy`. With protection
+///   configured it revokes every authorization and records
+///   [interruptedMessage]; the ticket, hand-off and shield are kept. Until
+///   [serviceStart], the screen receiver and retry timer are gone, while
+///   [reportForeground] (Accessibility, process-scoped) still enforces.
+///   Whether and when Android or an OEM stops the service is NOT modelled.
+///   [activityDestroyed] models R-M3-2: engine teardown while the watcher is
+///   down revokes every authorization.
 ///
 /// Out of scope for this model, and recorded as such in the Fix #1 report:
 /// grace windows and session expiry (H-2), the safe-exit gate, the
@@ -244,6 +253,49 @@ class StaticNativeChallengeContract {
   NativeRestartDecision? lastRestartDecision;
   int restartDecisions = 0;
   bool _restartLatchAcquired = false; // process-scoped OneShotLatch
+
+  /// Phase 6 / M3: a `WatcherService` instance exists. The screen receiver
+  /// (SCREEN_OFF / SCREEN_ON / USER_PRESENT) and the recovery retry timer
+  /// live in the instance; the Accessibility path ([reportForeground]) is
+  /// process-scoped and keeps running without it.
+  bool serviceRunning = true;
+
+  /// Phase 6 / M3: `getHealth().lastError` as far as this model sets it.
+  String? lastError;
+
+  /// `WatcherTeardownPolicy.INTERRUPTED_MESSAGE`.
+  static const String interruptedMessage =
+      'Android stopped the protection service. Screen-off re-lock and '
+      'usage-access detection are paused until it restarts. Battery or '
+      'background restrictions can cause this.';
+
+  /// `WatcherService.onDestroy` with `WatcherTeardownPolicy`. While
+  /// protection is still configured the teardown is a system/OEM
+  /// interruption: every native authorization is revoked and the
+  /// interruption is recorded; the ticket, the ready hand-off and the
+  /// armed shield are kept. With protection off only the overlay disarms.
+  /// R-M3-2: `MainActivity.onDestroy` with
+  /// `WatcherTeardownPolicy.revokesOnEngineDetach`. The engine (and the Dart
+  /// lock trigger's screen-off revocation) goes away; when the watcher's
+  /// receiver is not running either, every native authorization is revoked.
+  /// Tickets, the hand-off and the shield are untouched.
+  void activityDestroyed() {
+    activityResumed = false;
+    inMultiWindow = false;
+    if (enabled && !serviceRunning) {
+      authorizedPackages.clear(); // ProtectionAccessState.revokeAll()
+    }
+  }
+
+  void serviceDestroyed() {
+    serviceRunning = false;
+    if (enabled) {
+      authorizedPackages.clear(); // ProtectionAccessState.revokeAll()
+      lastError = interruptedMessage;
+    } else {
+      shieldVisible = false; // ProtectionOverlayController.disarm()
+    }
+  }
 
   /// `WakeIdentityBootScope.WALL_CLOCK_TOLERANCE_MS`.
   static const int wallClockToleranceMs = 10000;
@@ -590,6 +642,7 @@ class StaticNativeChallengeContract {
   /// `WatcherService` ACTION_SCREEN_OFF receiver.
   void screenOff() {
     screenInteractive = false;
+    if (!serviceRunning) return; // M3: the receiver died with the service
     readyChallenge = null; // invalidateChallengeHandoff()
     authorizedPackages.clear(); // ProtectionAccessState.revokeAll()
     final String? observed = currentForegroundPackage;
@@ -616,6 +669,7 @@ class StaticNativeChallengeContract {
   /// while the keyguard is still locked.
   void screenOn() {
     screenInteractive = true;
+    if (!serviceRunning) return; // M3: the receiver died with the service
     final PendingLockChallenge? ticket = _restoreWakeReauthChallenge();
     if (ticket != null && isProtected(ticket.packageName)) {
       _recover(ticket.packageName, NativeRecoverySignal.screenOn);
@@ -625,6 +679,7 @@ class StaticNativeChallengeContract {
   /// The user dismisses the keyguard, then ACTION_USER_PRESENT fires.
   void dismissKeyguard() {
     keyguardLocked = false;
+    if (!serviceRunning) return; // M3: the receiver died with the service
     final PendingLockChallenge? ticket = _restoreWakeReauthChallenge();
     if (ticket != null && isProtected(ticket.packageName)) {
       _recover(ticket.packageName, NativeRecoverySignal.userPresent);
@@ -634,6 +689,8 @@ class StaticNativeChallengeContract {
   /// `WatcherService.onStartCommand`: the persisted-ticket path (shield +
   /// `recoverProtected(RETRY)`), then F3's one restart decision per process.
   void serviceStart() {
+    serviceRunning = true;
+    if (lastError == interruptedMessage) lastError = null;
     recoveryRetryTick();
     if (_restartLatchAcquired) return;
     _restartLatchAcquired = true;
@@ -707,6 +764,7 @@ class StaticNativeChallengeContract {
   /// One firing of the `WatcherService.recoveryRetry` runnable, which
   /// runs every 3 seconds while a ticket is pending.
   void recoveryRetryTick() {
+    if (!serviceRunning) return; // M3: the retry Handler is per instance
     final PendingLockChallenge? ticket = pending;
     if (ticket == null || !isProtected(ticket.packageName)) return;
     _recover(ticket.packageName, NativeRecoverySignal.retry);

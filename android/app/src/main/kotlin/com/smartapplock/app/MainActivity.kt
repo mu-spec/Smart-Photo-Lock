@@ -94,6 +94,16 @@ class MainActivity : FlutterFragmentActivity() {
     override fun onDestroy() {
         ProtectionRuntime.activityResumed = false
         ProtectionRuntime.activityInMultiWindow = false
+        // Phase 6 / M3 (R-M3-2): the engine's screen-off revocation goes away
+        // with this Activity. Without a running watcher receiver no session
+        // may outlive it (fail closed); tickets and the shield are untouched.
+        if (WatcherTeardownPolicy.revokesOnEngineDetach(
+                protectionEnabled = ProtectionStateStore.isEnabled(this),
+                watcherRunning = WatcherService.isRunning(),
+            )
+        ) {
+            ProtectionAccessState.revokeAll()
+        }
         if (currentActivity?.get() === this) {
             currentActivity = null
         }

@@ -2029,3 +2029,36 @@ ticket and attempt state stay. Recreation from an unlisted change re-presents
 the persisted ticket. Tests:
 `android/app/src/test/.../TaskConfigurationHardeningTest.kt`,
 `test/regression/task_configuration_hardening_test.dart` (both SIMULATED).
+
+## Phase 6 / M3 — Background resilience
+
+The authorization mirror (`ProtectionAccessState`) lives in process memory,
+so process death fails closed. The screen receiver, UsageEvents poll and
+recovery retry live in the `WatcherService` instance; Accessibility
+reporting (`WatcherService.reportForeground`) is process-scoped and keeps
+enforcing without it. M3 makes a service-only interruption fail closed too:
+
+```
+WatcherService.onDestroy
+  └─ WatcherTeardownPolicy.onDestroy(isEnabled)
+       ├─ PROTECTION_DISABLED (Dart stop() / poll stopSelf())   → disarm overlay (unchanged)
+       └─ INTERRUPTED (still configured: system / OEM stop)      → ProtectionAccessState.revokeAll()
+                                                                   lastError = INTERRUPTED_MESSAGE
+                                                                   ticket, hand-off, overlay kept
+WatcherService.onStartCommand
+  └─ clearsLastErrorOnStart(lastError)                          → clears only that message
+MainActivity.onDestroy (engine + Dart screen-off listener gone)
+  └─ revokesOnEngineDetach(isEnabled, WatcherService.isRunning())
+       └─ enabled && watcher not running (R-M3-2)              → ProtectionAccessState.revokeAll()
+```
+
+Invariant: a native authorization exists only while at least one
+screen-off observer exists (the watcher's receiver or the engine's lock
+trigger); whichever goes last while protection is on revokes them all.
+
+No battery exemption, wake lock, alarm, job or new keep-alive is used; the
+pre-existing restart attempt at the end of `reportForeground` is unchanged.
+Restriction detection and guidance are Phase 7 / M1. Tests:
+`android/app/src/test/.../BackgroundResilienceRegressionTest.kt`,
+`test/regression/background_resilience_test.dart` (both SIMULATED). Device
+QA: `docs/regression.md`, combined Phase 6 matrix (S9–S11).
