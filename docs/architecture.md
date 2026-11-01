@@ -2062,3 +2062,90 @@ Restriction detection and guidance are Phase 7 / M1. Tests:
 `android/app/src/test/.../BackgroundResilienceRegressionTest.kt`,
 `test/regression/background_resilience_test.dart` (both SIMULATED). Device
 QA: `docs/regression.md`, combined Phase 6 matrix (S9–S11).
+
+## Phase 7 / M1 — Protection Health engine & signals
+
+```
+ProtectionHealthMonitor.refresh()            (read-only; no timer)
+  ├─ CredentialManager.status, ProtectedAppsRepository   → configured?
+  ├─ hasUsageAccess / isServiceEnabled / canDrawOverlays → capabilities
+  ├─ PreferencesStore.wasCapabilityEverGranted (read)    → revoked vs not set up
+  ├─ WatcherService.getHealth  ── native map + ProtectionHealthSignals:
+  │     accessibilityServiceConnected, shieldArmed, challengePending,
+  │     backgroundRestricted (API 28+), powerSaveMode,
+  │     ignoringBatteryOptimizations, sdkInt
+  └─ BiometricService.isSupported / availableKinds
+        └─ ProtectionHealthEngine.evaluate(HealthSignals, now)
+              → ProtectionHealthReport {state, issues[], components{}, limitations}
+```
+
+**Precedence.** Any `offline` issue → PROTECTION_OFFLINE; else any
+`attention` issue → ATTENTION_REQUIRED; else SECURE. `advisory` issues
+(Battery Saver, biometric unavailable) never change the state.
+
+| Severity | Issue ids |
+| --- | --- |
+| offline | `protection_not_configured`, `enforcement_not_armed`, `overlay_unavailable`, `detection_offline` |
+| attention | `accessibility_unavailable`, `accessibility_not_running`, `usage_access_unavailable`, `watcher_not_running`, `shield_not_armed`, `notifications_disabled`, `background_restricted`, `signal_unknown`, `health_snapshot_stale` |
+| advisory | `battery_saver_on`, `biometric_unavailable` |
+
+Each issue carries `component`, `cause` (`setup_incomplete`,
+`no_protected_apps`, `user_choice`, `not_granted`, `revoked`, `not_running`,
+`restricted`, `not_enrolled`, `unsupported`, `unknown`, `stale`), a derived
+`category` and a repair `action` hint for Phase 7 / M2 (metadata only;
+nothing is invoked). The `category` tells M2 how to word an issue; only
+`interrupted` is a system failure:
+
+| Situation | Issue / cause | Category | State |
+| --- | --- | --- | --- |
+| First-time setup (no PIN/pattern yet) | `protection_not_configured` / `setup_incomplete`, action `configure_protection` | `setup` | OFFLINE |
+| No protected apps (the user's choice; there is no separate "pause protection" switch) | `protection_not_configured` / `no_protected_apps`, action `choose_protected_apps` | `user_choice` | OFFLINE |
+| Capability never granted | `*_unavailable` / `not_granted`; `detection_offline` / `not_granted` only when both detectors were never granted | `setup` | as severity |
+| Capability revoked | `*_unavailable` / `revoked` (`detection_offline` / `revoked` if either detector was revoked) | `revoked` | as severity |
+| Configured protection stopped (watcher, Accessibility unbound, shield, native enforcement disabled) | `not_running` | `interrupted` | as severity |
+| Android "Restricted" background | `background_restricted` / `restricted` | `restricted` | ATTENTION |
+| Unreadable / stale | `signal_unknown` / `unknown`, `health_snapshot_stale` / `stale` | `uncertain` | ATTENTION |
+| Battery Saver, biometric | advisory | `advisory` | unchanged |
+
+PROTECTION_OFFLINE is therefore used both for "nothing is protected yet"
+and for configured protection that is unavailable; M2 must use `category`,
+not the state alone, to avoid wording setup or a user choice as a failure.
+Exactly three states are kept.
+
+**Native enforcement.** Saved Dart configuration (credential + protected
+app) is not evidence of enforcement. With configuration present, native
+`getHealth.protectionConfigured` (`ProtectionStateStore.isEnabled`, which
+the shield, recovery and watcher consult) must be observed `true`; `false`
+→ `enforcement_not_armed` (OFFLINE, `not_running`), unreadable → UNKNOWN.
+
+**Detection paths.** Accessibility counts only when enabled in Settings AND
+bound. The UsageEvents fallback counts only with Usage Access AND a running
+watcher (its polling lives in the watcher). Both paths definitely down →
+`detection_offline`.
+
+**No false SECURE.** SECURE is not a guarantee against every Android bypass,
+OEM behaviour or unobservable state (OEM background controls are always
+UNKNOWN; see the limitations list). SECURE requires every core signal to be positively
+observed in a snapshot no older than 30 s (`ProtectionHealthEngine.defaultMaxAge`).
+UNKNOWN (failed, unsupported or timed-out read) yields `signal_unknown`;
+a missing native snapshot is one issue, not one per signal. The Flutter
+heartbeat is not an input. `latest()` re-applies the age rule without
+probing, so a report cannot stay SECURE indefinitely; a future-dated
+snapshot counts as stale.
+
+**Refresh boundaries.** `refresh()` on demand (concurrent calls share one
+collection; every read is bounded by a 3 s timeout); change events only
+when the report signature changes. No polling, timer, background work or
+keep-alive. Display-time refresh is Phase 7 / M2; refresh on return from
+Android Settings is Phase 7 / M3.
+
+**Observational contract.** The monitor never calls
+`ProtectionBootstrap.synchronize`, `start`, `stop`, `configureProtection`,
+`heartbeat`, `authorizePackage`, `revokeAllAuthorizations`, ticket or shield
+methods, `markCapabilityEverGranted` or the biometric prompt. Native
+`healthSignals` only reads (`isArmed()` is `shield != null`). The existing
+`ProtectionCapabilityEvaluation` used by the Security screen is unchanged.
+
+Tests: `test/protection/health/` (engine: production pure Dart; monitor:
+production Dart over simulated services) and
+`android/app/src/test/.../ProtectionHealthSignalsTest.kt`.

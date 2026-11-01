@@ -1813,8 +1813,9 @@ service stop, and prove none of them.
   moment in which neither screen-off observer exists.
 - **Restricted / OEM-killed background:** enforcement can be delayed or
   missing until Android allows the service again. Detection and UI guidance
-  ("Background Restriction Health", `ActivityManager.isBackgroundRestricted`)
-  are Phase 7 / M1, not implemented.
+  ("Background Restriction Health", `ActivityManager.isBackgroundRestricted`):
+  detection is implemented in Phase 7 / M1 (health signal); the dashboard
+  and repair guidance are Phase 7 / M2.
 - **Force stop** disables protection until the app is opened (see
   `docs/capabilities.md`).
 - **Battery Saver / ColorOS power modes:** no code path depends on them; real
@@ -1895,3 +1896,76 @@ wrong PIN refused; Back/cancel exits to Home; correct PIN opens A once.
 Minimum to accept M3 code on device: S9.1, S9.2, S10.1, S10.2, S10.2c, S11 on the
 Oppo, plus S10.2b on Android 12+ if available. Minimum for Phase 6 overall:
 those plus the M2 essentials (S5.1, S5.4, S6.1, S6.2, S6.4, S7.1) and S4.
+
+# Phase 7 / M1 — Protection Health engine & signals
+
+PRD v2.1, Phase 7 / Milestone 1: Health Engine Foundation (Secure /
+Attention Required / Protection Offline), Required Capability Health,
+Protection Engine Health, Background Restriction Health, Biometric Health.
+Design: `docs/architecture.md` (Phase 7 / M1). Signals:
+`docs/capabilities.md` (Protection Health signals). Dashboard and repair UI
+are M2; refresh on return from Settings and the health regression round are
+M3. Not implemented here.
+
+## Automated evidence
+
+| Suite | Tests | Evidence level | Covers |
+| --- | --- | --- | --- |
+| `test/protection/health/protection_health_engine_test.dart` | 30 | production code (pure Dart) | three states and stable ids; precedence and deterministic ordering; revoked vs not set up vs user choice; detection paths (Accessibility bound, usage needs watcher); watcher interruption with reason; shield pre-arm; notifications; background restriction incl. API < 28 unsupported; Battery Saver advisory; biometric never affects state; UNKNOWN per core signal; staleness boundary, future-dated snapshot, stale never upgrades OFFLINE; setup vs no-protected-apps vs interrupted categories; detection-offline cause (not granted / revoked / not running); native enforcement disabled → OFFLINE, unreadable → UNKNOWN; exhaustive 3^9 combinations: SECURE iff all core signals positive, OFFLINE only from a definite negative; recovery to SECURE |
+| `test/protection/health/protection_health_monitor_test.dart` | 17 | production Dart over simulated services | SECURE on a healthy simulated device; observational (no start/stop/configure/heartbeat/authorize/revoke, ticket kept, no shield call, no biometric prompt, no grant-history write); setup vs no-protected-apps causes; saved configuration with native enforcement disabled → OFFLINE; watcher interruption → restart; capability revoked → regranted; Accessibility enabled but unbound; native bridge failure; failed probe; hung probe timeout; coalesced refresh; `latest()` staleness without probing; restriction + Battery Saver; biometric enrollment removal as a change event; wire format (legacy map → UNKNOWN; method-channel parse); container wiring has no side effect |
+| `android/app/src/test/.../ProtectionHealthSignalsTest.kt` | 11 | production Kotlin + source contracts | API-28 gate (API never touched below P); failing reads → UNKNOWN; exact wire keys and Dart parser coverage; Accessibility bind lifecycle; `onServiceConnected`/`onUnbind`/`onDestroy` wiring; health read forbids authorize/revoke/ticket/shield/start/stop/configure/heartbeat/exemption calls; `isArmed()` pure read; no new permission, exemption or enrollment intent |
+
+Mutation checks: 14/14 killed (10 Dart: staleness, Accessibility bound
+state, usage-needs-watcher, UNKNOWN severity, biometric severity,
+restriction UNKNOWN, grant-history write, fabricated probe value, watcher
+start from health, change dedupe; 4 Kotlin: API gate, failure-as-false,
+`onUnbind` clear, health re-arming the shield). Final-review corrections: 5/5
+killed (native-enforcement check removed, native-enforcement UNKNOWN
+accepted, detection-offline cause hard-coded, setup cause hard-coded,
+not-granted category; the last is caught at compile time by the exhaustive
+switch).
+
+These tests do not run Android. Accessibility binding, `isBackgroundRestricted`,
+Battery Saver, ColorOS controls and biometric hardware are simulated inputs.
+
+## Known limitations
+
+- OEM background controls (ColorOS auto-launch, app freezing, "super power
+  saving") have no public API: always UNKNOWN, listed in every report's
+  `limitations`, never claimed unrestricted.
+- `isBackgroundRestricted` is API 28+; Android 7–8 report *unsupported*.
+  Some OEM toggles are not reflected by it.
+- The Accessibility bound flag is process-local; a cold start before the
+  system rebinds may briefly show `accessibility_not_running` (fails toward
+  attention, never toward SECURE).
+- Notifications denied keeps ATTENTION REQUIRED (the documented degraded
+  state), even though the service can run.
+- No production caller refreshes health yet: the M2 dashboard and M3
+  refresh triggers will. Until refreshed, `latest()` turns stale after 30 s.
+
+## Phase 7 / M1 device QA (combined Phase 6 + Phase 7 round)
+
+Run after M2 so the dashboard can show the state and issue ids; until then,
+the evidence is the dashboard or a debug readout of the report, not logcat
+guesses. Reuse the Phase 6 setups noted. A step FAILS if SECURE is shown
+while the stated fault is present, if biometric changes make protection
+OFFLINE or ATTENTION, or if a health read changes enforcement (a challenge
+disappears, a ticket clears, the watcher starts by itself).
+
+| ID | Device group | Setup (reuse) | Minimal actions | Expected | PASS / FAIL |
+| --- | --- | --- | --- | --- | --- |
+| H1 | Oppo A9 (Android 9) | all capabilities granted, one protected app | open health | SECURE, no issues; limitations list OEM controls | SECURE shown; FAIL if any issue is invented |
+| H2 | Oppo A9 | as H1 (Phase 4G revoke) | revoke Draw over other apps → return → re-grant → return | PROTECTION_OFFLINE `overlay_unavailable` (revoked) → SECURE | both states as listed |
+| H3 | Oppo A9 | as H1 | turn Accessibility off; then also revoke Usage Access; restore both | ATTENTION `accessibility_unavailable` → OFFLINE `detection_offline` → SECURE | as listed |
+| H4 | Oppo A9 | Restricted background (S9.1/S10.1 setup) | let Android stop the service (S10.1), then open Smart App Lock health | ATTENTION with `background_restricted`, plus `watcher_not_running` if observed before the app's foreground restart takes effect (record which) | FAIL if SECURE while restricted |
+| H5 | Oppo A9 | as H1 | Settings → Battery → Smart App Lock → restrict background; then remove | ATTENTION `background_restricted` → cleared | as listed |
+| H6 | Oppo A9 | as H1 | Battery Saver on | state unchanged, advisory `battery_saver_on` | FAIL if the state changes |
+| H7 | **compatible device required** (UNVERIFIED; not an Oppo test: fingerprint enrollment could not be completed on the Oppo A9 despite the sensor) | biometric unlock enabled with an enrolled biometric | delete all enrolled biometrics in Android Settings → return; re-enroll | advisory `biometric_unavailable` (not_enrolled), state unchanged, PIN still unlocks; cleared after re-enroll | FAIL if OFFLINE/ATTENTION; biometric success stays UNVERIFIED |
+| H8 | Android 13+ | as H1 | deny notifications for Smart App Lock | ATTENTION `notifications_disabled` | as listed |
+| H9 | OEM-dependent | as H1 | Force stop / ColorOS app freeze, then open the app | `accessibility_unavailable` or `accessibility_not_running` (record which), or recovered SECURE once rebound | FAIL only if SECURE while a protected app opens unchallenged |
+
+Minimum to accept Phase 7 / M1 on device: H1–H6 on the Oppo, H8 where
+supported (Android 13+), H9 recorded. H7 stays UNVERIFIED until a device
+with completed biometric enrollment is available; it is not a mandatory
+Oppo acceptance test. Phase 5 F3 and biometric
+success remain UNVERIFIED release gates.

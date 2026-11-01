@@ -156,5 +156,34 @@ Changes to this architecture must retain automated checks for:
   restarts, native screen-off re-lock pauses; Smart App Lock's own screen-off
   handling covers it while the app's engine is alive, and sessions are
   revoked when that engine closes with the service still stopped. Protection is not
-  guaranteed while Android suspends these components. Detecting the
-  restriction is Phase 7 / M1. Device behaviour is not verified.
+  guaranteed while Android suspends these components. Phase 7 / M1 reports
+  Android's "Restricted" state (`ActivityManager.isBackgroundRestricted`,
+  API 28+) as a health issue; OEM power managers have no public API and are
+  always reported as UNKNOWN. Device behaviour is not verified.
+
+## Protection Health signals (Phase 7 / M1)
+
+Health is read-only and uses no new permission, manifest entry or
+dependency. Signals and their source:
+
+| Signal | Source | UNKNOWN when |
+| --- | --- | --- |
+| Protection configured | Dart repositories (credential + protected app); first-time setup (no credential) and no protected apps are reported separately and never as a system failure | storage read fails |
+| Native enforcement enabled | native `getHealth.protectionConfigured` (`ProtectionStateStore.isEnabled`); required for SECURE whenever protection is configured | native health unreadable |
+| Overlay / Accessibility enabled / Usage Access | existing capability probes; grant history separates *not set up* from *revoked* | probe fails or times out (3 s) |
+| Accessibility **bound** | `AccessibilityLockService` bind lifecycle (process-local) | native health unreadable |
+| Watcher running, shield pre-armed, notifications, pending ticket | native `getHealth` | native health unreadable |
+| Background restriction | `ActivityManager.isBackgroundRestricted()` | below API 28 = *unsupported* (limitation); read fails |
+| Battery Saver / battery-optimization exemption | `PowerManager` | read fails |
+| OEM background controls (for example ColorOS) | none (no public API) | always |
+| Biometric hardware / enrollment / enabled in app | `BiometricService` capability queries, credential state | query fails |
+
+Biometric health is advisory: a removed enrollment or missing sensor never
+makes protection OFFLINE or ATTENTION REQUIRED; PIN/pattern stays primary.
+Nothing is stored about biometrics, and enrollment is never launched by the
+app. A battery-optimization exemption is reported, not requested.
+
+SECURE means every observable core signal was positively seen in a fresh
+snapshot. It is not a guarantee against every Android bypass: OEM power
+managers, force-stop and other behaviour outside the public APIs cannot be
+observed.

@@ -10,6 +10,13 @@ class ProtectionEngineHealth {
     required this.engineState,
     required this.notificationPermissionGranted,
     this.lastError,
+    this.accessibilityServiceConnected,
+    this.shieldArmed,
+    this.challengePending,
+    this.backgroundRestricted,
+    this.powerSaveMode,
+    this.ignoringBatteryOptimizations,
+    this.sdkInt,
   });
 
   const ProtectionEngineHealth.inactive()
@@ -17,7 +24,14 @@ class ProtectionEngineHealth {
         serviceRunning = false,
         engineState = ProtectionEngineState.inactive,
         notificationPermissionGranted = true,
-        lastError = null;
+        lastError = null,
+        accessibilityServiceConnected = null,
+        shieldArmed = null,
+        challengePending = null,
+        backgroundRestricted = null,
+        powerSaveMode = null,
+        ignoringBatteryOptimizations = null,
+        sdkInt = null;
 
   factory ProtectionEngineHealth.fromMap(Map<dynamic, dynamic> map) {
     final String rawState = map['engineState'] as String? ?? 'unavailable';
@@ -31,14 +45,55 @@ class ProtectionEngineHealth {
       notificationPermissionGranted:
           map['notificationPermissionGranted'] as bool? ?? true,
       lastError: map['lastError'] as String?,
+      accessibilityServiceConnected: _optionalBool(
+        map['accessibilityServiceConnected'],
+      ),
+      shieldArmed: _optionalBool(map['shieldArmed']),
+      challengePending: _optionalBool(map['challengePending']),
+      backgroundRestricted: _optionalBool(map['backgroundRestricted']),
+      powerSaveMode: _optionalBool(map['powerSaveMode']),
+      ignoringBatteryOptimizations: _optionalBool(
+        map['ignoringBatteryOptimizations'],
+      ),
+      sdkInt: map['sdkInt'] is int ? map['sdkInt'] as int : null,
     );
   }
+
+  /// Phase 7 / M1: an absent or malformed signal is UNKNOWN (null), never
+  /// a fabricated healthy value.
+  static bool? _optionalBool(Object? value) => value is bool ? value : null;
 
   final bool protectionConfigured;
   final bool serviceRunning;
   final ProtectionEngineState engineState;
   final bool notificationPermissionGranted;
   final String? lastError;
+
+  // Phase 7 / M1 — additive, observational health signals (null = UNKNOWN:
+  // unsupported API level, a failed platform read, or an older native build).
+
+  /// Android currently has the detection Accessibility service BOUND
+  /// (distinct from "enabled in Settings").
+  final bool? accessibilityServiceConnected;
+
+  /// The pre-armed native shield window is attached.
+  final bool? shieldArmed;
+
+  /// A native pending challenge ticket exists (enforcement in progress).
+  final bool? challengePending;
+
+  /// `ActivityManager.isBackgroundRestricted()` (API 28+). OEM power
+  /// managers are not reflected by this API.
+  final bool? backgroundRestricted;
+
+  /// `PowerManager.isPowerSaveMode()` (Battery Saver).
+  final bool? powerSaveMode;
+
+  /// `PowerManager.isIgnoringBatteryOptimizations()` for this app.
+  final bool? ignoringBatteryOptimizations;
+
+  /// `Build.VERSION.SDK_INT` reported by native code.
+  final int? sdkInt;
 }
 
 /// Bridge to the native lifecycle and recovery watcher.

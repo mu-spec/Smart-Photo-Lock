@@ -91,6 +91,7 @@ top of the protected app) remains for a later phase.
 | 6-M1 | Alternate entry paths (notification, deep link, share, shortcut/widget entries enforced; own Activity ignores external deep links and launch extras) | ✅ code + simulated · ⚠️ device QA pending |
 | 6-M2 | Task & configuration hardening (own-UI switch is a leave; no unlock in split screen/freeform; rotation keeps ticket, route and attempts) | ✅ code + simulated · ⚠️ device QA pending |
 | 6-M3 | Background resilience & bypass regression (a watcher stopped by Android/OEM revokes native sessions and grace; Battery Saver / restriction limits documented; combined regression suite and Phase 6 device-QA matrix) | ✅ code + simulated · ⚠️ device QA pending |
+| 7-M1 | Protection Health engine & signals (SECURE / ATTENTION REQUIRED / PROTECTION OFFLINE; capability, engine, background-restriction and biometric signals; UNKNOWN never reported as healthy; read-only, no dashboard yet) | ✅ code + simulated · ⚠️ device QA pending (combined Phase 6 + 7 round) |
 
 ### Phase 1A ✅ — Create Android Project
 

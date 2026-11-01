@@ -1,6 +1,7 @@
 package com.smartapplock.app
 
 import android.accessibilityservice.AccessibilityService
+import android.content.Intent
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import io.flutter.plugin.common.EventChannel
@@ -24,6 +25,8 @@ class AccessibilityLockService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        // Phase 7 / M1: observational "bound" signal for Protection Health.
+        AccessibilityConnection.onConnected()
         if (ProtectionStateStore.isEnabled(this)) {
             ProtectionOverlayController.arm(this)
         }
@@ -64,6 +67,16 @@ class AccessibilityLockService : AccessibilityService() {
 
     override fun onInterrupt() {
         // No work to interrupt.
+    }
+
+    override fun onUnbind(intent: Intent?): Boolean {
+        AccessibilityConnection.onDisconnected()
+        return super.onUnbind(intent)
+    }
+
+    override fun onDestroy() {
+        AccessibilityConnection.onDisconnected()
+        super.onDestroy()
     }
 
     companion object {

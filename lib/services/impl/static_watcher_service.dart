@@ -26,6 +26,19 @@ class StaticWatcherService implements WatcherService {
   String? pendingChallenge;
   int pendingChallengeGeneration = 1;
   String? lastError;
+
+  /// Phase 7 / M1 health signals (null = UNKNOWN, as from native).
+  bool? accessibilityServiceConnected;
+  bool? shieldArmed;
+  bool? challengePending;
+  bool? backgroundRestricted;
+  bool? powerSaveMode;
+  bool? ignoringBatteryOptimizations;
+  int? sdkInt;
+
+  /// When non-null, [getHealth] fails with this error (bridge failure).
+  Object? getHealthError;
+  int getHealthCalls = 0;
   int startCalls = 0;
   int stopCalls = 0;
   int configureCalls = 0;
@@ -149,19 +162,33 @@ class StaticWatcherService implements WatcherService {
   }
 
   @override
-  Future<Result<ProtectionEngineHealth>> getHealth() async => Result.success(
-        ProtectionEngineHealth(
-          protectionConfigured: protectionConfigured,
-          serviceRunning: running,
-          engineState: !protectionConfigured
-              ? ProtectionEngineState.inactive
-              : engineAvailable
-                  ? ProtectionEngineState.healthy
-                  : running
-                      ? ProtectionEngineState.recovering
-                      : ProtectionEngineState.unavailable,
-          notificationPermissionGranted: notificationPermissionGranted,
-          lastError: lastError,
-        ),
-      );
+  Future<Result<ProtectionEngineHealth>> getHealth() async {
+    getHealthCalls++;
+    final Object? error = getHealthError;
+    if (error != null) {
+      return Result.failure(error);
+    }
+    return Result.success(
+      ProtectionEngineHealth(
+        protectionConfigured: protectionConfigured,
+        serviceRunning: running,
+        engineState: !protectionConfigured
+            ? ProtectionEngineState.inactive
+            : engineAvailable
+                ? ProtectionEngineState.healthy
+                : running
+                    ? ProtectionEngineState.recovering
+                    : ProtectionEngineState.unavailable,
+        notificationPermissionGranted: notificationPermissionGranted,
+        lastError: lastError,
+        accessibilityServiceConnected: accessibilityServiceConnected,
+        shieldArmed: shieldArmed,
+        challengePending: challengePending,
+        backgroundRestricted: backgroundRestricted,
+        powerSaveMode: powerSaveMode,
+        ignoringBatteryOptimizations: ignoringBatteryOptimizations,
+        sdkInt: sdkInt,
+      ),
+    );
+  }
 }

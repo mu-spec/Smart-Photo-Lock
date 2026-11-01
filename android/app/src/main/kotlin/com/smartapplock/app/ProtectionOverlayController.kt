@@ -186,6 +186,10 @@ object ProtectionOverlayController {
     @Synchronized
     fun isShowing(): Boolean = showing
 
+    /** Phase 7 / M1 (read-only): the pre-armed shield window is attached. */
+    @Synchronized
+    fun isArmed(): Boolean = shield != null
+
     private fun standbyFlags(): Int =
         WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
             WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or

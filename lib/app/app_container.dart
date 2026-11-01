@@ -24,6 +24,7 @@ import '../protection/foreground_app_monitor.dart';
 import '../protection/impl/default_access_controller.dart';
 import '../protection/lock_trigger.dart';
 import '../protection/protected_app_matcher.dart';
+import '../protection/health/protection_health_monitor.dart';
 import '../protection/protection_bootstrap.dart';
 import '../security/encryption/settings_cipher.dart';
 import '../security/encryption/settings_cipher_impl.dart';
@@ -150,6 +151,19 @@ class AppContainer {
       protectedApps: protectedApps,
       credentials: auth,
       watcher: watcherService,
+    );
+    // Phase 7 / M1: read-only Protection Health over the SAME shared
+    // services. Construction has no side effects; nothing probes until a
+    // caller refreshes it (Phase 7 / M2 dashboard, M3 refresh triggers).
+    protectionHealth = ProtectionHealthMonitor(
+      protectedApps: protectedApps,
+      credentials: auth,
+      installedApps: installedAppsService,
+      accessibility: accessibilityService,
+      overlay: overlayService,
+      watcher: watcherService,
+      preferences: preferences,
+      biometrics: biometrics,
     );
     // Phase 5D: the access decision pipeline (protected -> challenge ->
     // session) and the trigger that drives it from foreground changes.
@@ -300,6 +314,10 @@ class AppContainer {
   /// Keeps the native reboot/process-death bootstrap state synchronized with
   /// the encrypted credential state and protected-app repository.
   late final ProtectionBootstrap protectionBootstrap;
+
+  /// Phase 7 / M1: observational Protection Health (SECURE / ATTENTION
+  /// REQUIRED / PROTECTION OFFLINE) with machine-readable issues.
+  late final ProtectionHealthMonitor protectionHealth;
 
   /// Platform biometric bridge (Phase 2J): capability checks + prompt.
   late final BiometricService biometrics;

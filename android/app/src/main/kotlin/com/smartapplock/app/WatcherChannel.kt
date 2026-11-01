@@ -1,8 +1,11 @@
 package com.smartapplock.app
 
 import android.Manifest
+import android.app.ActivityManager
+import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.PowerManager
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
@@ -95,6 +98,39 @@ object WatcherChannel {
             "engineState" to engineState,
             "notificationPermissionGranted" to notificationGranted,
             "lastError" to ProtectionStateStore.lastError(activity),
+        ) + healthSignals(activity)
+    }
+
+    /**
+     * Phase 7 / M1: additive, read-only Protection Health signals. Each
+     * platform read that can fail or is unsupported reports null (UNKNOWN).
+     */
+    private fun healthSignals(activity: MainActivity): Map<String, Any?> {
+        val sdk = Build.VERSION.SDK_INT
+        val activityManager =
+            activity.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+        val powerManager =
+            activity.getSystemService(Context.POWER_SERVICE) as? PowerManager
+        return ProtectionHealthSignals.signals(
+            accessibilityConnected = AccessibilityConnection.connected,
+            shieldArmed = ProtectionHealthSignals.probe {
+                ProtectionOverlayController.isArmed()
+            },
+            challengePending = ProtectionHealthSignals.probe {
+                ProtectionStateStore.pendingChallenge(activity) != null
+            },
+            backgroundRestricted = ProtectionHealthSignals.backgroundRestricted(sdk) {
+                if (sdk >= Build.VERSION_CODES.P) {
+                    activityManager!!.isBackgroundRestricted
+                } else {
+                    throw IllegalStateException("unsupported")
+                }
+            },
+            powerSaveMode = ProtectionHealthSignals.probe { powerManager!!.isPowerSaveMode },
+            ignoringBatteryOptimizations = ProtectionHealthSignals.probe {
+                powerManager!!.isIgnoringBatteryOptimizations(activity.packageName)
+            },
+            sdkInt = sdk,
         )
     }
 }
