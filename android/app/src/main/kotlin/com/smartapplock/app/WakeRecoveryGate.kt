@@ -99,6 +99,78 @@ object ChallengeReadyPolicy {
 }
 
 /**
+ * Phase 6 / M2 (Recents / task switching): Smart App Lock's own UI.
+ *
+ * The detectors never report our own package (5D), because MainActivity
+ * also hosts lock challenges and presenting one must not look like the user
+ * leaving the protected app. As a side effect, a direct switch from an
+ * authorized protected app to Smart App Lock's own screens went unobserved.
+ * Examples are Back from a task that `launchApp` started, or opening our
+ * pane in split screen. Grace 0 did not revoke, the away clock did not
+ * start, and the return was a same-package observation.
+ *
+ * `MainActivity.onResume` with no pending ticket is our own UI, not a
+ * challenge host. It is applied as an ordinary foreground change to our
+ * package through `ProtectionAccessState.observeForeground`, so immediate
+ * re-lock or the configured grace applies exactly as for any other app.
+ *
+ * Not a leave:
+ *  * a resume that hosts a pending challenge;
+ *  * a resume that returns to the challenge host whose exact grant is
+ *    current: the Activity was paused while package P's ticket was pending
+ *    (for example a system credential screen covered the challenge), and the
+ *    current foreground in the authorization mirror is P, which only
+ *    `authorizePackage` for that ticket can have set in between. The fresh
+ *    grant must survive until `launchApp`.
+ *
+ * A stale pause-time snapshot (P's ticket abandoned, the user then went to
+ * another app) never suppresses the leave, because the current foreground
+ * is then not P.
+ */
+object OwnUiForegroundPolicy {
+    fun isLeave(
+        protectionEnabled: Boolean,
+        hasPendingChallenge: Boolean,
+        pendingPackageAtPause: String?,
+        currentForegroundPackage: String?,
+    ): Boolean {
+        if (!protectionEnabled || hasPendingChallenge) return false
+        val returnsToFreshGrant = !pendingPackageAtPause.isNullOrBlank() &&
+            pendingPackageAtPause == currentForegroundPackage
+        return !returnsToFreshGrant
+    }
+}
+
+/**
+ * Phase 6 / M2 (split screen / multi-window). The opaque shield and the
+ * challenge Activity protect a protected app only while the challenge
+ * covers the whole screen. In multi-window mode (split screen, freeform)
+ * the protected app can stay visible and interactive in another window
+ * beside the challenge, so:
+ *
+ *  * the shield is never released for a challenge Activity that is in
+ *    multi-window mode (no hand-off; authentication cannot complete);
+ *  * entering multi-window with an unresolved protected ticket withdraws
+ *    any earlier hand-off and re-raises the shield;
+ *  * duplicate-report suppression (an already rendered challenge) applies
+ *    only while the challenge Activity is not in multi-window mode.
+ *
+ * Every branch keeps or raises the shield; none grants anything.
+ */
+object MultiWindowChallengePolicy {
+    fun mayReleaseShield(inMultiWindow: Boolean): Boolean = !inMultiWindow
+
+    fun mustReshield(inMultiWindow: Boolean, hasProtectedPendingChallenge: Boolean): Boolean =
+        inMultiWindow && hasProtectedPendingChallenge
+
+    fun suppressDuplicateRecovery(
+        activityResumed: Boolean,
+        challengeReady: Boolean,
+        inMultiWindow: Boolean,
+    ): Boolean = activityResumed && challengeReady && !inMultiWindow
+}
+
+/**
  * Pure, deterministic arbitration for wake recovery attempts.
  *
  * SCREEN_ON and USER_PRESENT each get one immediate attempt per screen cycle.

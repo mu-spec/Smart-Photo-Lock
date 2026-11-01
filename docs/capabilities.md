@@ -136,3 +136,12 @@ Changes to this architecture must retain automated checks for:
   by a foreground lock (notification privacy is PRD Phase 14). Bubbles and
   show-when-locked or full-screen-intent Activities over the keyguard are not
   device-verified.
+- **Split screen, freeform and task switching** (Phase 6 / M2): unlock is
+  refused while Smart App Lock's challenge shares the screen. The shield
+  stays up and asks the user to use full screen or return to Home.
+  Switching from an unlocked protected app to Smart App Lock's own screens
+  counts as leaving it (grace 0 re-locks). Android 10+ does not report focus
+  changes between split-screen panes. Picture-in-picture, OEM floating
+  windows, foldables and Recents thumbnails of protected apps are not
+  device-verified. `resizeableActivity` is not used: Android 16 ignores it
+  on large screens.

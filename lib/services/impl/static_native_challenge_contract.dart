@@ -20,6 +20,11 @@ enum NativeReadyRejection {
 
   /// `KeyguardManager.isKeyguardLocked` is true at the moment of the call.
   keyguardLocked,
+
+  /// Phase 6 / M2: `Activity.isInMultiWindowMode` is true at the moment of
+  /// the call (`MultiWindowChallengePolicy.mayReleaseShield`). A challenge
+  /// sharing the screen never releases the shield.
+  multiWindow,
 }
 
 /// Which native event asked for a recovery attempt. Mirrors the Kotlin
@@ -124,6 +129,18 @@ typedef NativeAbandonCandidate = ({
 ///   produces no new Flutter lifecycle event, so the model never delivers
 ///   one to Flutter by itself; tests drive the Flutter lifecycle
 ///   explicitly.
+/// * **Phase 6 / M2 multi-window**: `markChallengeReady` is also refused
+///   while [inMultiWindow] (`MultiWindowChallengePolicy.mayReleaseShield`).
+///   Entering multi-window, or resuming in it, with a protected ticket
+///   withdraws the ready handoff and re-raises the shield; the duplicate
+///   recovery guard applies only outside multi-window. Pane focus changes
+///   without lifecycle callbacks (Android 10+ multi-resume) are NOT
+///   modelled; they need device evidence.
+/// * **Phase 6 / M2 own UI**: `MainActivity.onResume` with no pending
+///   ticket is an unprotected foreground change to [ownPackage]
+///   (`OwnUiForegroundPolicy`), unless it returns to the fresh grant of the
+///   ticket that was pending at the previous pause (current foreground ==
+///   [pendingPackageAtPause]).
 ///
 /// Out of scope for this model, and recorded as such in the Fix #1 report:
 /// grace windows and session expiry (H-2), the safe-exit gate, the
@@ -276,6 +293,18 @@ class StaticNativeChallengeContract {
 
   PendingLockChallenge? readyChallenge;
 
+  /// Phase 6 / M2: `ProtectionRuntime.activityInMultiWindow` /
+  /// `Activity.isInMultiWindowMode`. Tests set it directly for a resume
+  /// into multi-window, or call [onMultiWindowModeChanged].
+  bool inMultiWindow = false;
+
+  /// Phase 6 / M2: `MainActivity.pendingPackageAtPause`, the package whose
+  /// ticket was pending when the Activity last paused.
+  String? pendingPackageAtPause;
+
+  /// Smart App Lock's own package (`context.packageName`).
+  static const String ownPackage = 'com.smartapplock.app';
+
   /// `SystemClock.elapsedRealtime()` for the model. Tests advance it.
   int elapsedMs = 0;
 
@@ -321,6 +350,9 @@ class StaticNativeChallengeContract {
   /// The opaque "Preparing secure unlock…" shield is on screen.
   bool shieldVisible = false;
 
+  /// Phase 6 / M2: the shield shows the multi-window notice text.
+  bool multiWindowNotice = false;
+
   // -- ProtectionAccessState (subset: no grace or session expiry) -----------
 
   final Set<String> authorizedPackages = <String>{};
@@ -352,6 +384,7 @@ class StaticNativeChallengeContract {
     if (!exact) blockers.add(NativeReadyRejection.ticketMismatch);
     if (!activityResumed) blockers.add(NativeReadyRejection.activityNotResumed);
     if (keyguardLocked) blockers.add(NativeReadyRejection.keyguardLocked);
+    if (inMultiWindow) blockers.add(NativeReadyRejection.multiWindow);
     return blockers;
   }
 
@@ -430,6 +463,10 @@ class StaticNativeChallengeContract {
       // "SCREEN_ON can resume behind keyguard. Preserve the pending ticket
       // and shield for USER_PRESENT/retry." Nothing else changes.
       readyRejections.add(blockers);
+      if (blockers.contains(NativeReadyRejection.multiWindow) &&
+          !blockers.contains(NativeReadyRejection.ticketMismatch)) {
+        multiWindowNotice = true;
+      }
       return false;
     }
     final PendingLockChallenge exact = pending!;
@@ -487,13 +524,31 @@ class StaticNativeChallengeContract {
   /// lifecycle itself.
   void onActivityResumed() {
     activityResumed = true;
+    // Phase 6 / M2: WatcherService.onOwnUiResumed (OwnUiForegroundPolicy).
+    final bool ownUiLeave =
+        enabled && pending == null && !_returnsToFreshGrant();
+    pendingPackageAtPause = null;
+    if (ownUiLeave) _observeUnprotected(ownPackage);
+    // Phase 6 / M2: WatcherService.onChallengeActivityMultiWindow.
+    _reshieldIfMultiWindow();
     _onChallengeActivityAvailable();
+  }
+
+  /// Phase 6 / M2: `MainActivity.onMultiWindowModeChanged`.
+  void onMultiWindowModeChanged(bool value) {
+    inMultiWindow = value;
+    _reshieldIfMultiWindow();
   }
 
   /// `MainActivity.onPause`, including
   /// `WatcherService.onChallengeActivityPaused` (H-1 F1 deferred leave).
   void onActivityPaused() {
     activityResumed = false;
+    _confirmDeferredAbandon();
+    pendingPackageAtPause = pending?.packageName;
+  }
+
+  void _confirmDeferredAbandon() {
     final NativeAbandonCandidate? candidate = abandonCandidate;
     if (candidate == null) return;
     abandonCandidate = null;
@@ -744,7 +799,8 @@ class StaticNativeChallengeContract {
   void _recover(String packageName, NativeRecoverySignal signal) {
     recoveryAttempts.add(signal);
     final PendingLockChallenge ticket = ensurePendingChallenge(packageName);
-    if (activityResumed && readyChallenge == ticket) return;
+    // MultiWindowChallengePolicy.suppressDuplicateRecovery (Phase 6 / M2).
+    if (activityResumed && readyChallenge == ticket && !inMultiWindow) return;
     final bool shielded = _showShield();
     if (shielded) _foregroundForRecovery(ticket);
   }
@@ -786,6 +842,38 @@ class StaticNativeChallengeContract {
   bool _hideShield() {
     if (!shieldHideSucceeds) return false;
     shieldVisible = false;
+    multiWindowNotice = false;
     return true;
+  }
+
+  /// `OwnUiForegroundPolicy`: the pause-time ticket's package is the
+  /// current foreground, which only its exact `authorizePackage` can set.
+  bool _returnsToFreshGrant() {
+    final String? atPause = pendingPackageAtPause;
+    return atPause != null &&
+        atPause.trim().isNotEmpty &&
+        atPause == currentForegroundPackage;
+  }
+
+  /// `ProtectionAccessState.observeForeground(package, protected = false)`
+  /// with a zero grace period.
+  void _observeUnprotected(String packageName) {
+    final String? previous = currentForegroundPackage;
+    if (previous == packageName) return;
+    currentForegroundPackage = packageName;
+    if (previous != null) authorizedPackages.remove(previous);
+  }
+
+  /// `WatcherService.onChallengeActivityMultiWindow`
+  /// (`MultiWindowChallengePolicy.mustReshield`).
+  void _reshieldIfMultiWindow() {
+    final PendingLockChallenge? ticket = pending;
+    if (!inMultiWindow || ticket == null || !isProtected(ticket.packageName)) {
+      return;
+    }
+    abandonCandidate = null;
+    readyChallenge = null;
+    _showShield();
+    multiWindowNotice = true;
   }
 }

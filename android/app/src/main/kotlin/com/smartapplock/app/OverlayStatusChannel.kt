@@ -109,11 +109,15 @@ object OverlayStatusChannel {
                     val keyguardLocked = activity
                         .getSystemService(KeyguardManager::class.java)
                         .isKeyguardLocked
+                    // Phase 6 / M2: a challenge sharing the screen
+                    // (split screen / freeform) never releases the shield.
+                    val inMultiWindow = activity.isInMultiWindowMode
                     if (ChallengeReadyPolicy.canHandOff(
                             activityResumed = ProtectionRuntime.activityResumed,
                             keyguardLocked = keyguardLocked,
                             pendingMatches = exactPending != null,
-                        )
+                        ) &&
+                        MultiWindowChallengePolicy.mayReleaseShield(inMultiWindow)
                     ) {
                         // Keep the ticket persisted until authentication. A
                         // ready acknowledgement releases only the shield.
@@ -131,6 +135,9 @@ object OverlayStatusChannel {
                     } else {
                         // SCREEN_ON can resume behind keyguard. Preserve the
                         // pending ticket and shield for USER_PRESENT/retry.
+                        if (inMultiWindow && exactPending != null) {
+                            ProtectionOverlayController.showMultiWindowNotice(true)
+                        }
                         result.success(false)
                     }
                 }

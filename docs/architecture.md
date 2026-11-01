@@ -1997,3 +1997,35 @@ ticket. Back and in-app navigation are unchanged. Tests:
 `android/app/src/test/.../AlternateEntryPathTest.kt`,
 `android/app/src/test/.../LaunchIntentPolicyTest.kt`,
 `test/regression/alternate_entry_paths_test.dart` (both SIMULATED).
+
+## Phase 6 / M2 — Task & configuration hardening
+
+The detectors still never report Smart App Lock's own package. Two lifecycle
+hooks close the gaps that leaves, without touching `ChallengeReadyPolicy`,
+sessions, grace or tickets:
+
+```
+MainActivity.onResume
+  ├─ WatcherService.onOwnUiResumed          OwnUiForegroundPolicy:
+  │                                          enabled, no pending ticket, and
+  │                                          not returning to the fresh grant
+  │                                          of the ticket pending at the last
+  │                                          pause (current fg == that pkg)
+  │                                          → observeForeground(own, false)
+  │                                          (grace 0 revokes / grace starts)
+  └─ onChallengeActivityMultiWindow         in multi-window + protected ticket
+MainActivity.onMultiWindowModeChanged ──┘    → invalidate hand-off, show shield
+                                             + split-screen notice
+OverlayStatusChannel.markChallengeReady     canHandOff(...) AND !isInMultiWindowMode
+WatcherService.recoverProtected             duplicate guard only outside
+                                             multi-window (activityInMultiWindow)
+LockChallengeHost.didChangeMetrics          post-frame re-ack of the SAME ticket
+                                             (leaving split screen / rotation)
+```
+
+Rotation and multi-window resizes are handled by the manifest's
+`configChanges`, so the Activity is not recreated and the challenge route,
+ticket and attempt state stay. Recreation from an unlisted change re-presents
+the persisted ticket. Tests:
+`android/app/src/test/.../TaskConfigurationHardeningTest.kt`,
+`test/regression/task_configuration_hardening_test.dart` (both SIMULATED).

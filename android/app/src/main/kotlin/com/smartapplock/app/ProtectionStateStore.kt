@@ -309,6 +309,12 @@ object ProtectionRuntime {
     @Volatile private var lastHeartbeatElapsedMs = 0L
     @Volatile var activityResumed = false
 
+    /**
+     * Phase 6 / M2: `Activity.isInMultiWindowMode` of MainActivity, set in
+     * onResume / onMultiWindowModeChanged and cleared in onDestroy.
+     */
+    @Volatile var activityInMultiWindow = false
+
     @Volatile private var readyChallenge: ProtectionStateStore.PendingChallenge? = null
 
     fun heartbeat() {

@@ -25,6 +25,14 @@ object ProtectionOverlayController {
     private var shield: View? = null
     private var layoutParams: WindowManager.LayoutParams? = null
     private var showing = false
+    private var message: TextView? = null
+
+    private const val DEFAULT_MESSAGE = "Smart App Lock\nPreparing secure unlock…"
+
+    /** Phase 6 / M2: shown while unlock is refused in multi-window mode. */
+    private const val MULTI_WINDOW_MESSAGE =
+        "Smart App Lock\nUnlock is not available in split screen or a " +
+            "floating window.\nUse full screen, or return to Home."
 
     @Synchronized
     fun arm(context: Context): Boolean {
@@ -39,14 +47,14 @@ object ProtectionOverlayController {
                 isFocusable = true
                 importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             }
-            val message = TextView(appContext).apply {
-                text = "Smart App Lock\nPreparing secure unlock…"
+            val messageView = TextView(appContext).apply {
+                text = DEFAULT_MESSAGE
                 setTextColor(Color.WHITE)
                 textSize = 20f
                 gravity = Gravity.CENTER
             }
             root.addView(
-                message,
+                messageView,
                 FrameLayout.LayoutParams(
                     FrameLayout.LayoutParams.MATCH_PARENT,
                     FrameLayout.LayoutParams.MATCH_PARENT,
@@ -90,6 +98,7 @@ object ProtectionOverlayController {
             manager.addView(root, params)
             windowManager = manager
             shield = root
+            message = messageView
             layoutParams = params
             showing = false
             true
@@ -124,10 +133,25 @@ object ProtectionOverlayController {
         }
     }
 
+    /**
+     * Phase 6 / M2: switches the shield text between the default and the
+     * multi-window notice. Text only: visibility and touch blocking are
+     * unchanged. The default text returns whenever the shield is hidden.
+     */
+    @Synchronized
+    fun showMultiWindowNotice(active: Boolean) {
+        try {
+            message?.text = if (active) MULTI_WINDOW_MESSAGE else DEFAULT_MESSAGE
+        } catch (_: Exception) {
+            // Cosmetic only; the shield state is unaffected.
+        }
+    }
+
     /** Makes the shield inert but retains the full-size pre-armed window. */
     @Synchronized
     fun hide(): Boolean {
         val active = shield ?: return true
+        showMultiWindowNotice(false)
         val manager = windowManager ?: return false
         val params = layoutParams ?: return false
         return try {
@@ -176,6 +200,7 @@ object ProtectionOverlayController {
 
     private fun clearState() {
         shield = null
+        message = null
         windowManager = null
         layoutParams = null
         showing = false

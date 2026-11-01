@@ -1385,7 +1385,7 @@ executed. None of this is device evidence.
   the last same-package observation, no slides while our UI is in front).
   This is not an entry bypass, because it needs a legitimate unlock first.
   Device reachability is UNVERIFIED. It belongs to M2 task-switching
-  hardening.
+  hardening. **Addressed in Phase 6 / M2 (M2-F1, below).**
 - **Destination is never caller-chosen.** The launch-extra sanitizer drops
   data and extras from external intents, so Smart App Lock always opens at
   its shell (or the challenge).
@@ -1457,3 +1457,224 @@ Expected for every command:
 - the PID is unchanged, except after a cold swipe-away on OEMs that kill
   the process;
 - opening a protected app afterwards is challenged immediately.
+
+---
+
+# Phase 6 / M2 — Task & Configuration Hardening
+
+PRD v2.1, Phase 6 — Bypass Hardening, Milestone 2. Scope, verbatim: Recents
+Edge Cases ("Stress-test task switching."), Split Screen ("Test
+split-screen/multi-window where relevant."), Rotation ("Test
+orientation/configuration changes where supported."). Acceptance gate:
+implement or verify every requirement; run relevant automated checks and
+targeted physical QA; record evidence and unresolved risks; do not advance
+while a security-critical regression remains open.
+
+**Status: implemented and verified by simulated tests only. Physical-device
+QA for this milestone has not been run.** It is deferred to the combined
+Phase 6 device round after M3 (scenarios S5–S8 below, run together with M1
+S1–S4). The PRD gate is not waived: M2 is not accepted until that round
+passes. The Phase 5 release gates (F3 process death, successful biometric)
+remain open and are not affected by this milestone.
+
+## Findings fixed
+
+**M2-F1 — protected app → Smart App Lock's own UI was not a leave (M1
+Concern 3).** The detectors drop our own package (5D: MainActivity also hosts
+challenges). A direct switch from an authorized protected app to our UI
+therefore never reached `ProtectionAccessState.observeForeground`: grace 0
+did not revoke and the grace clock never started, so the return was a
+same-package observation (ALLOW, plus an H-2 slide). Reachable in code via
+Back from a task that `launchApp` started (our task is the return target),
+a split-screen pane, and possibly quick-switch; Recents, the launcher and
+System UI were not affected because they are reported. Impact: re-entry
+without a credential after a legitimate unlock, bounded by the session
+deadline. Device reachability is UNVERIFIED.
+
+Fix: `MainActivity.onResume` → `WatcherService.onOwnUiResumed`
+(`OwnUiForegroundPolicy`). With protection enabled and no ticket pending,
+the resume is applied as an unprotected foreground change to our own
+package: immediate re-lock at grace 0, or the configured grace. Two kinds of
+resume are not a leave:
+
+- a resume that hosts a challenge;
+- a resume that returns to the fresh grant of the challenge it hosted. Here
+  the package whose ticket was pending at the previous pause is the current
+  foreground, which only that ticket's exact `authorizePackage` can have
+  set. This covers, for example, a system credential screen, and the fresh
+  grant survives until `launchApp`.
+
+Final gate: the first version used a boolean "pending at pause" snapshot.
+After an abandoned ticket and a grace re-entry into another app, a stale
+`true` could suppress that app's leave. The package comparison closes this;
+see `staleSnapshotNeverSuppressesTheLeaveOfAnotherApp`. Own-package Accessibility events are still ignored:
+Flutter route changes emit window events and would revoke a fresh grant.
+
+**M2-F2 — a challenge in multi-window could release the shield beside a
+live protected app.** `markChallengeReady` accepted a hand-off while
+MainActivity shared the screen. The `recoverProtected` duplicate guard
+(`activityResumed && challengeReady`) also skipped re-covering a protected
+app reported in another window. On Android 10+ multi-resume both activities
+stay resumed, so the protected app could stay interactable next to the PIN
+screen. Device reachability is UNVERIFIED.
+
+Fix (additive, `MultiWindowChallengePolicy`; `ChallengeReadyPolicy` is
+unchanged):
+
+- `markChallengeReady` is refused while `Activity.isInMultiWindowMode`. The
+  shield stays, showing "Unlock is not available in split screen or a
+  floating window. Use full screen, or return to Home."
+- Entering multi-window (`onMultiWindowModeChanged`), or resuming in it,
+  with a protected ticket pending withdraws the hand-off and re-raises the
+  shield.
+- The duplicate guard applies only outside multi-window.
+- After leaving multi-window the challenge route re-acknowledges the same
+  ticket on the metrics change (`didChangeMetrics`), with the existing 1 s
+  retry as fallback.
+
+**Rotation / configuration: verified, no change needed.** MainActivity
+declares `orientation|screenSize|smallestScreenSize|screenLayout|density|
+uiMode|fontScale|locale|...` in `configChanges`. Rotation and multi-window
+resizes therefore do not recreate the Activity. The route, ticket, hand-off
+and attempt counters stay. An unlisted change recreates the Activity: the
+ticket is persisted, the intent is re-sanitized (M1), the host re-presents
+the same generation, and a grant still needs the credential plus the exact
+ticket.
+
+## Automated evidence (simulated)
+
+| Check | Result |
+|---|---|
+| Kotlin JVM policy tests | 214 passed (194 existing + 20 `TaskConfigurationHardeningTest.kt`) |
+| New Flutter tests | 17 passed (`test/regression/task_configuration_hardening_test.dart`) |
+| Existing native-model users (focused) | 175 passed, 0 failed, after the model change (11 files) |
+| Flutter test suite (full) | 1040 passed (1023 existing + 17 new), 0 failed, 0 skipped |
+| Native type-check (android-all + Flutter stubs) | PASS (62 classes) |
+| `flutter analyze` | PASS (no issues) |
+| Mutation checks | 13 / 13 killed (Kotlin: 4 policy + 3 wiring; Dart: metrics re-ack, own-UI leave, challenge-return gate, stale snapshot, duplicate guard, multi-window blocker) |
+
+Covered: protected → own UI → protected at grace 0 and grace > 0; pending and
+challenge-host resumes are not leaves; Recents/launcher revocation
+unchanged; X → Y → X; rapid switching (25×); a multi-window challenge is
+refused, keeps the ticket and can never authorize; entering multi-window
+withdraws a hand-off; the duplicate guard re-covers in multi-window; metrics
+re-ack after leaving multi-window; rotation storm (one route, one generation,
+one grant, wrong attempts kept); lockout across rotation; Activity
+recreation with the process alive (same ticket, single grant). Kotlin tests
+replay policy calls and pin the wiring by static source contracts. Dart tests
+drive the production host against the native model. **None of this is
+device evidence; real multi-window placement, multi-resume focus and OEM
+window modes are not simulated.**
+
+## Known limitations and open items
+
+- **Pane focus changes are invisible (OS limit, Android 10+).** In
+  multi-resume, switching focus between panes produces no `onResume` /
+  `onPause`. Window events are not guaranteed either. Enforcement relies on
+  the multi-window flag and on detector reports of the protected app.
+  Window enumeration would need an Accessibility configuration change
+  (`canRetrieveWindowContent`, `typeWindowsChanged`), which needs approval.
+- **Shield liveness in multi-window.** The shield is a full-display overlay
+  (it also covers the divider), so the challenge cannot be completed in
+  multi-window. The user leaves split screen (Recents / nav buttons /
+  long-press Recents) or taps the shield's existing "Return to Home" (safe
+  exit). If the Flutter route closes under the shield, recovery waits for
+  the next Activity resume. This is fail-closed and simulated only.
+- **Safe exit in multi-window (UNVERIFIED, unchanged mechanism).** Android
+  decides where Home goes in split screen (secondary pane on Android 7–11;
+  split dismissed on newer versions). If the protected app remains visible
+  in a pane after "Return to Home", its authorization is still revoked and
+  its next report is challenged. On Android 10+ multi-resume a pane focus
+  change may produce no report (see above). S6.4 records this.
+- **Leaving multi-window: ordering is unverified.** If Android delivers
+  `onMultiWindowModeChanged(false)` and a frame while MainActivity is still
+  resumed but already losing its pane to the protected app, the
+  re-acknowledgement could release the shield before `onPause`. The next
+  protected report re-covers (the duplicate guard needs `activityResumed`).
+  This is a platform-timing limitation; S6.1 checks it.
+- **Own UI next to an unlocked app.** Opening Smart App Lock beside an
+  unlocked protected app revokes that app's authorization. Its pane stays as
+  it is until the app is reported again (no lifecycle event); the next
+  report is challenged.
+- **Not refused at the manifest.** `resizeableActivity="false"` was not set:
+  it needs approval, and Android ignores it on large screens (sw ≥ 600 dp)
+  for apps targeting SDK 36 (Android 16).
+- **UNVERIFIED surfaces:** picture-in-picture of a revoked protected app;
+  OEM freeform / pop-up / flexible windows; foldables; Recents thumbnails of
+  protected apps (their own content, an OS limitation unless they set
+  FLAG_SECURE); quick-switch gestures.
+- **Duplicate ticket after an own-UI leave.** A leftover pending ticket is
+  re-covered through `foregroundForRecovery` → the host's resume path
+  (simulated).
+
+## Physical-device QA required (combined Phase 6 round)
+
+Run after M3 together with M1 S1–S4, on the same build. Grace is 0 unless a
+step says otherwise. Each step passes only if all of the following hold:
+
+- the protected app is never usable without a challenge;
+- wrong credentials never open it;
+- there is no stacked or looping challenge;
+- the correct credential opens it once.
+
+Record the device, Android version, OEM skin, navigation mode, and any step
+the device does not support.
+
+**S5 — Recents and task switching**
+1. Unlock A. Recents → A's card: expect a challenge. Record A's thumbnail
+   (OS) and Smart App Lock's thumbnail during a challenge (expected blank:
+   FLAG_SECURE).
+2. A → Recents → unprotected U → Recents → A: expect a challenge.
+3. A → Recents → protected B: expect B challenged; cancel. Recents → A:
+   expect a challenge.
+4. **(Essential, M2-F1.)** Unlock A from its challenge. Press Back in A
+   until Smart App Lock's shell shows, then return to A (Recents, or Back
+   again if Android goes back to A): expect a challenge. Repeat with grace
+   30 s: expect a return within 30 s allowed, and a challenge after it.
+5. Quick-switch gesture or double-tap Recents between A and Smart App Lock,
+   and between A and U, 10× fast: expect A never opens without a challenge,
+   and no challenge loop after a correct PIN.
+6. During a challenge, open Recents and come back. Then swipe Smart App
+   Lock's task away during a challenge and reopen A: expect a challenge.
+7. If a device credential or biometric is enabled, unlock A with it and
+   expect exactly one challenge. This is a record only; biometric stays an
+   open Phase 5 gate.
+
+**S6 — Split screen / multi-window (where supported)**
+1. **(Essential, M2-F2.)** With A's challenge shown, enter split screen.
+   Expect the shield with the split-screen notice in both panes, and A not
+   usable. Leave split screen: expect the challenge usable and a correct PIN
+   opening A once. Repeat, but leave split screen by dismissing Smart App
+   Lock's pane so that A goes full screen: A must be shielded or challenged
+   before it responds.
+2. **(Essential, Android 10+.)** Split screen with U + Smart App Lock, then
+   open A in U's pane: expect the shield and notice. Tap between the panes
+   repeatedly and record whether A ever responds.
+3. With A unlocked, put A and Smart App Lock side by side. Record whether
+   A's pane responds before A is reported again; the next A report must be
+   challenged.
+4. **(Essential.)** While the multi-window shield is shown, confirm the
+   user can always get out (Home, Recents, exiting split). Record any stuck
+   state. Then tap the shield's "Return to Home". Record where Home appears
+   and whether A stays visible in a pane (including a minimized docked
+   pane). Tap A's pane: it must be challenged before it responds. A
+   response without a challenge is a security failure; report it.
+5. Use OEM freeform / pop-up / flexible window, and picture-in-picture for a
+   protected video app: record the behaviour. These are UNVERIFIED surfaces.
+
+**S7 — Rotation and configuration**
+1. **(Essential.)** With a challenge shown and auto-rotate on, rotate 5×.
+   Expect one challenge, no flash of A's content, the wrong-attempt count
+   kept, and a correct PIN opening A once.
+2. Reach a lockout, then rotate: expect the lockout to persist.
+3. Rotate while drawing a pattern (pattern credential).
+4. Change dark mode, font size and display size while a challenge is
+   pending: expect the challenge kept and no second challenge.
+5. Rotate after unlocking: expect A to stay usable without a re-challenge.
+6. Fold and unfold, if the device is foldable.
+
+**S8 — Regression spot-check after M2:** Home and Back from a challenge,
+screen off / on with wake re-lock, grace 0 and grace > 0, and M1 S1 step 1.
+
+Essential steps that cannot be simulated: S5.1, S5.4, S6.1, S6.2, S6.4,
+S7.1.

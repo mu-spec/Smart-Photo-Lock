@@ -499,6 +499,26 @@ class _LockChallengeHostState extends State<LockChallengeHost>
     }
   }
 
+  /// Phase 6 / M2 (rotation, split screen, freeform): a window metrics
+  /// change while a challenge is on screen. Rotation and resize keep this
+  /// route, its native ticket and its attempt state (the Activity handles
+  /// these configuration changes without recreation). Native refuses a
+  /// ready acknowledgement while the Activity is in multi-window mode and
+  /// re-raises the shield when it enters it, so leaving split screen or a
+  /// floating window needs a fresh acknowledgement. This re-acknowledges
+  /// the SAME ticket after the next frame. It only reports readiness;
+  /// native decides, and nothing is granted here.
+  @override
+  void didChangeMetrics() {
+    final PendingLockChallenge? ticket = _activeNativeChallenge;
+    if (!_challenging || ticket == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _challenging && _activeNativeChallenge == ticket) {
+        unawaited(_handOffChallengeReady());
+      }
+    });
+  }
+
   /// Phase 5M/5N/5P/5O: Home-press handling — dismiss the on-screen
   /// challenge. Only called on a REAL leave (`paused`/`hidden`); the
   /// transient `inactive` never reaches here, so a cancelled

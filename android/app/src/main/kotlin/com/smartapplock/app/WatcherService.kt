@@ -635,8 +635,14 @@ class WatcherService : Service() {
             // Duplicate detector events must not re-cover or re-promote an
             // exact rendered challenge. Screen-off invalidates ready state
             // and replaces the generation before reaching recovery.
-            if (ProtectionRuntime.activityResumed &&
-                ProtectionRuntime.isChallengeReady(pending)
+            // Phase 6 / M2: only while the challenge Activity is not sharing
+            // the screen (multi-window); otherwise the protected app can be
+            // visible beside it and must be re-covered.
+            if (MultiWindowChallengePolicy.suppressDuplicateRecovery(
+                    activityResumed = ProtectionRuntime.activityResumed,
+                    challengeReady = ProtectionRuntime.isChallengeReady(pending),
+                    inMultiWindow = ProtectionRuntime.activityInMultiWindow,
+                )
             ) {
                 return
             }
@@ -684,6 +690,57 @@ class WatcherService : Service() {
                 packageName,
                 WakeRecoverySignal.FOREGROUND,
             )
+        }
+
+        /**
+         * Phase 6 / M2: `MainActivity.onResume`. With no pending ticket the
+         * resumed Activity is Smart App Lock's own UI, which is a foreground
+         * change like any other app (see [OwnUiForegroundPolicy]). Only the
+         * process-local authorization mirror is touched; tickets, the shield
+         * and the hand-off are not. [pendingPackageAtPause]: the package
+         * whose ticket was pending when the Activity last paused, or null.
+         */
+        @Synchronized
+        fun onOwnUiResumed(context: Context, pendingPackageAtPause: String?) {
+            if (!OwnUiForegroundPolicy.isLeave(
+                    protectionEnabled = ProtectionStateStore.isEnabled(context),
+                    hasPendingChallenge =
+                        ProtectionStateStore.pendingChallenge(context) != null,
+                    pendingPackageAtPause = pendingPackageAtPause,
+                    currentForegroundPackage =
+                        ProtectionAccessState.currentForegroundPackage(),
+                )
+            ) {
+                return
+            }
+            ProtectionAccessState.observeForeground(
+                packageName = context.packageName,
+                protected = false,
+                nowElapsedMs = SystemClock.elapsedRealtime(),
+            )
+        }
+
+        /**
+         * Phase 6 / M2: MainActivity entered multi-window mode, or resumed in
+         * it, while a protected ticket is unresolved. The protected app may be
+         * visible beside the challenge, so any earlier hand-off is withdrawn
+         * and the shield is raised again (see [MultiWindowChallengePolicy]).
+         * Leaving multi-window changes nothing here: the challenge route
+         * re-acknowledges readiness and native accepts it only in full screen.
+         */
+        @Synchronized
+        fun onChallengeActivityMultiWindow(context: Context, inMultiWindow: Boolean) {
+            val pending = ProtectionStateStore.pendingChallenge(context)
+            val protectedPending = pending != null &&
+                ProtectionStateStore.isEnabled(context) &&
+                ProtectionStateStore.isProtected(context, pending.packageName)
+            if (!MultiWindowChallengePolicy.mustReshield(inMultiWindow, protectedPending)) {
+                return
+            }
+            abandonCandidate = null
+            ProtectionRuntime.invalidateChallengeHandoff()
+            ProtectionOverlayController.show(context)
+            ProtectionOverlayController.showMultiWindowNotice(true)
         }
 
         fun onChallengeActivityAvailable(context: Context) {

@@ -28,6 +28,9 @@ import java.lang.ref.WeakReference
  */
 class MainActivity : FlutterFragmentActivity() {
 
+    /** Phase 6 / M2: package of the ticket pending at the last onPause. */
+    private var pendingPackageAtPause: String? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         // Phase 6 / M1 review: must run before super.onCreate, which is where
         // the Flutter embedding reads launch extras from getIntent().
@@ -42,10 +45,31 @@ class MainActivity : FlutterFragmentActivity() {
         // post-frame ready acknowledgement issued from that callback must
         // never be rejected because native state was one callback behind.
         ProtectionRuntime.activityResumed = true
+        ProtectionRuntime.activityInMultiWindow = isInMultiWindowMode
         super.onResume()
         currentActivity = WeakReference(this)
+        // Phase 6 / M2: our own UI (no pending ticket) is a foreground change;
+        // a resume into multi-window with a pending ticket keeps the shield.
+        WatcherService.onOwnUiResumed(this, pendingPackageAtPause)
+        pendingPackageAtPause = null
+        WatcherService.onChallengeActivityMultiWindow(this, isInMultiWindowMode)
         acceptRecoveryIntent(intent, "onResume")
         WatcherService.onChallengeActivityAvailable(this)
+    }
+
+    /**
+     * Phase 6 / M2: entering split screen / freeform while a challenge is
+     * pending re-raises the shield (see [MultiWindowChallengePolicy]). The
+     * one-argument form is overridden because it is the variant Android
+     * calls on every supported API level (24+); on API 26+ the two-argument
+     * framework method delegates to it.
+     */
+    @Deprecated("Deprecated in Java")
+    @Suppress("DEPRECATION")
+    override fun onMultiWindowModeChanged(isInMultiWindowMode: Boolean) {
+        super.onMultiWindowModeChanged(isInMultiWindowMode)
+        ProtectionRuntime.activityInMultiWindow = isInMultiWindowMode
+        WatcherService.onChallengeActivityMultiWindow(this, isInMultiWindowMode)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -63,11 +87,13 @@ class MainActivity : FlutterFragmentActivity() {
         ProtectionRuntime.activityResumed = false
         // H-1 F1: confirms a leave reported just before this pause.
         WatcherService.onChallengeActivityPaused(this)
+        pendingPackageAtPause = ProtectionStateStore.pendingChallenge(this)?.packageName
         super.onPause()
     }
 
     override fun onDestroy() {
         ProtectionRuntime.activityResumed = false
+        ProtectionRuntime.activityInMultiWindow = false
         if (currentActivity?.get() === this) {
             currentActivity = null
         }

@@ -10,8 +10,9 @@ implemented (5A–5U); Phase 5 manual QA round CLOSED WITH LIMITATIONS**
 (not fully security-verified, not production-release-ready; open release
 gates: F3 process-death device verification and successful biometric
 verification; see `docs/regression.md`, final QA round). Phase 6 /
-Milestone 1 (Alternate Entry Paths) implemented and simulated-tested;
-its physical-device QA is pending (`docs/regression.md`, Phase 6 / M1) — production scaffold, architecture, navigation, design
+Milestone 1 (Alternate Entry Paths) and Milestone 2 (Task & Configuration
+Hardening) implemented and simulated-tested; their physical-device QA is
+pending (combined Phase 6 round; `docs/regression.md`, Phase 6 / M1, M2) — production scaffold, architecture, navigation, design
 system, persistence, secure storage, full authentication with settings,
 installed-apps management, the complete capability/permission layer,
 and the **core lock engine**: foreground detection (usage-stats +
@@ -87,6 +88,7 @@ top of the protected app) remains for a later phase.
 | 5T | Process recreation (shared-store recovery, secure re-arm on resume, fail-closed fresh states) | ✅ code · ⚠️ device UNVERIFIED (release gate) |
 | 5U | Core lock regression (12-scenario end-to-end gauntlet: no bypass, no stacking, graceful recovery) | ✅ simulated · QA closed with limitations |
 | 6-M1 | Alternate entry paths (notification, deep link, share, shortcut/widget entries enforced; own Activity ignores external deep links and launch extras) | ✅ code + simulated · ⚠️ device QA pending |
+| 6-M2 | Task & configuration hardening (own-UI switch is a leave; no unlock in split screen/freeform; rotation keeps ticket, route and attempts) | ✅ code + simulated · ⚠️ device QA pending |
 
 ### Phase 1A ✅ — Create Android Project
 
