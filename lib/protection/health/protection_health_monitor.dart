@@ -28,6 +28,11 @@ import 'protection_health_engine.dart';
 ///
 /// Refresh boundaries (no timer, no polling, no background work):
 ///  * [refresh] runs one collection; concurrent calls share it;
+///  * `refresh(afterChange: true)` (Phase 7 / M3: return from Android
+///    Settings, app resume, explicit re-check) never reuses a collection
+///    that started before the possible change: it queues exactly ONE
+///    follow-up collection, and every later request joins that newer one
+///    (at most one running + one queued; no older result can win);
 ///  * every probe has a [probeTimeout] → a hung bridge reads as UNKNOWN;
 ///  * [latest] re-applies the age rule, so an un-refreshed report can never
 ///    stay SECURE for longer than [maxAge] (it becomes ATTENTION REQUIRED
@@ -77,6 +82,7 @@ class ProtectionHealthMonitor {
       StreamController<ProtectionHealthReport>.broadcast();
 
   Future<ProtectionHealthReport>? _inFlight;
+  Future<ProtectionHealthReport>? _queued;
   ProtectionHealthReport? _last;
   String? _lastSignature;
 
@@ -99,8 +105,27 @@ class ProtectionHealthMonitor {
 
   /// Collects fresh signals and evaluates them. Concurrent calls share one
   /// collection.
-  Future<ProtectionHealthReport> refresh() =>
-      _inFlight ??= _collect().whenComplete(() => _inFlight = null);
+  ///
+  /// [afterChange]: the caller knows state may have changed since any
+  /// running collection started (Phase 7 / M3), so the result must come
+  /// from a collection that starts after this call. Bounded: one queued
+  /// follow-up at most, shared by every request made while it waits.
+  Future<ProtectionHealthReport> refresh({bool afterChange = false}) {
+    final Future<ProtectionHealthReport>? queued = _queued;
+    if (queued != null) return queued;
+    final Future<ProtectionHealthReport>? running = _inFlight;
+    if (running == null) return _start();
+    if (!afterChange) return running;
+    return _queued = running.then<void>((_) {}, onError: (Object _) {}).then(
+      (_) {
+        _queued = null;
+        return _inFlight ?? _start();
+      },
+    );
+  }
+
+  Future<ProtectionHealthReport> _start() =>
+      _inFlight = _collect().whenComplete(() => _inFlight = null);
 
   Future<void> dispose() => _changes.close();
 

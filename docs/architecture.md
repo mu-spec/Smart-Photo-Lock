@@ -2137,7 +2137,7 @@ snapshot counts as stale.
 collection; every read is bounded by a 3 s timeout); change events only
 when the report signature changes. No polling, timer, background work or
 keep-alive. Display-time refresh is Phase 7 / M2; refresh on return from
-Android Settings is Phase 7 / M3.
+Android Settings is Phase 7 / M3 (implemented; see that section).
 
 **Observational contract.** The monitor never calls
 `ProtectionBootstrap.synchronize`, `start`, `stop`, `configureProtection`,
@@ -2219,12 +2219,15 @@ change.
 one fresh check and reports "no longer reports" only when a fresh, non-stale
 report lacks the same issue code + component; otherwise "still reports" or
 "could not check". After opening Android Settings it only says to come back
-and tap Check again (automatic refresh on return is Phase 7 / M3).
+and tap Check again. Superseded in Phase 7 / M3: the outcome is judged
+automatically from the fresh check made on return, and an issue whose
+component the fresh check could not observe is "could not check", never
+"no longer reports".
 
 **Refresh boundaries (M2).** One coalesced refresh when Home first appears,
 when the Home tab becomes visible again, when the details screen opens or
 closes, after a repair that returns in-app, and on Check again. No polling,
-no app-resume refresh (M3), no background work.
+no app-resume refresh (added in M3, below), no background work.
 
 **Monitor refinement.** The monitor skips the two platform biometric probes
 when biometric unlock is off in the app; the engine already reports
@@ -2237,3 +2240,79 @@ which configures native protection from the encrypted Dart settings
 (fail-closed on read failure) and starts the watcher if needed. The new
 route is in-app only (Phase 6 / M1 ignores platform route pushes); lock
 challenges still come only from `LockChallengeHost` and the native ticket.
+
+## Phase 7 / M3 — Health refresh & regression
+
+PRD v2.1, Phase 7 / Milestone 3: automatic refresh, revocation and
+restoration regression, lifecycle hardening. M3 reuses the M1 engine and
+monitor and the M2 controller and screens; there is still exactly one
+health classification and no second probe path.
+
+**Trigger mapping.**
+
+| PRD trigger | Mechanism | Refresh kind |
+| --- | --- | --- |
+| A–C return from Android Settings (overlay, Accessibility, Usage Access, notifications, battery / App info) | `HealthResumeTrigger` on Home and on the details screen: a real leave (paused / hidden / detached) followed by resumed | after-change |
+| D lifecycle resumed | same trigger; inactive → resumed (shade, dialog, quick-settings tile) | plain (joins a running check) |
+| E in-app configuration changes (PIN / pattern, protected apps on other tabs) | Home tab becomes active again | after-change |
+| F Check again (Home card, details screen) | button | after-change |
+| G return to Home / reopen details | details pop → Home (after-change); details open (plain) | as listed |
+
+The trigger only fires for the screen the user is looking at: Home must be
+the active tab AND the top route; the details screen must be the top route.
+A screen covered by the details screen, a setup screen or a lock challenge
+does nothing, so one resume causes at most one request. Settings repairs
+opened from details are judged automatically from the check made on return
+(only when Settings actually opened; a failed open keeps the manual-path
+notice).
+
+**Monitor bounding (`ProtectionHealthMonitor.refresh({afterChange})`).** At
+most one running collection plus one queued follow-up. A plain request joins
+whatever is running (or queued). An after-change request never reuses a
+collection that started before the possible change: it queues one
+follow-up, and every later request (plain or after-change) shares that same
+follow-up. So a burst of resumes costs at most two collections, no request
+receives data older than one it already received, and each collection still
+reads sequentially with the 3 s per-read timeout. No timer, polling loop,
+background work or keep-alive was added; the only timer remains the
+controller's single re-render at expiry of the 30 s freshness window.
+
+**Controller freshness.** While an after-change refresh runs, a previous
+SECURE is hidden (`report` is null, the UI shows "Checking protection…");
+a previous non-secure report stays visible (conservative). The generation
+counter means only the newest request updates the view; a failed check shows
+"unavailable" and never the old report; disposal cancels the stale-render
+timer and ignores late results. Expired snapshots are re-evaluated as stale
+(ATTENTION), never SECURE.
+
+**Lifecycle classification.** `HealthResumeTrigger` uses the same split as
+`LockChallengeHost`: paused / hidden / detached are a real leave, inactive is
+transient; a repeated resumed is ignored; `attach` / `detach` are idempotent
+and `dispose` detaches. Screen off/on maps to paused → resumed (a real
+leave).
+
+**Outcome fix (M2 defect found by M3 regression).** `outcome()` used to
+report "A fresh check no longer reports …" when a fresh report simply could
+not observe the component (for example the native health read failed on
+return, so the background-restriction issue vanished as unknown). Now an
+issue that is absent only because its component is `unknown` (or missing)
+yields "could not check"; resolved requires a fresh, non-stale report in
+which the component was actually observed.
+
+**Security boundary (unchanged).** Refresh is observational: it reads the
+same signals as M1 (`getHealth`, capability checks, encrypted settings,
+biometric availability only when biometric unlock is on). It never
+authorizes, revokes, clears or consumes a ticket, marks a challenge ready,
+shows or hides a challenge, resets lockout, starts or restarts the watcher
+(Restart protection stays an explicit M2 tap), or calls biometric or device
+credential prompts. The pending-challenge path (`LockChallengeHost`, native
+ticket) is untouched and re-presents on return as before.
+
+**Limits.** No polling: a Home screen left visible for over 30 s without any
+trigger shows the stale state (ATTENTION REQUIRED, "Check again") until the
+next trigger, never an old SECURE. Battery Saver toggled from quick settings
+arrives as inactive → resumed (plain refresh; joins a running check). The
+Security tab's own resume synchronization is pre-existing (Phase 4G) and is
+not a health refresh. A second after-change request during a running check
+costs one extra collection by design. Whether OEM Settings pages report the
+change before the app resumes is device-dependent (combined device QA).

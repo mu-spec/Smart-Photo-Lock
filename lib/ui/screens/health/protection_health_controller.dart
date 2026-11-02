@@ -21,6 +21,14 @@ import '../../../protection/health/protection_health_monitor.dart';
 ///  * A failed refresh discards the shown report ([failed] = true), so a
 ///    previous SECURE is never shown after a failure.
 ///  * After [dispose], completions are ignored.
+///  * Phase 7 / M3: while a refresh requested after a possible change
+///    (`afterChange: true`: return from Android Settings, app resume,
+///    explicit re-check) is running, a previous SECURE is not shown
+///    ([report] is null, so the screen shows "Checking protection…");
+///    a previous non-secure report stays visible (conservative).
+///  * Only the newest request updates the view; an older completion
+///    never overwrites it (the monitor also guarantees newer requests
+///    never receive older data).
 class ProtectionHealthController extends ChangeNotifier {
   ProtectionHealthController(this._monitor, {DateTime Function()? now})
       : _now = now ?? DateTime.now;
@@ -31,6 +39,7 @@ class ProtectionHealthController extends ChangeNotifier {
   bool _checking = false;
   bool _failed = false;
   bool _disposed = false;
+  bool _verifying = false;
   Timer? _staleTimer;
   int _generation = 0;
 
@@ -47,26 +56,33 @@ class ProtectionHealthController extends ChangeNotifier {
   /// or the most recent refresh failed.
   ProtectionHealthReport? get report {
     if (_failed) return null;
-    return _monitor?.latest();
+    final ProtectionHealthReport? latest = _monitor?.latest();
+    if (_verifying && latest?.state == ProtectionHealthState.secure) {
+      return null;
+    }
+    return latest;
   }
 
   /// Collects fresh signals through the shared monitor. Concurrent calls
-  /// (from this or any other screen) share one probe.
-  Future<ProtectionHealthReport?> refresh() async {
+  /// (from this or any other screen) share one probe. [afterChange]: see
+  /// [ProtectionHealthMonitor.refresh].
+  Future<ProtectionHealthReport?> refresh({bool afterChange = false}) async {
     final ProtectionHealthMonitor? monitor = _monitor;
     if (monitor == null || _disposed) return null;
     final int generation = ++_generation;
     _checking = true;
+    if (afterChange) _verifying = true;
     _notify();
     ProtectionHealthReport? fresh;
     bool failed = false;
     try {
-      fresh = await monitor.refresh();
+      fresh = await monitor.refresh(afterChange: afterChange);
     } catch (_) {
       failed = true;
     }
     if (_disposed || generation != _generation) return fresh;
     _checking = false;
+    _verifying = false;
     _failed = failed;
     _scheduleStaleRender(failed ? null : fresh, monitor.maxAge);
     _notify();

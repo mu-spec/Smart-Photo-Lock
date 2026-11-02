@@ -2006,7 +2006,8 @@ large font scaling on device, the real watcher restart on ColorOS.
 
 Run with the M1 H-cases in the combined Phase 6 + Phase 7 round. Each case
 reuses the H setup; tap **Check again** on Home or the details screen after
-returning from Android Settings (automatic refresh on return is M3).
+returning from Android Settings (automatic refresh on return is M3; with M3
+these steps run through the consolidated plan below and no tap is needed).
 
 | # | With | Steps | Expected |
 | --- | --- | --- | --- |
@@ -2024,3 +2025,107 @@ screen (text readable, buttons ≥ 48 dp). Minimum to accept M2 on device:
 D1–D5 and D7 on the Oppo, D6 where supported; D8 stays UNVERIFIED until a
 compatible device is available. Phase 5 F3 and biometric success remain
 UNVERIFIED release gates; Phase 6 is not device-verified.
+
+# Phase 7 / M3 — Protection Health refresh & regression
+
+PRD v2.1, Phase 7 / Milestone 3. Design: `docs/architecture.md` (Phase 7 /
+M3); platform limits: `docs/capabilities.md` (Health refresh limits). All
+results below are automated and SIMULATED (production Dart paths over
+in-memory services and Flutter lifecycle events); none is device evidence.
+
+## Automated evidence (Phase 7 / M3)
+
+| Suite | Tests | Evidence level | Covers |
+| --- | --- | --- | --- |
+| `test/ui/health/protection_health_refresh_test.dart` (new) | 34 | widgets + production controller/monitor over simulated services | `HealthResumeTrigger`: real leave vs shade, duplicate resumed ignored, detach. Controller: old SECURE hidden during an after-change check, non-secure kept, rapid requests → newest wins with newest data. Return/resume: revoked while away shown without a tap, restored → SECURE; never the old SECURE while re-checking; shade pulls coalesce, repeated returns queue at most one more probe; hidden Home (other tab) and covered Home / covered details do not probe; Settings repair judged automatically on return; failed check on return → "could not check", never fixed; Settings not opened → no automatic judgement; timed-out native read → UNKNOWN / ATTENTION; dispose during a check → no late update, no observer left. Full app shell: revoke / restore round-trip next to the existing Security-tab and capability resume checks. Revocation table (11): overlay, Accessibility off, Accessibility unbound, Usage Access, both detection paths, notifications (setup wording), watcher stopped, background restriction, native enforcement not armed, native read failure, no protected apps; each revoke → state + code + category + repair action, restore → SECURE, no session. Battery Saver and fingerprint: advisories only. Watcher stop/restart: health never restarts it. Security: Settings round-trips and resume refreshes keep a pending ticket and never authorize, mark ready, show/hide a challenge or touch lifecycle; full app: an interrupted challenge re-presents on return with health details open and only the exact PIN grants |
+| `test/protection/health/protection_health_monitor_test.dart` | 21 (+3) | production Dart | after-change request observes a change made during a running collection; later requests join the newer one; queued collection still runs after timeouts; one running + one queued bound |
+| `test/ui/health/health_presentation_test.dart` | 16 (+1) | pure Dart | an issue that only became unobservable is "unknown", never "resolved" |
+
+Defect found and fixed by this regression: M2's repair outcome reported
+"A fresh check no longer reports …" when the native read failed on return
+(the issue vanished as UNKNOWN). Now unknown.
+
+Mutation checks (Dart, health suites): 12/12 killed:
+- after-change ignored;
+- queued follow-up not shared;
+- plain request preferring the older running collection;
+- old SECURE not hidden;
+- generation guard removed;
+- inactive treated as a leave;
+- duplicate resumed not ignored;
+- Home visibility ignored;
+- Home trigger never attached;
+- details auto-judge removed;
+- details route check removed;
+- unobservable outcome judged resolved.
+
+The details-route mutant first SURVIVED; it was killed after the covered-details assertion was added.
+
+Not covered automatically: real Android Settings pages per OEM (timing of
+when a change becomes visible), ColorOS power managers, Talkback, real
+screen-off timing.
+
+## Consolidated Phase 6 + Phase 7 physical-device QA plan (NOT executed)
+
+One round, one build containing Phase 6 M1–M3 and Phase 7 M1–M3. It merges
+the Phase 6 S-series, the Phase 7 M1 H-series, the M2 D-series and the new M3
+refresh checks (R). Each step lists the IDs it closes, so one action verifies
+native blocking (S), the health classification (H), the guidance (D) and the
+automatic refresh (R) together. The detailed S/H/D steps above stay the
+reference. Nothing here has been run; automated results are simulated
+evidence only.
+
+**Ground rules.**
+- A step FAILS if:
+  - the protected app (A) is usable without a challenge while Accessibility is on;
+  - a wrong credential opens A;
+  - a challenge stacks or loops;
+  - the user is stuck;
+  - SECURE is shown while the fault in that step is present;
+  - a health refresh changes enforcement: a challenge disappears, a ticket clears, the watcher starts by itself, or "fixed" is claimed without a fresh check.
+- **R pass rule:** after returning to Smart App Lock, Home or the details screen updates **without tapping Check again**. "Checking protection…" may show briefly, but an old SECURE never shows while re-checking.
+- Evidence: a screen recording, plus logcat where stated. Record the device, Android version, OEM skin and navigation mode once. Mark steps N/A with a reason.
+- Use one protected app A (for example Gallery), PIN credential, grace 0 unless stated, Battery Saver off at start.
+
+### Session 1 — Oppo A9, Android 9 / ColorOS (required)
+
+| Step | Closes | Actions | Expected |
+| --- | --- | --- | --- |
+| 1 Baseline | H1, D1, R | All capabilities granted. Open Home, then the details screen. Press Home and reopen Smart App Lock. | Home shows SECURE (calm). Details: no issues, plus the scope note. Reopening refreshes with no tap and no "fixed" notice. |
+| 2 Overlay | H2, D2, S10.6 (overlay), R-A | (a) Details → Fix → Allow display over apps → open Settings → revoke → Back. (b) Open A. (c) Smart App Lock → re-grant via the same repair → Back. | (a) PROTECTION OFFLINE `overlay_unavailable` with no tap. (b) A is not opened unlocked. (c) The notice "no longer reports" appears automatically; SECURE returns. |
+| 3 Accessibility | H3, D3, S10.6, R-B | (a) Turn Accessibility off in Settings → return. (b) Open A. (c) Also revoke Usage Access → return. (d) Restore both via the setup screens. | (a) ATTENTION `accessibility_unavailable`, no tap. (b) A is still challenged (usage path). (c) OFFLINE `detection_offline`, "cannot see which app is open". (d) SECURE after the return refresh. |
+| 4 Usage Access alone | S10.6 (usage), R-C | Revoke Usage Access only → return; open A; restore. | ATTENTION `usage_access_unavailable`; A is still challenged (Accessibility enforces); SECURE after restore. |
+| 5 Battery Saver | H6, D5, S9.4, R-D | (a) Home visible, pull quick settings, toggle Battery Saver ON, close the shade. (b) With A's challenge shown, toggle the saver off and on. | (a) Status unchanged; `battery_saver_on` shows under Advisories only (the shade return is a plain refresh; if it is not shown yet, the next Check again shows it). (b) Challenge kept, no grant, no second challenge. |
+| 6 Saver enforcement | S9.1, S9.2, S9.3 | Saver ON: run S9.1–S9.3 as written. | As written. |
+| 7 Background restriction | H5, H4, D4, S10.2, S10.2c, R-C | (a) Details → Open app settings → Battery → restrict background → Back. (b) Run S10.2 and S10.2c. (c) Open Smart App Lock; on `watcher_not_running`, tap Restart protection once. (d) Remove the restriction → return. | (a) ATTENTION `background_restricted`, no tap; ColorOS guidance shown. (b) As written; A is never silently open; grace does not survive. (c) Record whether the watcher was observed stopped; the restart only happens on the tap, and the notice comes from a fresh check. (d) The issue clears. |
+| 8 Watcher interruption | S10.1, H4 (record), R-G | Swipe Smart App Lock from Recents (not force stop); open A; then reopen Smart App Lock. | A is challenged. Record the Home state shown on reopening: health itself never restarts the watcher, though the existing app-start sync may. |
+| 9 Pending challenge + Settings | D7, S5.4, R (security) | Open A → challenge → press Home. Open Smart App Lock → details → open any Settings link → Back → press Home → open A. | A's challenge re-presents; the details refresh grants nothing; only the exact PIN opens A, once. |
+| 10 Lifecycle | S8, R-D, R-G | On Home: (a) pull the shade and release it ×3; (b) screen off/on; (c) press Home and return ×5 quickly; (d) go to the Apps tab, revoke overlay in Settings, return, then switch to Home; (e) leave Home visible 60 s. | (a)–(c) No loop, no stuck "Checking", no flicker storm, status correct. (d) No crash on Apps; Home shows OFFLINE on the switch; restore afterwards. (e) After 30 s Home shows ATTENTION "out of date … Check again" (no polling; never an old SECURE). |
+| 11 Pattern + dashboard | D (pattern), S7.1 | Switch the credential to pattern. With details open, trigger A's challenge, rotate ×5, enter a wrong then the right pattern. | One challenge; attempts kept; only the exact pattern grants. |
+| 12 P6 entry paths | S1.1, S2.1, S3.1, S4 | With the dashboard open behind: run S1.1 (notification), S2.1 (deep link), S3.1 (shortcut) and S4 (hostile `am start`). | As written; S4: crash log empty and PID unchanged. |
+| 13 Recents / split | S5.1, S6.1, S6.2, S6.4 | As written (split screen N/A if ColorOS lacks it). | As written. |
+| 14 Combined | S11 | Saver ON after one S10.1 swipe: once each S1.1, S2.1, S3.1, S5.4, S6.1, S7.1. | ✓ for all. |
+| 15 Force stop / freeze | H9, S10.3 (record) | Force stop or ColorOS freeze; open A; open Smart App Lock. | Record `accessibility_unavailable` / `accessibility_not_running` or recovered SECURE. FAIL only if SECURE while A opens unchallenged. |
+| 16 Display | D (display) | Dark mode and the largest font on Home and details. | Readable; buttons ≥ 48 dp. |
+
+### Session 2 — Android 10+ second device (only where available)
+
+| Step | Closes | Condition | Expected |
+| --- | --- | --- | --- |
+| 17 | S1.4, S9.2 | secure keyguard | challenge before content |
+| 18 | S6.1–S6.3 | split screen | A never responds unchallenged |
+| 19 | S10.2b | Android 12+, battery "Restricted" | as step 7; record `ForegroundServiceStartNotAllowedException` |
+| 20 | H8, D6, S10.5, R-B | **Android 13+ only** (not on the Android 9 Oppo): deny notifications → return; allow via repair → return | ATTENTION `notifications_disabled` (worded "not allowed") with no tap; enforcement continues; cleared on return |
+| 21 | H7, D8 | **compatible device with enrolled biometrics only** (not the Oppo) | advisory only, no button, status unchanged; PIN still works |
+
+### Record-only and open gates
+- Phase 6 Groups 3 and 4 (S1.3, S2.3, S3.2, S6.5, S7.6, S10.3, S10.4 denied, ColorOS super power saving): record as written.
+- Phase 5 **F3** and **biometric success** remain **UNVERIFIED** release gates unless run and passed (Group 5). H-2 is not reopened.
+
+### Minimum acceptance
+- **Phase 6:** S9.1, S9.2, S10.1, S10.2, S10.2c, S11, S5.1, S5.4, S6.1, S6.2, S6.4, S7.1, S4 on the Oppo; S10.2b where available.
+- **Phase 7:**
+  - steps 1–5, 7, 9 and 10 on the Oppo (H1–H6, D1–D5, D7, R);
+  - H9 recorded;
+  - step 20 where Android 13+ is available;
+  - H7/D8 UNVERIFIED until a compatible device is available.

@@ -441,4 +441,93 @@ void main() {
     expect(c.protectionHealth.latest(), isNull);
     expect(w.getHealthCalls, 0);
   });
+
+  group('after-change refresh (Phase 7 / M3)', () {
+    Future<void> untilBlocked(StaticWatcherService w, int calls) async {
+      for (int i = 0; i < 200 && w.getHealthCalls < calls; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(w.getHealthCalls, calls, reason: 'collection reached the gate');
+    }
+
+    test(
+        'a change made while a collection runs is observed by an '
+        'after-change request; later requests join the newer collection',
+        () async {
+      final _Rig rig = await _Rig.configured();
+      final ProtectionHealthMonitor m = rig.monitor();
+      rig.watcher.getHealthGate = Completer<void>();
+
+      final Future<ProtectionHealthReport> before = m.refresh();
+      await untilBlocked(rig.watcher, 1); // overlay already read as granted
+      rig.overlay.overlayGranted = false; // revoked in Android Settings
+
+      final Future<ProtectionHealthReport> afterChange =
+          m.refresh(afterChange: true);
+      final Future<ProtectionHealthReport> plainLater = m.refresh();
+      final Future<ProtectionHealthReport> afterChangeLater =
+          m.refresh(afterChange: true);
+      expect(identical(plainLater, afterChange), isTrue,
+          reason: 'a later plain request never receives older data');
+      expect(identical(afterChangeLater, afterChange), isTrue,
+          reason: 'bounded: one queued follow-up shared by every request');
+      expect(identical(m.refresh(), before), isFalse);
+
+      rig.watcher.getHealthGate!.complete();
+      final ProtectionHealthReport first = await before;
+      final ProtectionHealthReport second = await afterChange;
+
+      expect(first.state, ProtectionHealthState.secure);
+      expect(second.state, ProtectionHealthState.protectionOffline);
+      expect(second.issues.first.code, HealthIssueCode.overlayUnavailable);
+      expect(rig.watcher.getHealthCalls, 2, reason: 'exactly two collections');
+      expect(m.latest()!.state, ProtectionHealthState.protectionOffline,
+          reason: 'the newest observation is the one kept');
+    });
+
+    test(
+        'an after-change request with nothing running starts one collection; '
+        'plain requests join it, a second after-change request queues one',
+        () async {
+      final _Rig rig = await _Rig.configured();
+      final ProtectionHealthMonitor m = rig.monitor();
+      final Future<ProtectionHealthReport> a = m.refresh(afterChange: true);
+      final Future<ProtectionHealthReport> plain = m.refresh();
+      expect(identical(a, plain), isTrue);
+      expect((await a).state, ProtectionHealthState.secure);
+      expect(rig.watcher.getHealthCalls, 1);
+
+      final Future<ProtectionHealthReport> b = m.refresh(afterChange: true);
+      final Future<ProtectionHealthReport> c = m.refresh(afterChange: true);
+      final Future<ProtectionHealthReport> d = m.refresh(afterChange: true);
+      expect(identical(b, c), isFalse);
+      expect(identical(c, d), isTrue, reason: 'never more than one queued');
+      await d;
+      expect(rig.watcher.getHealthCalls, 3);
+      await m.refresh();
+      expect(rig.watcher.getHealthCalls, 4, reason: 'nothing left running');
+    });
+
+    test('a queued collection still runs when the running one hits timeouts',
+        () async {
+      final _Rig rig = await _Rig.configured();
+      final ProtectionHealthMonitor m =
+          rig.monitor(probeTimeout: const Duration(milliseconds: 20));
+      rig.watcher.getHealthGate = Completer<void>(); // hung bridge
+      final Future<ProtectionHealthReport> hung = m.refresh();
+      await untilBlocked(rig.watcher, 1);
+      final Future<ProtectionHealthReport> queued =
+          m.refresh(afterChange: true);
+
+      final ProtectionHealthReport first = await hung;
+      expect(first.state, isNot(ProtectionHealthState.secure));
+      expect(first.issues.map((HealthIssue i) => i.code),
+          contains(HealthIssueCode.signalUnknown));
+
+      rig.watcher.getHealthGate!.complete(); // bridge answers again
+      final ProtectionHealthReport second = await queued;
+      expect(second.state, ProtectionHealthState.secure);
+      expect(rig.watcher.getHealthCalls, 2);
+    });
+  });
 }

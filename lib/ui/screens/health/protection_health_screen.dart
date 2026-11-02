@@ -9,6 +9,7 @@ import '../../../protection/health/protection_health_engine.dart';
 import '../../../services/watcher_service.dart';
 import '../../../utilities/result.dart';
 import 'health_presentation.dart';
+import 'health_resume_trigger.dart';
 import 'protection_health_controller.dart';
 
 /// Result of a repair, judged ONLY from a fresh health report.
@@ -32,15 +33,17 @@ enum HealthRepairOutcome {
 ///
 /// Repairs never grant a permission, start an authorization, clear a
 /// ticket or claim success: only a fresh health report can show "resolved".
-/// Android Settings screens are opened, never changed; after returning, the
-/// user checks again (automatic refresh on return is Phase 7 / M3).
+/// Android Settings screens are opened, never changed. Phase 7 / M3: when
+/// the app returns to the foreground with this screen on top, health is
+/// refreshed once; after a Settings repair the outcome is judged from that
+/// fresh check (never from the tap itself).
 class ProtectionHealthScreen extends StatefulWidget {
   const ProtectionHealthScreen({super.key});
 
   static const String title = 'Protection status';
   static const String settingsOpenedNotice =
-      'Android Settings opened. After changing the setting, come back and '
-      'tap Check again. The status updates only after a fresh check.';
+      'Android Settings opened. When you come back, Smart App Lock checks '
+      'again. The status changes only after that fresh check.';
   static const String settingsFailedNotice =
       'Android could not open that screen. Open Android Settings, then Apps, '
       'then Smart App Lock.';
@@ -50,7 +53,10 @@ class ProtectionHealthScreen extends StatefulWidget {
       'Protection could not be restarted.';
 
   /// Judges a repair from a fresh report: resolved only when the report is
-  /// fresh (not stale) and no longer lists the same issue code + component.
+  /// fresh (not stale), no longer lists the same issue code + component,
+  /// AND that component was actually observed. Phase 7 / M3: an issue that
+  /// merely became unobservable (for example the native health read failed
+  /// on return from Settings) is `unknown`, never "resolved".
   static HealthRepairOutcome outcome(
     HealthIssue issue,
     ProtectionHealthReport? fresh,
@@ -59,9 +65,12 @@ class ProtectionHealthScreen extends StatefulWidget {
     final bool present = fresh.issues.any(
       (HealthIssue i) => i.code == issue.code && i.component == issue.component,
     );
-    return present
-        ? HealthRepairOutcome.stillPresent
-        : HealthRepairOutcome.resolved;
+    if (present) return HealthRepairOutcome.stillPresent;
+    final ComponentStatus? observed = fresh.components[issue.component];
+    if (observed == null || observed == ComponentStatus.unknown) {
+      return HealthRepairOutcome.unknown;
+    }
+    return HealthRepairOutcome.resolved;
   }
 
   @override
@@ -74,6 +83,34 @@ class _ProtectionHealthScreenState extends State<ProtectionHealthScreen> {
   bool _busy = false;
   String? _notice;
 
+  /// The issue whose Android Settings screen was opened; judged once from
+  /// the fresh check made when the app returns (Phase 7 / M3).
+  ({HealthIssue issue, String title})? _awaitingReturn;
+
+  late final HealthResumeTrigger _resume =
+      HealthResumeTrigger(onResumed: _onAppResumed);
+
+  /// This screen is on top (not covered by a setup screen or a challenge).
+  bool get _visible => mounted && (ModalRoute.isCurrentOf(context) ?? true);
+
+  void _onAppResumed({required bool returned}) {
+    if (!_visible) return;
+    final ({HealthIssue issue, String title})? pending =
+        returned && !_busy ? _awaitingReturn : null;
+    if (pending == null) {
+      unawaited(_controller?.refresh(afterChange: returned));
+      return;
+    }
+    _awaitingReturn = null;
+    unawaited(
+      _run(() async {
+        final ProtectionHealthReport? fresh = await _refresh();
+        if (!mounted) return;
+        _judge(pending.issue, pending.title, fresh);
+      }),
+    );
+  }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -81,6 +118,7 @@ class _ProtectionHealthScreenState extends State<ProtectionHealthScreen> {
     _container = AppScope.read(context);
     _controller = ProtectionHealthController(_container?.protectionHealth)
       ..addListener(_onChanged);
+    _resume.attach();
     // The details screen became visible: one coalesced refresh.
     unawaited(_controller!.refresh());
   }
@@ -91,6 +129,7 @@ class _ProtectionHealthScreenState extends State<ProtectionHealthScreen> {
 
   @override
   void dispose() {
+    _resume.detach();
     _controller?.removeListener(_onChanged);
     _controller?.dispose();
     super.dispose();
@@ -100,7 +139,8 @@ class _ProtectionHealthScreenState extends State<ProtectionHealthScreen> {
     final ProtectionHealthController? controller = _controller;
     if (controller == null || _busy) return;
     setState(() => _notice = null);
-    final ProtectionHealthReport? fresh = await controller.refresh();
+    final ProtectionHealthReport? fresh =
+        await controller.refresh(afterChange: true);
     if (!mounted) return;
     if (fresh == null && controller.available) {
       setState(() => _notice = ProtectionHealthScreen.checkFailedNotice);
@@ -135,6 +175,7 @@ class _ProtectionHealthScreenState extends State<ProtectionHealthScreen> {
           if (!mounted) return;
           final bool ok = opened?.valueOrNull == true;
           setState(() {
+            _awaitingReturn = ok ? (issue: issue, title: title) : null;
             _notice = ok
                 ? ProtectionHealthScreen.settingsOpenedNotice
                 : ProtectionHealthScreen.settingsFailedNotice;
@@ -168,13 +209,17 @@ class _ProtectionHealthScreenState extends State<ProtectionHealthScreen> {
     }
   }
 
-  Future<ProtectionHealthReport?> _refresh() async =>
-      _controller == null ? null : await _controller!.refresh();
+  /// Repair checks always follow a possible change: never reuse a check
+  /// that started before it.
+  Future<ProtectionHealthReport?> _refresh() async => _controller == null
+      ? null
+      : await _controller!.refresh(afterChange: true);
 
   Future<void> _run(Future<void> Function() body) async {
     setState(() {
       _busy = true;
       _notice = null;
+      _awaitingReturn = null;
     });
     try {
       await body();

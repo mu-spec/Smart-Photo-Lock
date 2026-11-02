@@ -7,6 +7,7 @@ import '../../../app/router.dart';
 import '../../../design_system/design_system.dart';
 import '../../../protection/health/protection_health_engine.dart';
 import '../health/health_presentation.dart';
+import '../health/health_resume_trigger.dart';
 import '../health/protection_health_controller.dart';
 
 /// Home tab — welcome header, protection status, and quick access to the
@@ -15,7 +16,9 @@ import '../health/protection_health_controller.dart';
 /// Phase 7 / M2: the status card is driven by the shared Phase 7 / M1
 /// Protection Health monitor. Health is refreshed (one coalesced probe)
 /// when Home first appears, when the Home tab becomes visible again, when
-/// the details screen closes, and on "Check again". There is no polling.
+/// the details screen closes, and on "Check again". Phase 7 / M3: also when
+/// the app returns to the foreground (for example from Android Settings)
+/// while Home is the visible screen. There is no polling.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key, this.onNavigate, this.isActive = true});
 
@@ -36,6 +39,18 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   ProtectionHealthController? _health;
+  late final HealthResumeTrigger _resume =
+      HealthResumeTrigger(onResumed: _onAppResumed);
+
+  /// Home is what the user sees: the active tab AND the top route (not
+  /// covered by the details screen, a setup screen or a lock challenge).
+  bool get _visible =>
+      mounted && widget.isActive && (ModalRoute.isCurrentOf(context) ?? true);
+
+  void _onAppResumed({required bool returned}) {
+    if (!_visible) return;
+    unawaited(_health?.refresh(afterChange: returned));
+  }
 
   @override
   void didChangeDependencies() {
@@ -44,6 +59,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _health = ProtectionHealthController(
       AppScope.read(context)?.protectionHealth,
     )..addListener(_onHealthChanged);
+    _resume.attach();
     if (widget.isActive) unawaited(_health!.refresh());
   }
 
@@ -51,7 +67,8 @@ class _HomeScreenState extends State<HomeScreen> {
   void didUpdateWidget(HomeScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.isActive && !oldWidget.isActive) {
-      unawaited(_health?.refresh());
+      // Settings may have changed on another tab (protected apps, PIN).
+      unawaited(_health?.refresh(afterChange: true));
     }
   }
 
@@ -61,6 +78,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    _resume.detach();
     _health?.removeListener(_onHealthChanged);
     _health?.dispose();
     super.dispose();
@@ -71,7 +89,7 @@ class _HomeScreenState extends State<HomeScreen> {
         await Navigator.of(context).pushNamed<int>(RouteNames.protectionHealth);
     if (!mounted) return;
     if (tab != null) widget.onNavigate?.call(tab);
-    unawaited(_health?.refresh());
+    unawaited(_health?.refresh(afterChange: true));
   }
 
   @override
@@ -287,7 +305,9 @@ class _ProtectionStatusCard extends StatelessWidget {
             alignment: Alignment.centerRight,
             child: TextButton.icon(
               key: const Key('home_check_again'),
-              onPressed: checking ? null : () => unawaited(health!.refresh()),
+              onPressed: checking
+                  ? null
+                  : () => unawaited(health!.refresh(afterChange: true)),
               icon: const Icon(Icons.refresh, size: 18),
               label: Text(checking ? 'Checking…' : 'Check again'),
             ),

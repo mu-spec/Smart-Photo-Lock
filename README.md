@@ -13,7 +13,11 @@ verification; see `docs/regression.md`, final QA round). Phase 6 /
 Milestone 1 (Alternate Entry Paths), Milestone 2 (Task & Configuration
 Hardening) and Milestone 3 (Background Resilience & Bypass Regression)
 implemented and simulated-tested; their physical-device QA is pending
-(combined Phase 6 round; `docs/regression.md`, Phase 6 / M1, M2, M3) — production scaffold, architecture, navigation, design
+(combined Phase 6 round; `docs/regression.md`, Phase 6 / M1, M2, M3).
+Phase 7 / Milestones 1–3 (Protection Health engine, dashboard & repair,
+refresh & regression) are implemented and simulated-tested; their device QA
+runs in the same combined Phase 6 + 7 round (`docs/regression.md`, Phase 7 /
+M3 consolidated plan) — production scaffold, architecture, navigation, design
 system, persistence, secure storage, full authentication with settings,
 installed-apps management, the complete capability/permission layer,
 and the **core lock engine**: foreground detection (usage-stats +
@@ -93,6 +97,7 @@ top of the protected app) remains for a later phase.
 | 6-M3 | Background resilience & bypass regression (a watcher stopped by Android/OEM revokes native sessions and grace; Battery Saver / restriction limits documented; combined regression suite and Phase 6 device-QA matrix) | ✅ code + simulated · ⚠️ device QA pending |
 | 7-M1 | Protection Health engine & signals (SECURE / ATTENTION REQUIRED / PROTECTION OFFLINE; capability, engine, background-restriction and biometric signals; UNKNOWN never reported as healthy; read-only, no dashboard yet) | ✅ code + simulated · ⚠️ device QA pending (combined Phase 6 + 7 round) |
 | 7-M2 | Protection Health dashboard & repair (Home PROTECTION STATUS from the M1 report; issue details by severity and cause; user-initiated repairs via existing setup screens, allowlisted Android Settings links and one-tap protection restart; no false success) | ✅ code + simulated · ⚠️ device QA pending (combined Phase 6 + 7 round) |
+| 7-M3 | Protection Health refresh & regression (automatic refresh on return from Android Settings / app resume for the visible Home or details screen; bounded coalescing: one running + one queued check, newest result wins, no polling; old SECURE hidden while re-checking; repair outcome never "fixed" from an unobservable signal; revocation / restoration and lifecycle regression; consolidated Phase 6 + 7 device-QA plan) | ✅ code + simulated · ⚠️ device QA pending (combined Phase 6 + 7 round) |
 
 ### Phase 1A ✅ — Create Android Project
 

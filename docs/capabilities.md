@@ -205,3 +205,32 @@ biometric enrollment.
 
 Whether each OEM build resolves these Settings screens is device-dependent
 and UNVERIFIED until the combined device QA round.
+
+## Health refresh limits (Phase 7 / M3)
+
+Automatic refresh uses only Flutter app-lifecycle events and in-app
+navigation; it adds no permission, manifest entry, receiver, job, alarm,
+battery-optimization request, foreground-service change or SDK change.
+
+- **Lifecycle mapping.** Android `onStop` → Flutter `paused` (real leave:
+  Settings, Home, Recents, screen off); losing window focus (notification
+  shade, quick-settings tile, system dialog) → `inactive` only. Both refresh
+  on resume, but only a real leave forces a check that starts after the
+  return. This mapping is the same on Android 9 (Oppo / ColorOS) and newer.
+- **What a refresh can see** is exactly the Phase 7 / M1 signal set. OEM
+  power managers (ColorOS auto-launch, app freezing, "deep optimization")
+  have no public API: they are never reported as fixed or healthy by a
+  refresh; their effect shows only indirectly (for example the watcher not
+  running) and can lag until Android actually stops the service.
+- **Notifications** (Android 13+ only): Android keeps no grant history the
+  app can read, so "not allowed" is worded as setup, never as revoked. Below
+  Android 13 (including the Android 9 Oppo) the runtime permission does not
+  exist and nothing is reported (the app-level notification switch is not
+  read there); per-channel switches are not read on any version.
+- **Background restriction** is readable from API 28 (Android 9) via
+  `ActivityManager.isBackgroundRestricted`; some OEM toggles are not
+  reflected there.
+- **Timing.** If an OEM Settings page applies a change after the app has
+  resumed, the first check may still see the old value; the next trigger
+  (Check again, tab return, next resume) corrects it. Device-dependent,
+  recorded in the combined device QA.

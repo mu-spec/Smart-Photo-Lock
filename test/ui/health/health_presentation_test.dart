@@ -91,10 +91,10 @@ class _FlakyMonitor extends ProtectionHealthMonitor {
   int refreshes = 0;
 
   @override
-  Future<ProtectionHealthReport> refresh() {
+  Future<ProtectionHealthReport> refresh({bool afterChange = false}) {
     refreshes++;
     if (fail) return Future<ProtectionHealthReport>.error(StateError('x'));
-    return super.refresh();
+    return super.refresh(afterChange: afterChange);
   }
 }
 
@@ -359,6 +359,21 @@ void main() {
       );
       expect(
         ProtectionHealthScreen.outcome(overlayIssue, stale),
+        HealthRepairOutcome.unknown,
+      );
+    });
+
+    test(
+        'an issue that only became unobservable is "unknown", never '
+        '"resolved" (Phase 7 / M3)', () {
+      final ProtectionHealthReport unobserved = _eval(_signals(overlay: null));
+      expect(
+        unobserved.issues.where((HealthIssue i) => i.code == overlayIssue.code),
+        isEmpty,
+        reason: 'the overlay issue is absent only because it was not read',
+      );
+      expect(
+        ProtectionHealthScreen.outcome(overlayIssue, unobserved),
         HealthRepairOutcome.unknown,
       );
     });
