@@ -39,7 +39,9 @@ void main() {
     bool overlayGranted = false,
     bool configured = false,
   }) async {
-    tester.view.physicalSize = const Size(800, 1600);
+    // Phase 9 / M2: the Security Score card adds height above the rows;
+    // the tab is a lazy ListView, so the viewport is taller (intentional).
+    tester.view.physicalSize = const Size(800, 2400);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
     final AppContainer container = AppContainer.inMemory(
@@ -126,7 +128,7 @@ void main() {
   /// no attention dot on the permissions section.
   void expectNoRevocationAlert() {
     expect(
-      find.textContaining('Protection is not working right now.'),
+      find.textContaining('App locking may not work until protection'),
       findsNothing,
     );
     expect(find.textContaining('was turned off'), findsNothing);

@@ -103,8 +103,9 @@ void main() {
 
   const String setupMessage = 'Setup is not finished yet. Create an unlock '
       'PIN or pattern and choose apps to start protecting them.';
-  const String failureMessage = 'Protection is not working right now. '
-      'Protected apps can open without a lock until this is fixed.';
+  // Exact approved wording (Phase 9 / M2 review), pinned as a literal.
+  const String failureMessage = 'Protection is offline. App locking may '
+      'not work until protection is restored.';
 
   void expectNoLegacyBanners() {
     for (final String legacy in const <String>[
@@ -257,6 +258,8 @@ void main() {
     watcher.accessibilityServiceConnected = false;
     await resumeFromSettings(tester);
     expect(inHealth(HealthPresentation.offlineTitle), findsOneWidget);
+    expect(HealthPresentation.offlineMessage, failureMessage);
+    expect(find.textContaining('can open without a lock'), findsNothing);
     expect(inHealth(failureMessage), findsOneWidget);
 
     (container.installedAppsService as StaticInstalledAppsService)

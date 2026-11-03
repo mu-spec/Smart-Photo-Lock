@@ -16,6 +16,8 @@ import '../health/health_presentation.dart';
 import '../health/health_resume_trigger.dart';
 import '../health/protection_health_controller.dart';
 import 'security_center_summary.dart';
+import 'security_score.dart';
+import 'security_score_card.dart';
 
 /// Phase 9 / M1 — Security Center (PRD 9A–9D), shown at the top of the
 /// Security tab.
@@ -32,6 +34,12 @@ import 'security_center_summary.dart';
 ///    A read failure shows "unavailable", never zero.
 ///  * **Critical apps (9C):** the saved Critical assignment, kept separate
 ///    from whether protection is working now ([CriticalProtectionStatus]).
+///  * **Security score (Phase 9 / M2, PRD 9E/9F):** [SecurityScore.assess]
+///    over the SAME inputs: the health report above, the saved apps from
+///    the same read (with native-confirmed levels captured at that moment)
+///    and the re-lock grace (`LockSettingsRepository.getGracePeriod`, read
+///    together with the apps). It is recomputed on every build, so it can
+///    never disagree with the cards. A failed read clears its inputs.
 ///
 /// Refresh is event driven only (no polling): when the Security tab first
 /// becomes visible, when it becomes visible again, when the app returns to
@@ -50,6 +58,7 @@ class SecurityCenterSection extends StatefulWidget {
     this.isActive = true,
     this.onNavigate,
     this.healthMonitor,
+    this.settingsRevision = 0,
   });
 
   /// Whether the Security tab is the visible tab.
@@ -62,6 +71,11 @@ class SecurityCenterSection extends StatefulWidget {
   /// clock). Production uses the shared `AppContainer.protectionHealth`.
   @visibleForTesting
   final ProtectionHealthMonitor? healthMonitor;
+
+  /// Bumped by the Security tab after its re-lock grace setting changes,
+  /// so the score's settings input is read again (event driven, no
+  /// polling).
+  final int settingsRevision;
 
   static const String title = 'Security Center';
   static const String intro =
@@ -123,9 +137,7 @@ class SecurityCenterSection extends StatefulWidget {
         CriticalProtectionStatus.attention =>
           'Protection needs attention, so Critical locking may be limited '
               'until it is resolved.',
-        CriticalProtectionStatus.offline =>
-          'Protection is offline. App locking may not work until protection '
-              'is restored.',
+        CriticalProtectionStatus.offline => HealthPresentation.offlineMessage,
         CriticalProtectionStatus.unconfirmed =>
           'Protection has not been confirmed, so Critical locking cannot be '
               'confirmed either.',
@@ -145,6 +157,14 @@ class _SecurityCenterSectionState extends State<SecurityCenterSection>
 
   _AppsLoad _appsLoad = _AppsLoad.loading;
   ProtectedAppsSummary? _summary;
+
+  /// Phase 9 / M2 score inputs from the same read as [_summary]: the
+  /// records, the native-confirmed levels at that moment, and the grace.
+  List<ProtectedApp> _apps = const <ProtectedApp>[];
+  Map<String, AppSecurityLevel> _nativeLevels =
+      const <String, AppSecurityLevel>{};
+  _AppsLoad _graceLoad = _AppsLoad.loading;
+  Duration? _grace;
   int _summaryGeneration = 0;
   bool _wasCurrent = true;
   bool _disposed = false;
@@ -195,6 +215,10 @@ class _SecurityCenterSectionState extends State<SecurityCenterSection>
     if (widget.isActive && !oldWidget.isActive && _isCurrentRoute) {
       // Apps, PIN or permissions may have changed on another tab.
       _refreshAll(afterChange: true);
+    } else if (widget.settingsRevision != oldWidget.settingsRevision &&
+        _visible) {
+      // The re-lock setting changed below: re-read the score inputs only.
+      unawaited(_loadSummary());
     }
   }
 
@@ -208,42 +232,107 @@ class _SecurityCenterSectionState extends State<SecurityCenterSection>
     unawaited(_loadSummary());
   }
 
-  /// Reads the saved protected apps (read-only). Only the newest read
-  /// updates the view; a failure discards any earlier counts.
+  /// Reads the saved protected apps and (Phase 9 / M2) the re-lock grace
+  /// (both read-only, concurrently). Only the newest read updates the
+  /// view; a failure discards the earlier values of that input.
   Future<void> _loadSummary() async {
     final AppContainer? container = AppScope.read(context);
     final int generation = ++_summaryGeneration;
     if (container == null) {
       setState(() {
         _summary = null;
+        _apps = const <ProtectedApp>[];
         _appsLoad = _AppsLoad.failed;
+        _grace = null;
+        _graceLoad = _AppsLoad.failed;
       });
       return;
     }
     if (_summary == null && _appsLoad != _AppsLoad.loading) {
       setState(() => _appsLoad = _AppsLoad.loading);
     }
+    if (_grace == null && _graceLoad != _AppsLoad.loading) {
+      setState(() => _graceLoad = _AppsLoad.loading);
+    }
+    final Future<Result<Duration>> graceRead = _readGrace(container);
     Result<List<ProtectedApp>> result;
     try {
       result = await container.protectedApps.getProtectedApps();
     } catch (e) {
       result = Result.failure(e);
     }
+    final Result<Duration> grace = await graceRead;
     if (_disposed || generation != _summaryGeneration) return;
     final List<ProtectedApp>? apps = result.valueOrNull;
     setState(() {
       if (result.isFailure || apps == null) {
         _summary = null;
+        _apps = const <ProtectedApp>[];
+        _nativeLevels = const <String, AppSecurityLevel>{};
         _appsLoad = _AppsLoad.failed;
       } else {
         _summary = ProtectedAppsSummary.fromApps(
           apps,
           nativeLevelFor: container.protectionBootstrap.nativeLevelFor,
         );
+        _apps = List<ProtectedApp>.unmodifiable(apps);
+        _nativeLevels = _nativeSnapshot(container, apps);
         _appsLoad = _AppsLoad.loaded;
+      }
+      final Duration? period = grace.valueOrNull;
+      if (grace.isFailure || period == null) {
+        _grace = null;
+        _graceLoad = _AppsLoad.failed;
+      } else {
+        _grace = period;
+        _graceLoad = _AppsLoad.loaded;
       }
     });
   }
+
+  /// The native-confirmed levels at the moment of the read (read-only).
+  static Map<String, AppSecurityLevel> _nativeSnapshot(
+    AppContainer container,
+    List<ProtectedApp> apps,
+  ) {
+    final Map<String, AppSecurityLevel> levels = <String, AppSecurityLevel>{};
+    for (final ProtectedApp app in apps) {
+      final String pkg = app.packageName.trim();
+      final AppSecurityLevel? native =
+          container.protectionBootstrap.nativeLevelFor(pkg);
+      if (native != null) levels[pkg] = native;
+    }
+    return Map<String, AppSecurityLevel>.unmodifiable(levels);
+  }
+
+  static Future<Result<Duration>> _readGrace(AppContainer container) async {
+    try {
+      return await container.lockSettings.getGracePeriod();
+    } catch (e) {
+      return Result.failure(e);
+    }
+  }
+
+  static ScoreSourceState _source(_AppsLoad load) => switch (load) {
+        _AppsLoad.loading => ScoreSourceState.loading,
+        _AppsLoad.loaded => ScoreSourceState.loaded,
+        _AppsLoad.failed => ScoreSourceState.failed,
+      };
+
+  /// The Phase 9 / M2 assessment of the inputs shown right now.
+  SecurityScoreAssessment _assessment(ProtectionHealthController? health) =>
+      SecurityScore.assess(
+        SecurityScoreInputs(
+          appsState: _source(_appsLoad),
+          apps: _apps,
+          nativeLevelFor: (String pkg) => _nativeLevels[pkg],
+          graceState: _source(_graceLoad),
+          grace: _grace,
+          health: health?.report,
+          healthChecking: health?.checking ?? false,
+          healthFailed: health?.failed ?? false,
+        ),
+      );
 
   void _onHealthChanged() {
     if (mounted) setState(() {});
@@ -303,6 +392,16 @@ class _SecurityCenterSectionState extends State<SecurityCenterSection>
           controller: health,
           report: report,
           onOpenDetails: _openDetails,
+        ),
+        const SizedBox(height: DsSpacing.lg),
+        SecurityScoreCard(
+          assessment: _assessment(health),
+          onOpenDetails: (health?.available ?? false) ? _openDetails : null,
+          onCheckAgain: (health?.available ?? false)
+              ? () => unawaited(health!.refresh(afterChange: true))
+              : null,
+          onRetry: () => unawaited(_loadSummary()),
+          onManageApps: widget.onNavigate == null ? null : _openApps,
         ),
         const SizedBox(height: DsSpacing.lg),
         _AppsCard(

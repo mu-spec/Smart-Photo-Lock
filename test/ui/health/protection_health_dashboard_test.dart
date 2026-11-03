@@ -243,7 +243,7 @@ void main() {
       expect(
           _inHome(find.text(HealthPresentation.offlineTitle)), findsOneWidget);
       expect(
-        _inHome(find.textContaining('Protection is not working right now')),
+        _inHome(find.text(HealthPresentation.offlineMessage)),
         findsOneWidget,
       );
       expect(
@@ -261,7 +261,7 @@ void main() {
           _inHome(find.text(HealthPresentation.offlineTitle)), findsOneWidget);
       expect(_inHome(find.textContaining('Setup is not finished')),
           findsOneWidget);
-      expect(find.textContaining('not working'), findsNothing);
+      expect(find.textContaining('may not work'), findsNothing);
       await _openDetails(tester);
       expect(_inDetails(find.text('Setup needed')), findsOneWidget);
       expect(_inDetails(find.text('Finish setting up protection')),

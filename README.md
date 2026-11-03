@@ -32,7 +32,14 @@ Center: the Security tab opens with Protection Health, protected-app counts
 per level and a Critical apps summary; read-only, and it replaces the
 Phase 4 "Security status" banners) is implemented and simulated-tested;
 device QA joins the same combined round (`docs/regression.md`, Phase 9 /
-M1; not device verified, not release ready) — production scaffold, architecture, navigation, design
+M1; not device verified, not release ready). Phase 9 / Milestone 2
+(Security Score: a transparent "N / 100 points" setup assessment in the
+Security Center: 60 for a fresh passed health check plus 40 for re-lock
+speed after leaving apps; no number while protection is offline, unknown,
+stale, unreadable or not set up; provisional while it needs attention;
+read-only) is implemented and simulated-tested; device QA joins the same
+combined round (`docs/regression.md`, Phase 9 / M2; not device verified,
+not release ready) — production scaffold, architecture, navigation, design
 system, persistence, secure storage, full authentication with settings,
 installed-apps management, the complete capability/permission layer,
 and the **core lock engine**: foreground detection (usage-stats +

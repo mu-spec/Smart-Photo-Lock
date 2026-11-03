@@ -206,17 +206,30 @@ void _expectDistribution(int total, int standard, int sensitive, int critical) {
 Finder _criticalStatus(CriticalProtectionStatus s) =>
     _inKey('sc_critical_status', find.text(_S.criticalStatusLabel(s)));
 
-/// Every string the Security Center renders.
-List<String> _centerTexts(WidgetTester tester) => find
-        .descendant(
-          of: find.byKey(const Key('security_center')),
-          matching: find.byType(Text),
-        )
-        .evaluate()
-        .map((Element e) {
-      final Text t = e.widget as Text;
-      return t.data ?? t.textSpan?.toPlainText() ?? '';
-    }).toList();
+/// Every string the Security Center renders OUTSIDE the Security Score
+/// card. Phase 9 / M2 (intentional): the score card legitimately says
+/// "score" and "not a guarantee against bypasses"; its wording is pinned
+/// separately in `security_score_card_test.dart`.
+List<String> _centerTexts(WidgetTester tester) {
+  final Set<Element> scoreTexts = find
+      .descendant(
+        of: find.byKey(const Key('security_center_score')),
+        matching: find.byType(Text),
+      )
+      .evaluate()
+      .toSet();
+  return find
+      .descendant(
+        of: find.byKey(const Key('security_center')),
+        matching: find.byType(Text),
+      )
+      .evaluate()
+      .where((Element e) => !scoreTexts.contains(e))
+      .map((Element e) {
+    final Text t = e.widget as Text;
+    return t.data ?? t.textSpan?.toPlainText() ?? '';
+  }).toList();
+}
 
 /// PRD 9A/9C: no absolute claims, fake scores or artificial urgency.
 void _expectNoAbsoluteClaims(WidgetTester tester) {

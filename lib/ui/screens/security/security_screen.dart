@@ -38,6 +38,10 @@ import 'security_center_section.dart';
 /// from the Phase 7 Protection Health engine; the tab now shows one status
 /// source only. The setup rows below (permissions, PIN, pattern) are
 /// unchanged.
+///
+/// Phase 9 / M2: the Security Center also shows the Security Score; after
+/// a re-lock grace change this screen bumps `settingsRevision` so the
+/// score re-reads that setting.
 class SecurityScreen extends StatefulWidget {
   const SecurityScreen({super.key, this.isActive = true, this.onNavigate});
 
@@ -120,6 +124,10 @@ class _SecurityScreenState extends State<SecurityScreen>
   /// Phase 5L: the configured re-lock grace period in whole seconds.
   /// Zero = immediate re-lock. Null while loading.
   int? _graceSeconds;
+
+  /// Phase 9 / M2: bumped after each grace change so the Security Center
+  /// re-reads the score's settings input.
+  int _settingsRevision = 0;
 
   /// The grace options offered by the Re-lock section.
   static const List<(String, Duration)> graceOptions = <(String, Duration)>[
@@ -436,6 +444,13 @@ class _SecurityScreenState extends State<SecurityScreen>
   /// Persists the selected grace period and applies it to the shared
   /// access controller immediately — no restart needed.
   Future<void> _setGrace(Duration period) async {
+    await _applyGrace(period);
+    // Phase 9 / M2: the Security Score re-reads the saved setting after
+    // every attempt (saved or rolled back), so it never shows a stale value.
+    if (mounted) setState(() => _settingsRevision++);
+  }
+
+  Future<void> _applyGrace(Duration period) async {
     final int previousSeconds = _graceSeconds ?? 0;
     final int seconds = period.isNegative ? 0 : period.inSeconds;
     setState(() => _graceSeconds = seconds); // optimistic
@@ -658,6 +673,7 @@ class _SecurityScreenState extends State<SecurityScreen>
           SecurityCenterSection(
             isActive: widget.isActive,
             onNavigate: widget.onNavigate,
+            settingsRevision: _settingsRevision,
           ),
           const SizedBox(height: DsSpacing.xl),
           const DsSectionTitle('Authentication'),

@@ -216,6 +216,11 @@ void main() {
 
   testWidgets('visible-pattern toggle renders inert without a container',
       (WidgetTester tester) async {
+    // Phase 9 / M2: the Security Score card sits above the switches; the
+    // tab is a lazy ListView, so use a tall viewport to build them.
+    tester.view.physicalSize = const Size(1080, 4000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
     await tester.pumpWidget(
       MaterialApp(
         theme: AppTheme.dark,

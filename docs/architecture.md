@@ -2175,7 +2175,7 @@ report's state and its top issue's M1 `category`):
 | OFFLINE, top = `protection_not_configured` / setup | PROTECTION OFFLINE | neutral | setup is not finished |
 | OFFLINE, top category `user_choice` | PROTECTION OFFLINE | neutral | no apps are protected right now |
 | OFFLINE, top category `setup` (permission never granted) | PROTECTION OFFLINE | danger | a needed permission is not allowed yet |
-| OFFLINE, otherwise (revoked / stopped) | PROTECTION OFFLINE | danger | protection is not working right now |
+| OFFLINE, otherwise (revoked / stopped) | PROTECTION OFFLINE | danger | protection is offline; app locking may not work until protection is restored (Phase 9 review wording) |
 | no report yet / checking | Checking protection… | neutral | — |
 | refresh failed or no health source | Status unavailable | warning | could not check; does not mean protection works |
 
@@ -2726,3 +2726,150 @@ the top of the existing **Security** tab; there is no new tab or route.
   Critical status tag wrap under large text. The shared
   `SecurityStatusBanner` action button and `DsStatusPill` do not wrap,
   which is a pre-existing design-system limit noted under risks.
+
+## Phase 9 / M2 — Security Score (model and UI)
+
+PRD Phase 9 / M2 (9E score model, 9F score UI). Baseline: the local
+Phase 9 / M1 commit `011053d`, which is not pushed (the user deferred the
+push). The score is a **Security score** card inside the Security Center,
+placed **between Protection Health and Protected apps**. The new card
+order:
+1. Protection Health;
+2. Security score;
+3. Protected apps;
+4. Critical apps.
+
+There is no new tab, route, permission, dependency or native code.
+
+**What the number is.** "Setup points" from 0 to 100, shown as
+"N / 100 points", never as a percentage. It measures how much of Smart App
+Lock's own protection setup is in place and confirmed by the last health
+check. The weights are **product-defined assessment weights**, not
+scientifically validated risk probabilities, and the number is not the
+odds of resisting a bypass.
+
+### Model (`lib/ui/screens/security/security_score.dart`, pure Dart)
+
+`SecurityScore.assess(SecurityScoreInputs) → SecurityScoreAssessment` is
+the one calculator. It is deterministic and read-only: no I/O, no timers.
+It is separate from the lock and authorization engine.
+
+**Inputs** (all already read by M1; no new probe):
+
+| Input | Source |
+| --- | --- |
+| Health report (`state`, `issues`, `stale`) | the shared Phase 7 `ProtectionHealthMonitor`, through the M1 `ProtectionHealthController` (staleness re-applied on each read; `null` while an after-change check runs, after a failed check, or before any check) |
+| Saved apps and levels | `ProtectedAppsRepository.getProtectedApps()`, deduplicated like `ProtectedAppsSummary` (first record per package, blank ignored) |
+| Native-confirmed levels | `ProtectionBootstrap.nativeLevelFor`, snapshotted together with the apps read |
+| Re-lock grace | `LockSettingsRepository.getGracePeriod()`, read concurrently with the apps under the same generation counter |
+| Credential configured | `report.signals.credentialConfigured` (setup wording only) |
+
+**Formula (total 100):**
+
+| Factor | Max | Rule |
+| --- | --- | --- |
+| F1 Protection health | 60 | Fresh SECURE = 60. ATTENTION REQUIRED = 0, and the score becomes **provisional**. |
+| F2 Re-lock after leaving | 40 | `floor(10 × Σcredit / n)` over the `n` protected apps |
+
+Per-app `credit` comes from `RelockTier.of(SecurityLevelPolicy.graceFor(credited, grace))`:
+
+| Effective grace | Credit |
+| --- | --- |
+| 0 | 4 |
+| ≤ 15 s | 3 |
+| ≤ 1 min | 2 |
+| ≤ 5 min | 1 |
+| longer | 0 |
+
+**Credited level** (a level change counts only once native has confirmed
+it):
+- native unknown → **Standard**;
+- otherwise, the **less strict** of the saved and native levels:
+  - a pending downgrade (CR-2) counts at the lower saved level, reported as
+    `heldStricter`;
+  - an unconfirmed upgrade counts at native's level, reported as
+    `unconfirmedLevels`.
+
+**Not scored:** app count, PIN vs pattern, biometrics, phone model,
+permission count, Battery Saver, and the inactivity window. Capability
+readiness counts only through F1, so the same fault is never charged
+twice.
+
+Any provisional score (≤ 40) is below any available score (≥ 60).
+
+**Availability** (the first match wins; only the last two show a number):
+1. app read failed → *unavailable*;
+2. apps loading → *assessing*;
+3. no protected apps → *setup needed*;
+4. health reports `protection_not_configured` → *setup needed*;
+5. grace read failed → *unavailable*;
+6. grace loading → *assessing*;
+7. no report: checking → *assessing*; failed or never checked → *unavailable*;
+8. stale → *unavailable*;
+9. OFFLINE → *withheld* (no number);
+10. ATTENTION → *provisional*;
+11. SECURE → *available*.
+
+Unavailable is never shown as 0, and loading is never shown as 100.
+
+**Examples:**
+
+| Health | Apps (native = saved) | Grace | Score |
+| --- | --- | --- | --- |
+| SECURE | Critical, Sensitive, Standard | 1 min | 60 + floor(10 × 9 / 3) = **90** |
+| SECURE | 2 × Standard | Immediate | 60 + 40 = **100** |
+| SECURE | Standard | 5 min | 60 + 10 = **70** |
+| SECURE | Critical + 2 × Standard | 30 s | 60 + floor(26.67) = **86** |
+| ATTENTION | Critical + Standard | 30 s | 0 + 30 = **30**, provisional |
+| SECURE | saved Standard, native Critical | 5 min | **70**, plus a held note |
+| OFFLINE | any | any | no number |
+
+The full specification is in `Phase9_M2/SCORE_SPEC.md`, outside the repo.
+
+### UI (`security_score_card.dart`)
+
+`SecurityScoreCard` renders one assessment. It always shows the
+description *"An assessment of your current protection setup, not a
+guarantee against bypasses."*
+
+- **Scored states:**
+  - the number with "/ 100 points" in the normal text colour (never a
+    success green), with **no ring or progress bar**;
+  - a warning-toned **Provisional** tag and "Problems remain…" when
+    provisional;
+  - two factor rows ("earned of max", plus per-tier lines). The health row
+    points to the Protection Health card, so the issue is named only once;
+  - "What lowers the score" (−points), plus the unconfirmed and held notes.
+- **Other states:** a title and reason, with no number. Actions:
+  - Fix protection (withheld, provisional) opens Health Details;
+  - Check again (health unavailable) runs a health refresh;
+  - Try again (app or settings read failed) re-reads them;
+  - Choose apps (setup) opens the Apps tab.
+- **"How the score works"** toggles the formula, what is not counted, and
+  what the score cannot measure.
+- **Accessibility:** the heading is a header node; the value is one label
+  ("Security score: 90 out of 100 points." / "Provisional security score:
+  …"); each factor row is one merged label. Text wraps at 320 dp with 2×
+  text.
+
+### Refresh and consistency
+
+- The assessment is recomputed in `build` from the inputs currently shown,
+  so the score can never disagree with the health or app cards.
+- It reuses the M1 triggers: tab activation, return to the top route, app
+  resume, revocation, Check again and Try again.
+- **One new trigger:** `SecurityScreen` bumps `settingsRevision` after
+  every grace change attempt (saved or rolled back). The section then
+  re-reads apps and grace only; this does not trigger a health probe.
+- A failed read clears that input. The generation counter drops older
+  completions. No polling or keep-alive is added.
+
+### Security boundary
+
+The score is observational. It never:
+- authorizes, unlocks, creates or extends grace;
+- writes a level, record, setting, credential or biometric choice;
+- resets lockout, touches a challenge or ticket, or starts protection;
+- runs the CR-2 sync.
+
+Phase 5 H-2, Phase 6, Phase 7 and Phase 8 code is unchanged.

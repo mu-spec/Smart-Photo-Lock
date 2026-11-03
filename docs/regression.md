@@ -2452,3 +2452,111 @@ blockers: SC2, SC4, SC6). SC3 and SC7 are recorded. The full plan copy is
 **Status:** implemented and simulated-tested. It is **not device verified**
 (the combined Phase 6–10 round is deferred, not waived) and **not release
 ready** until that round passes, including E13, F3 and biometric.
+
+## Automated evidence (Phase 9 / M2)
+
+Security Score (PRD Phase 9 / M2, 9E model and 9F UI). Baseline: the local
+M1 commit `011053d` (not pushed). All results are **SIMULATED**:
+- the pure model over real Phase 7 engine reports;
+- the production widgets, `MainShell`, router, health monitor and
+  controller;
+- the real protected-app and lock-settings repositories over an in-memory
+  database, with static platform services.
+
+No device, Settings screen, OEM behaviour or native enforcement is
+observed.
+
+| Suite | Tests | Covers (brief §7 numbers) |
+| --- | --- | --- |
+| `test/ui/security/security_score_test.dart` (new) | 29 | 1–3: weights 60 + 40, tier bounds, `floor(10 × Σcredit / n)` with clamping. Credited-level matrix. Every documented example exact. Breakdown totals over all levels × grace options × health. 4–5: setup (no PIN / no apps / health not configured / health unknown). 6–9: SECURE available; ATTENTION provisional (health 0, ≤ 40, below every available score); OFFLINE withheld even with all apps Critical; stale and future-dated unavailable (the exact limit is still fresh). Checking / failed / never checked. 10: repository failure wins over setup. 16: loading → assessing. Settings failure. 11: per-level F2 at each grace. 12: held-stricter counted at the saved level. 13: unconfirmed and native-unknown counted lower. Malformed level. 14: monotonic in level and grace. App count not rewarded. Dedup equals M1. Negative grace. 15: biometric variants never change the score. Battery Saver not scored. Determinism; inputs not mutated |
+| `test/ui/security/security_score_card_test.dart` (new) | 23 | 18/19: 320 dp at 2× text, light and dark, with details expanded and no overflow; semantics for the score, factors and heading; number in the normal text colour. Placement between health and apps, with existing tab controls below. 6/17: UI equals the model (90 = 60 + 30) with exact rows, tier lines and reductions; 100 explained as an assessment. 4–5: setup steps with no number or failure wording; Choose apps → Apps. 7: ATTENTION provisional tag, problem named once (in the health card), Fix → Health Details. 8: OFFLINE withheld, Fix → Details. 9: stale drops the number with no new probe; Check again restores it. Checking hides an earlier number. Health failure → Check again. 16: no number (no 0 / 100) while apps load. 10: read failure drops the earlier score; Try again → provisional until Check again (consistent with health). Settings read failure. 14: Grace period change updates at once (no probe); a failed save shows the saved value. 11/15: an unconfirmed upgrade gets no credit, a confirmed one does. 12/13: held downgrade noted, nothing synced. 20: an older read completing last never overwrites. Resume from Settings re-assesses. 21: a pending challenge stays on top; exact PIN only. 22: no level / setting / record write, sync, grace or authorization |
+| **Intentional updates** | — | `security_center_test`: the M1 banned-wording helper now skips the score card (which legitimately says "score" and "not a guarantee against bypasses"; its wording is pinned in the new widget suite). `security_screen_test` (1 test) and `permission_regression_test` (viewport 1600 → 2400): taller viewports, because the card adds height above rows in the lazy ListView. No assertion was weakened |
+| Existing suites (P5–P9/M1) | unchanged, all pass | 23–24: cross-phase regression |
+
+**Totals:**
+- **Full Flutter:** **+1405, all passed**, EXIT 0, no reruns (1353 M1
+  baseline + 29 + 23).
+- **Focused** (Security Center + Security tab + health UI + the M1-touched
+  regression suites): +242, all passed.
+- **During development** (not counted as evidence), first runs failed on:
+  the M1 banned-wording helper; lazy-list viewports; a duplicated issue
+  title (UI changed to name the problem once); a semantics boundary; a
+  gate-ordering deadlock in a new test; and a wrong expectation (after a
+  failed read, health is ATTENTION, so the score is provisional; the test
+  now asserts this).
+- **Static checks:** `flutter analyze` clean; `dart format` 0 changed (9
+  files); `git diff --check` clean.
+- **Native:** nothing under `android/`, `ios/` or `pubspec*` changed, so
+  Kotlin JVM and typecheck were not rerun (P8 M3 baseline: 306, exit 0).
+
+**Targeted mutation checks: 18/18 killed** (`Phase9_M2/run_m2_mutations.py`,
+outside the repo; each mutant run against the M2 tests only; restoration
+verified byte-identical):
+- **availability:** stale scored; OFFLINE numbered; ATTENTION shown as
+  available; repository failure falls to setup; settings failure ignored;
+  no-apps not setup; checking shown as unavailable;
+- **weighting:** ATTENTION keeps the health points; rounding up; 15 s tier
+  bound moved;
+- **native confirmation:** unknown native credited as saved; stricter level
+  credited; held-stricter unreported;
+- **UI/refresh:** Provisional tag hidden; stale read overwrites; failed read
+  keeps old inputs; settings revision ignored; the Security tab never bumps
+  it.
+
+Not covered automatically: real devices and OEM skins, real Settings round
+trips, TalkBack, real font scaling, and the native watcher and
+Accessibility service.
+
+**Review wording correction (text only):**
+- **What changed:** the shared Phase 7 OFFLINE message ("protection stopped
+  working") is now `HealthPresentation.offlineMessage`: "Protection is
+  offline. App locking may not work until protection is restored."
+  The Security Center Critical OFFLINE line uses the same constant instead
+  of its own copy.
+- **Tests:** the expectations that pinned the old wording were updated.
+  `health_presentation_test`, `protection_health_dashboard_test` and
+  `protection_setup_banner_test` now assert the exact new sentence. The
+  "setup is never worded as a failure" checks and
+  `permission_regression_test` now look for the new sentence.
+- **Unchanged:** no state, classification, refresh, score or
+  authorization change.
+- **Not changed in this correction:** the separate "permission not allowed
+  yet" setup message.
+
+## Phase 9 / M2 device QA (adds to the consolidated plan; not executed)
+
+Session 1f of the consolidated round (Oppo A9, after Session 1e). Same
+setup as Session 1e: PIN, grace 30 s, A = Standard, B = Sensitive,
+C = Critical. Baseline expectation: **90 / 100** (credits 2 + 3 + 4).
+
+**Fail rules:**
+- any number while OFFLINE, stale, checking, failed, unreadable or not set
+  up;
+- a 0 or 100 placeholder while loading;
+- a number that does not match the formula;
+- ATTENTION without **Provisional**;
+- a green number, "%" or perfect / guaranteed wording;
+- a score action that changes a level or setting, unlocks an app, or
+  clears a challenge.
+
+| Step | Actions | Expected |
+| --- | --- | --- |
+| SS1 Setup (record) | Before the PIN on a fresh install; and with no apps protected (SC3). | Setup steps only, with no number. |
+| SS2 Distributions | Grace Immediate, then 5 min, then 30 s; then A → Critical. | 100 (maxed note), 86, 90; then 96. Updates at once. |
+| SS3 Revoked | Overlay off; then Usage only; then restore. | Withheld; **30 Provisional**; 90 only after the return refresh. |
+| SS4 Background restriction | Restrict, then remove. | 30 Provisional, consistent with ATTENTION; then a fresh 90. |
+| SS5 Restore (record) | First value after each restore. | Matches the restored state. |
+| SS6 Critical while OFFLINE | Overlay off, A and B → Critical, return; restore. | No number while offline; 100 after restore. |
+| SS7 Rapid level change | A quickly through the levels back to Standard; C → Standard (PIN). | Only final values: 90, then 83. |
+| SS8 Settings + idle | Settings round trip; idle 60 s; Check again. | Updates with no tap; the number disappears when out of date; returns on Check again. |
+| SS9 Pending challenge | C challenge → Security tab, details, Check again → C. | The challenge stays on top; exact PIN only. |
+| SS10 Display (record) | Dark mode, largest font, TalkBack. | Readable; "Security score: 90 out of 100 points." |
+
+**Minimum acceptance:** SS2, SS3, SS4, SS6, SS7, SS8 and SS9 on the Oppo.
+Release blockers: SS3, SS6, SS8(b) and SS9. SS1, SS5 and SS10 are recorded.
+The full plan copy is `Phase9_M2/P6_P9_CONSOLIDATED_QA_PLAN.md` (outside
+the repo).
+
+**Status:** implemented and simulated-tested. It is **not device verified**
+(the combined Phase 6–10 round is deferred, not waived) and **not release
+ready** until that round passes, including E13, F3 and biometric.

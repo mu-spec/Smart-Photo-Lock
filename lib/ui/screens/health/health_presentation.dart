@@ -106,6 +106,12 @@ abstract final class HealthPresentation {
   static const String secureTitle = 'SECURE';
   static const String attentionTitle = 'ATTENTION REQUIRED';
   static const String offlineTitle = 'PROTECTION OFFLINE';
+
+  /// The OFFLINE message when protection stopped working (revoked or
+  /// stopped). Hedged, not absolute: it is also used for Critical apps by
+  /// the Security Center (Phase 9 review).
+  static const String offlineMessage = 'Protection is offline. App locking '
+      'may not work until protection is restored.';
   static const String checkingTitle = 'Checking protection…';
   static const String unavailableTitle = 'Status unavailable';
 
@@ -192,8 +198,7 @@ abstract final class HealthPresentation {
         }
         return const HealthStatusView(
           title: offlineTitle,
-          message: 'Protection is not working right now. Protected apps can '
-              'open without a lock until this is fixed.',
+          message: offlineMessage,
           level: SecurityLevel.vulnerable,
         );
     }

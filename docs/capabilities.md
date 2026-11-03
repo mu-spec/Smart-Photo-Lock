@@ -331,3 +331,30 @@ displays what already exists:
   reported (Q6).
 - **Device behaviour is unverified** until the combined Phase 6–10 round
   (`docs/regression.md`, Phase 9 / M1).
+
+## Security Score limits (Phase 9 / M2)
+
+- **An assessment, not a guarantee.** The score is "setup points" from
+  Smart App Lock's own product-defined weights: 60 for a fresh passed
+  health check, 40 for how quickly protected apps re-lock after you leave
+  them. It is not a measured probability and does not measure resistance to
+  bypass attempts. It is shown as "/ 100 points", never as "%".
+- **Only observed or saved signals.** It counts the Phase 7 health result,
+  the saved apps and levels, the native-confirmed levels and the saved
+  re-lock grace. It never estimates native enforcement:
+  - a level native has not confirmed earns no extra points;
+  - an assignment made while protection is offline produces no number at
+    all.
+- **No number when it would mislead.** PROTECTION OFFLINE, a stale,
+  failed or missing health check, an unreadable app list or setting, and
+  unfinished setup all show a reason instead of a number (never 0, never a
+  default 100). ATTENTION REQUIRED shows a **provisional** number of at
+  most 40, with the problems still listed.
+- **Never penalised:** unavailable or unenrolled biometrics, PIN vs
+  pattern, the phone model, and how many apps you protect.
+- **Same blind spots as Phase 7.** OEM battery managers stay unobservable,
+  and Q6 (Accessibility disconnect transitions) applies. The 30-second
+  freshness limit means an idle Security tab drops the number until Check
+  again.
+- **Device behaviour is unverified** until the combined Phase 6–10 round
+  (`docs/regression.md`, Phase 9 / M2).

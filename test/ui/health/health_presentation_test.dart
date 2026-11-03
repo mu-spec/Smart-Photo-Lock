@@ -153,14 +153,20 @@ void main() {
       );
       expect(offline.title, HealthPresentation.offlineTitle);
       expect(offline.level, SecurityLevel.vulnerable);
-      expect(offline.message, contains('not working'));
+      // Exact approved wording (Phase 9 / M2 review).
+      expect(
+        offline.message,
+        'Protection is offline. App locking may not work until protection '
+        'is restored.',
+      );
+      expect(offline.message, HealthPresentation.offlineMessage);
       // Never granted: still OFFLINE (nothing can be covered), but worded
       // as a permission not allowed yet rather than as a breakdown.
       final HealthStatusView notYet =
           HealthPresentation.status(_eval(_signals(overlay: false)));
       expect(notYet.title, HealthPresentation.offlineTitle);
       expect(notYet.message, contains('has not been allowed yet'));
-      expect(notYet.message, isNot(contains('not working')));
+      expect(notYet.message, isNot(contains('may not work')));
     });
 
     test('setup and user choice are OFFLINE but never worded as a failure', () {
@@ -171,7 +177,7 @@ void main() {
       expect(s.title, HealthPresentation.offlineTitle);
       expect(s.level, SecurityLevel.notSet);
       expect(s.message, contains('Setup is not finished'));
-      expect(s.message, isNot(contains('not working')));
+      expect(s.message, isNot(contains('may not work')));
 
       final ProtectionHealthReport choice = _eval(
         _signals(configured: false, credential: true, apps: false),
@@ -179,7 +185,7 @@ void main() {
       final HealthStatusView c = HealthPresentation.status(choice);
       expect(c.level, SecurityLevel.notSet);
       expect(c.message, contains('No apps are protected'));
-      expect(c.message, isNot(contains('not working')));
+      expect(c.message, isNot(contains('may not work')));
     });
 
     test('no report / failed check / checking never read as SECURE', () {
