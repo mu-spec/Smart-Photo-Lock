@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:smart_app_lock/app/app_container.dart';
+import 'package:smart_app_lock/data/models/app_security_level.dart';
 import 'package:smart_app_lock/data/models/protected_app.dart';
 import 'package:smart_app_lock/data/repositories/impl/security_settings_repository_impl.dart';
 import 'package:smart_app_lock/data/repositories/protected_apps_repository.dart';
@@ -607,6 +608,12 @@ class _RecoveringRepository implements ProtectedAppsRepository {
       Result.failure(StateError('not used by this test'));
 
   @override
+  Future<Result<void>> setSecurityLevel(
+    String packageName,
+    AppSecurityLevel level,
+  ) async => Result.failure(StateError('not used by this test'));
+
+  @override
   Future<Result<void>> remove(String packageName) async =>
       Result.failure(StateError('not used by this test'));
 
@@ -631,6 +638,12 @@ class _FailingRepository implements ProtectedAppsRepository {
   @override
   Future<Result<void>> add(ProtectedApp app) async =>
       Result.failure(StateError('database unavailable'));
+
+  @override
+  Future<Result<void>> setSecurityLevel(
+    String packageName,
+    AppSecurityLevel level,
+  ) async => Result.failure(StateError('not used by this test'));
 
   @override
   Future<Result<void>> remove(String packageName) async =>

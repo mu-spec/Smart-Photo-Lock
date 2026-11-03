@@ -1,3 +1,4 @@
+import '../../models/app_security_level.dart';
 import '../../models/protected_app.dart';
 import '../../../profiles/lock_profile.dart';
 import '../../../rules/lock_rule.dart';
@@ -10,7 +11,7 @@ import '../local_database.dart';
 /// so `flutter test` never touches a real database.
 class InMemoryLocalDatabase implements LocalDatabase {
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
 
   final Map<String, ProtectedApp> _protectedApps = <String, ProtectedApp>{};
   final Map<String, String> _settings = <String, String>{};
@@ -37,7 +38,21 @@ class InMemoryLocalDatabase implements LocalDatabase {
 
   @override
   Future<void> saveProtectedApp(ProtectedApp app) async {
-    _protectedApps[app.packageName] = app;
+    final ProtectedApp? existing = _protectedApps[app.packageName];
+    _protectedApps[app.packageName] = existing == null
+        ? app
+        : app.copyWith(securityLevel: existing.securityLevel);
+  }
+
+  @override
+  Future<bool> updateProtectedAppSecurityLevel(
+    String packageName,
+    AppSecurityLevel level,
+  ) async {
+    final ProtectedApp? existing = _protectedApps[packageName];
+    if (existing == null) return false;
+    _protectedApps[packageName] = existing.copyWith(securityLevel: level);
+    return true;
   }
 
   @override

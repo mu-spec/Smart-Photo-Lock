@@ -234,3 +234,60 @@ battery-optimization request, foreground-service change or SDK change.
   resumed, the first check may still see the old value; the next trigger
   (Check again, tab return, next resume) corrects it. Device-dependent,
   recorded in the combined device QA.
+
+## Security levels (Phase 8 / M1)
+
+Per-app levels (Standard / Sensitive / Critical) are stored in the existing
+app database only. They add no permission, manifest entry, native API,
+service, dependency or SDK change, and in M1 they are not sent to the native
+watcher: Android-side enforcement (challenge, tickets, grace, re-lock) is
+identical for every protected app until Phase 8 / M2.
+
+- **Android 9 SQLite (3.22).** Schema and write SQL avoid UPSERT and
+  RETURNING; the v1 → v2 migration is a single `ADD COLUMN` with a constant
+  default inside sqflite's open transaction.
+- **App downgrade.** Installing an older (pre-M1) build over M1 data keeps
+  every protected app; rows that the old build rewrites read as Standard
+  again after upgrading. The re-upgrade is guarded so it cannot fail.
+- **Backup / restore and data clearing** follow the existing database
+  behaviour (Settings → Clear storage removes protected apps and their
+  levels together).
+- **What the levels do not do in M1:** no stricter re-lock, no
+  authenticate-every-access, no per-level grace. The app says so in the
+  level picker. *(Superseded by Phase 8 / M2 below.)*
+
+## Security level enforcement (Phase 8 / M2)
+
+Levels are now sent to the native watcher with the protected set and
+enforced through the existing engine. **No new permission, manifest entry,
+service, SDK, dependency, polling or keep-alive.** Platform facts that bound
+what is promised:
+
+- **Observable transitions only.** Sensitive and Critical act on foreground
+  changes that Android reports (Accessibility window-state events; the
+  Usage Access fallback when Accessibility is off, which is coarser and
+  cannot renew a session on its own, U1-R). In-app navigation without a
+  window event and content shown inside other apps are not observable.
+- **Critical re-challenges on any reported departure**, including brief
+  keyboard (IME) or System UI windows that some OEMs report as their own
+  package. This is strict by design; it never loops while the user stays in
+  the authenticated app.
+- **Inactivity window expiry is event-driven** (H-2, unchanged): the window is
+  checked when the next event for the app arrives.
+- **Native persistence.** The levels live next to the protected set in the
+  watcher's private `SharedPreferences`, written with `commit()` in the
+  same edit, so they survive process death and reboot. A store written by a
+  pre-M2 build has no level map and enforces Standard; a damaged map or one
+  written by a newer build enforces Critical. If that write fails, native
+  keeps the last confirmed (or the stricter requested) level and Dart reports
+  the change as not confirmed; a lower level is never kept.
+- **After installing M2 over M1**, native learns the levels when Smart App
+  Lock's screen first starts. No app opens without the PIN/pattern before that
+  (the update ends every unlock), and each unlock tells native its level, so
+  re-locking follows the app's level from the first unlock.
+- **Recommendations** use a fixed list of exact package names on the device.
+  Nothing is uploaded and no analytics are collected. Package names were
+  checked against public store listings (November 2026); a wrong entry can
+  only show a dismissible hint.
+- **Device behaviour is unverified** until the combined Phase 6–10 device
+  round (`docs/regression.md`, Phase 8 / M2).

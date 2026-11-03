@@ -13,6 +13,11 @@ abstract final class AppPrefKeys {
 
   static String capabilityEverGranted(String kindName) =>
       '$capabilityEverGrantedPrefix$kindName';
+
+  /// Phase 8 / M2 (8F): security-level suggestions the user dismissed,
+  /// one `package@level` entry per line. Local only; never uploaded.
+  static const String dismissedSecurityRecommendations =
+      'pref.security_recommendation.dismissed';
 }
 
 /// Typed, app-level preferences facade.
@@ -48,6 +53,12 @@ abstract interface class PreferencesStore {
   // post-grant revocation. Not sensitive — just a boolean per kind.
   Future<bool> wasCapabilityEverGranted(String kindName);
   Future<void> markCapabilityEverGranted(String kindName);
+
+  /// Phase 8 / M2 (8F): dismissed security-level suggestions, as
+  /// `package@level` keys (see `SecurityRecommendation.dismissalKey`).
+  /// Advisory UI state only; it never affects how an app is locked.
+  Future<Set<String>> getDismissedSecurityRecommendations();
+  Future<void> dismissSecurityRecommendation(String key);
 
   Future<void> clearAll();
 }

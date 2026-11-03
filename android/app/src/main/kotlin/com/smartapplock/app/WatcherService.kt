@@ -570,6 +570,8 @@ class WatcherService : Service() {
                     protected = protected,
                     fromUsageEvents = source == ForegroundSource.USAGE_EVENTS,
                 ) { accessibilityEnabledOrUnknown(context) },
+                // Phase 8 / M2: per-package grace from the persisted levels.
+                levelOf = { ProtectionStateStore.securityLevel(context, it) },
             )
             if (!protected || decision == ProtectionAccessState.Decision.ALLOW) {
                 resetRecovery()
@@ -603,6 +605,7 @@ class WatcherService : Service() {
             packageName: String,
             generation: Long,
             sessionWindowMs: Long,
+            levelFloor: SecurityLevel? = null,
         ): Boolean {
             if (!ProtectionStateStore.isProtected(context, packageName)) return false
             val pending = ProtectionStateStore.pendingChallenge(context)
@@ -618,7 +621,15 @@ class WatcherService : Service() {
                 // coverage, or was invalidated by screen-off, cannot grant.
                 return false
             }
-            ProtectionAccessState.authorize(packageName, sessionWindowMs)
+            ProtectionAccessState.authorize(
+                packageName,
+                sessionWindowMs,
+                // Phase 8 / M2: the level caps the H-2 window natively, even
+                // if Dart requested a longer one.
+                level = ProtectionStateStore.securityLevel(context, packageName),
+                // Gate finding 2: Dart's level for this grant; only tightens.
+                floor = levelFloor,
+            )
             ProtectionStateStore.rememberWakeReauthPackage(context, packageName)
             ProtectionStateStore.clearPendingChallenge(
                 context,
@@ -731,6 +742,7 @@ class WatcherService : Service() {
                 packageName = context.packageName,
                 protected = false,
                 nowElapsedMs = SystemClock.elapsedRealtime(),
+                levelOf = { ProtectionStateStore.securityLevel(context, it) },
             )
         }
 
@@ -1043,6 +1055,7 @@ class WatcherService : Service() {
                 ProtectionAccessState.observeForeground(
                     packageName = request.homePackage,
                     protected = false,
+                    levelOf = { ProtectionStateStore.securityLevel(context, it) },
                 )
             }
             // Emergency exit is not authorization and never starts/extends

@@ -48,6 +48,12 @@ abstract interface class AccessController {
   /// period NEVER applies here (screen-off is a hard security signal).
   Future<Result<void>> revokeAllAccess();
 
+  /// Phase 8 / M2: ends the unlock window AND any grace clock of exactly
+  /// [packageName], with no grace (used when its security level was
+  /// raised, so an older, more permissive window cannot outlive the
+  /// change). Never grants anything.
+  Future<Result<void>> revokeImmediately(String packageName);
+
   /// Phase 5L: configures the re-lock grace period applied when the
   /// user leaves a protected app (zero = immediate re-lock).
   void setGracePeriod(Duration period);

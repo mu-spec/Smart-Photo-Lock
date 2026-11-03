@@ -1,5 +1,6 @@
 import 'package:flutter/services.dart';
 
+import '../../data/models/app_security_level.dart';
 import '../../utilities/result.dart';
 import '../pending_lock_challenge.dart';
 import '../watcher_service.dart';
@@ -49,14 +50,40 @@ class MethodChannelWatcherService implements WatcherService {
   }
 
   @override
-  Future<Result<void>> configureProtection({
+  Future<Result<ProtectionPolicyAck>> configureProtection({
     required bool enabled,
     required Set<String> protectedPackages,
-  }) =>
-      _invokeVoid('configureProtection', <String, dynamic>{
-        'enabled': enabled,
-        'protectedPackages': protectedPackages.toList(growable: false),
-      });
+    ProtectionPolicySnapshot? policy,
+  }) async {
+    try {
+      final Object? reply = await _channel.invokeMethod<Object?>(
+        'configureProtection',
+        <String, dynamic>{
+          'enabled': enabled,
+          'protectedPackages': protectedPackages.toList(growable: false),
+          ...?policy?.toChannelArguments(),
+        },
+      );
+      // Pre-M2 native replied `true`; keep that accepted (levels unknown).
+      if (reply == true) return Result.success(ProtectionPolicyAck.unknown);
+      final ProtectionPolicyAck ack = ProtectionPolicyAck.fromChannel(reply);
+      if (reply is! Map ||
+          reply['applied'] != true ||
+          reply['persisted'] == false ||
+          ack.status == ProtectionPolicyStatus.stale) {
+        // Phase 8 / M2: a rejected or stale snapshot (native kept a newer
+        // one) changed nothing and must never be reported as applied.
+        return Result.failure(
+          StateError('Native watcher rejected configureProtection.'),
+        );
+      }
+      return Result.success(ack);
+    } on PlatformException catch (e) {
+      return Result.failure(e);
+    } on MissingPluginException catch (e) {
+      return Result.failure(e);
+    }
+  }
 
   @override
   Future<Result<void>> heartbeat() => _invokeVoid('heartbeat');
@@ -71,11 +98,13 @@ class MethodChannelWatcherService implements WatcherService {
   Future<Result<void>> authorizePackage(
     PendingLockChallenge challenge, {
     Duration sessionWindow = const Duration(minutes: 2),
+    AppSecurityLevel? securityLevel,
   }) =>
       _invokeVoid('authorizePackage', <String, dynamic>{
         ...challenge.toMap(),
         'sessionWindowMilliseconds':
             sessionWindow.isNegative ? 0 : sessionWindow.inMilliseconds,
+        if (securityLevel != null) 'securityLevel': securityLevel.storageId,
       });
 
   @override

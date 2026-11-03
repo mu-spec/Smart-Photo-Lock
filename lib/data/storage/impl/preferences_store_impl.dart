@@ -56,5 +56,24 @@ class PreferencesStoreImpl implements PreferencesStore {
       _store.setBool(AppPrefKeys.capabilityEverGranted(kindName), true);
 
   @override
+  Future<Set<String>> getDismissedSecurityRecommendations() async {
+    final String? raw =
+        await _store.getString(AppPrefKeys.dismissedSecurityRecommendations);
+    if (raw == null || raw.isEmpty) return <String>{};
+    return raw.split('\n').where((String k) => k.isNotEmpty).toSet();
+  }
+
+  @override
+  Future<void> dismissSecurityRecommendation(String key) async {
+    if (key.isEmpty || key.contains('\n')) return;
+    final Set<String> keys = await getDismissedSecurityRecommendations();
+    if (!keys.add(key)) return;
+    await _store.setString(
+      AppPrefKeys.dismissedSecurityRecommendations,
+      (keys.toList()..sort()).join('\n'),
+    );
+  }
+
+  @override
   Future<void> clearAll() => _store.clear();
 }

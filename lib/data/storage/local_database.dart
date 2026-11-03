@@ -1,3 +1,4 @@
+import '../models/app_security_level.dart';
 import '../models/protected_app.dart';
 import '../../profiles/lock_profile.dart';
 import '../../rules/lock_rule.dart';
@@ -27,8 +28,20 @@ abstract interface class LocalDatabase {
   /// All protected apps, ordered by [ProtectedApp.sortOrder] then label.
   Future<List<ProtectedApp>> getProtectedApps();
 
-  /// Inserts or replaces a protected app (upsert by package name).
+  /// Upsert by package name (one record per package). A new record is
+  /// stored with [ProtectedApp.securityLevel]. For an existing record the
+  /// label, addedAt and sortOrder are replaced but the stored security
+  /// level is KEPT (Phase 8 / M1): a repeated protect never resets a level;
+  /// only [updateProtectedAppSecurityLevel] changes it. Atomic.
   Future<void> saveProtectedApp(ProtectedApp app);
+
+  /// Sets the security level of an existing protected app, atomically.
+  /// Returns false (and stores nothing) when [packageName] is not
+  /// protected: a level change never protects or unprotects an app.
+  Future<bool> updateProtectedAppSecurityLevel(
+    String packageName,
+    AppSecurityLevel level,
+  );
 
   Future<void> removeProtectedApp(String packageName);
 

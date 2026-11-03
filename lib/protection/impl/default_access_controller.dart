@@ -1,9 +1,11 @@
+import '../../data/models/app_security_level.dart';
 import '../../security/credentials/credential_manager.dart';
 import '../../security/credentials/credential_state.dart';
 import '../../utilities/result.dart';
 import '../access_controller.dart';
 import '../lock_session.dart';
 import '../protected_app_matcher.dart';
+import '../security_level_policy.dart';
 
 /// Phase 5D/5E/5H/5J/5K/5L implementation of [AccessController].
 ///
@@ -28,18 +30,37 @@ import '../protected_app_matcher.dart';
 /// Sessions live in memory for this phase (a 2-minute window per
 /// package, per [LockSession]); persistence lands with the lock-screen
 /// phase.
+///
+/// Phase 8 / M2 (8C–8E): the grace applied at a leave and the window of a
+/// new unlock follow [SecurityLevelPolicy] for the app's effective level:
+/// the stricter of its stored level and [enforcedLevelFloor] (the level
+/// native still enforces, e.g. a downgrade not yet confirmed natively). An
+/// unknown protection state uses the strictest level.
 class DefaultAccessController implements AccessController {
   DefaultAccessController({
     required ProtectedAppMatcher matcher,
     required CredentialManager auth,
     DateTime Function()? now,
+    AppSecurityLevel? Function(String packageName)? enforcedLevelFloor,
   })  : _matcher = matcher,
         _auth = auth,
-        _now = now ?? DateTime.now;
+        _now = now ?? DateTime.now,
+        _enforcedLevelFloor = enforcedLevelFloor;
 
   final ProtectedAppMatcher _matcher;
   final CredentialManager _auth;
   final DateTime Function() _now;
+  final AppSecurityLevel? Function(String packageName)? _enforcedLevelFloor;
+
+  /// Phase 8 / M2: the level that governs [match]'s package.
+  AppSecurityLevel _levelOf(ProtectedMatch match) {
+    final AppSecurityLevel? floor = _enforcedLevelFloor?.call(
+      match.packageName,
+    );
+    return floor == null
+        ? match.securityLevel
+        : SecurityLevelPolicy.stricter(match.securityLevel, floor);
+  }
 
   /// Active unlock windows keyed by package name.
   final Map<String, LockSession> _sessions = <String, LockSession>{};
@@ -103,9 +124,16 @@ class DefaultAccessController implements AccessController {
 
   @override
   Future<Result<LockSession>> grantAccess(String packageName) async {
+    // Phase 8 / M2: Sensitive/Critical unlocks get the shorter window.
+    final AppSecurityLevel level = _levelOf(await _matcher.match(packageName));
     final LockSession session = LockSession(
       packageName: packageName,
       grantedAt: _now(),
+      window: SecurityLevelPolicy.sessionWindowFor(
+        level,
+        LockSession.defaultWindow,
+      ),
+      securityLevel: level,
     );
     _sessions[packageName] = session;
     // A fresh grant supersedes any pending grace deadline for this
@@ -129,9 +157,17 @@ class DefaultAccessController implements AccessController {
     // grace clock instead of removing the session — re-entry within
     // the grace is allowed. Without grace (zero), the session ends
     // immediately (the 5J default).
+    // Phase 8 / M2: the grace is the level's (Standard: configured;
+    // Sensitive: capped; Critical/unknown: none).
     if (_gracePeriod > Duration.zero && _sessions.containsKey(packageName)) {
-      _graceUntil[packageName] = _now().add(_gracePeriod);
-      return Result.success(null);
+      final Duration grace = SecurityLevelPolicy.graceFor(
+        _levelOf(await _matcher.match(packageName)),
+        _gracePeriod,
+      );
+      if (grace > Duration.zero) {
+        _graceUntil[packageName] = _now().add(grace);
+        return Result.success(null);
+      }
     }
     _sessions.remove(packageName);
     _graceUntil.remove(packageName);
@@ -161,6 +197,13 @@ class DefaultAccessController implements AccessController {
     // grace period never softens a screen-off.
     _sessions.clear();
     _graceUntil.clear();
+    return Result.success(null);
+  }
+
+  @override
+  Future<Result<void>> revokeImmediately(String packageName) async {
+    _sessions.remove(packageName);
+    _graceUntil.remove(packageName);
     return Result.success(null);
   }
 

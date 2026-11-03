@@ -176,6 +176,8 @@ class AppContainer {
       matcher: protectedAppMatcher,
       auth: auth,
       now: _accessClock,
+      // Phase 8 / M2: never weaker than the level native last confirmed.
+      enforcedLevelFloor: protectionBootstrap.nativeLevelFor,
     );
     lockTrigger = LockTrigger(
       monitor: foregroundMonitor,

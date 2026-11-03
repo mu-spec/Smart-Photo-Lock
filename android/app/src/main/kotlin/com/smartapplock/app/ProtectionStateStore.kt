@@ -1,6 +1,7 @@
 package com.smartapplock.app
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.os.SystemClock
 import android.provider.Settings
 
@@ -28,17 +29,111 @@ object ProtectionStateStore {
     private const val KEY_WAKE_REAUTH_STAMP_ELAPSED = "wake_reauth_stamp_elapsed"
     private const val KEY_WAKE_REAUTH_STAMP_WALL = "wake_reauth_stamp_wall"
     private const val KEY_LAST_ERROR = "last_error"
+    // Phase 8 / M2: effective per-package levels, written in the SAME edit
+    // as the protected set. The version key is the presence marker: absent
+    // = legacy store (pre-M2, every app Standard); present = map in force.
+    private const val KEY_LEVELS = "security_levels"
+    private const val KEY_LEVELS_VERSION = "security_levels_version"
+    const val ERROR_LEVELS_INVALID = "security_levels_invalid"
 
-    fun configure(context: Context, enabled: Boolean, packages: Set<String>) {
+    private val snapshotOrder = SnapshotOrderGate()
+
+    /** Level part of a `configureProtection` call (all optional). */
+    data class PolicyInput(
+        val version: Any? = null,
+        val rawLevels: Any? = null,
+        val session: String? = null,
+        val revision: Long? = null,
+        val authorizedDowngrades: Set<String> = emptySet(),
+    )
+
+    /** What native applied; returned to Dart for reconciliation. */
+    data class ConfigureOutcome(
+        val applied: Boolean,
+        val status: String,
+        val levels: Map<String, SecurityLevel>,
+        val heldDowngrades: Set<String>,
+        /** False when the durable write failed (reported, never as applied). */
+        val persisted: Boolean = true,
+    ) {
+        fun toMap(): Map<String, Any> = mapOf(
+            "applied" to applied,
+            "persisted" to persisted,
+            "policyStatus" to status,
+            "effectiveLevels" to levels.mapValues { it.value.id },
+            "heldDowngrades" to heldDowngrades.toList(),
+        )
+    }
+
+    /**
+     * Applies one protection snapshot. Phase 8 / M2: a stale snapshot (same
+     * Dart session, revision not newer) changes nothing. Otherwise the level
+     * map is resolved by [PolicySnapshotResolver] (legacy → keep / Standard,
+     * invalid → Critical, unacknowledged downgrade → held) and persisted
+     * atomically with the protected set, durably (`commit`) before the reply
+     * so a process kill cannot lose an upgrade the app was told is active.
+     *
+     * Gate finding 1: `SharedPreferences.commit()` applies the edit to the
+     * in-memory map BEFORE the disk write and does not roll it back when the
+     * write fails, and any later write of another key flushes that map to
+     * disk. So on a failed write the level map is immediately rewritten to
+     * [PolicySnapshotResolver.unpersisted] (never below the last confirmed
+     * level; an unconfirmed downgrade is reported as held) and the reply says
+     * `persisted = false`. Both edits run under [levelsLock], which readers
+     * also take, so no enforcement read can observe the unconfirmed level.
+     * A failed upgrade stays enforced in memory for this process; after a
+     * process death native falls back to the last durable level until the
+     * next Dart sync (Dart was told the upgrade is not confirmed). Packages whose level became
+     * stricter lose any existing authorization or grace. Pending tickets of
+     * still-protected packages, lockout and grace settings are untouched.
+     */
+    @Synchronized
+    fun configure(
+        context: Context,
+        enabled: Boolean,
+        packages: Set<String>,
+        policy: PolicyInput = PolicyInput(),
+    ): ConfigureOutcome {
         val normalized = packages.filter { it.isNotBlank() }.toSet()
+        if (!snapshotOrder.accept(policy.session, policy.revision)) {
+            return ConfigureOutcome(false, "stale", securityLevels(context), emptySet())
+        }
+        val resolution = PolicySnapshotResolver.resolve(
+            packages = normalized,
+            version = policy.version,
+            rawLevels = policy.rawLevels,
+            previous = securityLevels(context),
+            authorizedDowngrades = policy.authorizedDowngrades,
+        )
         ProtectionAccessState.retainProtectedPackages(normalized)
+        ProtectionAccessState.revoke(resolution.raised)
         if (!enabled || normalized.isEmpty()) {
             ProtectionAccessState.revokeAll()
         }
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putBoolean(KEY_ENABLED, enabled && normalized.isNotEmpty())
-            .putStringSet(KEY_PACKAGES, normalized)
-            .apply()
+        val preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val (persisted, levels) = synchronized(levelsLock) {
+            val previous = securityLevelsLocked(preferences)
+            val written = preferences.edit()
+                .putBoolean(KEY_ENABLED, enabled && normalized.isNotEmpty())
+                .putStringSet(KEY_PACKAGES, normalized)
+                .putInt(KEY_LEVELS_VERSION, SecurityLevelStoreCodec.VERSION)
+                .putStringSet(KEY_LEVELS, SecurityLevelStoreCodec.encode(resolution.levels))
+                .commit()
+            if (written) {
+                true to resolution.levels
+            } else {
+                val safe = PolicySnapshotResolver.unpersisted(resolution.levels, previous)
+                // Restores memory whatever the disk result; best effort on disk.
+                preferences.edit()
+                    .putInt(KEY_LEVELS_VERSION, SecurityLevelStoreCodec.VERSION)
+                    .putStringSet(KEY_LEVELS, SecurityLevelStoreCodec.encode(safe))
+                    .commit()
+                false to safe
+            }
+        }
+        if (resolution.status == PolicySnapshotResolver.Status.INVALID) {
+            setLastError(context, ERROR_LEVELS_INVALID)
+        }
         val pending = pendingChallenge(context)
         if (!enabled || (pending != null && pending.packageName !in normalized)) {
             clearPendingChallenge(context)
@@ -48,7 +143,53 @@ object ProtectionStateStore {
         if (!enabled || (wakePackage != null && wakePackage !in normalized)) {
             rememberWakeReauthPackage(context, null)
         }
+        return ConfigureOutcome(
+            applied = true,
+            status = resolution.status.name.lowercase(),
+            levels = levels,
+            heldDowngrades = resolution.heldDowngrades +
+                levels.filter { (pkg, level) -> resolution.levels[pkg] != level }.keys,
+            persisted = persisted,
+        )
     }
+
+    /**
+     * Phase 8 / M2: effective level of every protected package (see
+     * [SecurityLevelStoreCodec.decode]: legacy store → Standard, damaged
+     * map → Critical).
+     */
+    fun securityLevels(context: Context): Map<String, SecurityLevel> {
+        val preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        return synchronized(levelsLock) { securityLevelsLocked(preferences) }
+    }
+
+    /**
+     * Leaf lock for the level entries (gate finding 1). Never acquire another
+     * lock while holding it: [ProtectionAccessState.observeForeground] reads
+     * levels under its own monitor while [configure] (this object's monitor)
+     * calls into [ProtectionAccessState].
+     */
+    private val levelsLock = Any()
+
+    private fun securityLevelsLocked(preferences: SharedPreferences): Map<String, SecurityLevel> {
+        val version = if (preferences.contains(KEY_LEVELS_VERSION)) {
+            preferences.getInt(KEY_LEVELS_VERSION, -1)
+        } else {
+            null
+        }
+        return SecurityLevelStoreCodec.decode(
+            version,
+            preferences.getStringSet(KEY_LEVELS, null),
+            preferences.getStringSet(KEY_PACKAGES, emptySet())?.toSet() ?: emptySet(),
+        )
+    }
+
+    /**
+     * Effective level for [packageName]. A package outside the protected set
+     * never holds an authorization; it reads as Critical (strict) anyway.
+     */
+    fun securityLevel(context: Context, packageName: String): SecurityLevel =
+        securityLevels(context)[packageName] ?: SecurityLevel.CRITICAL
 
     fun isEnabled(context: Context): Boolean =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)

@@ -17,7 +17,19 @@ object ProtectionAccessState {
         var activeUntilElapsedMs: Long,
         val sessionWindowMs: Long,
         var awaySinceElapsedMs: Long? = null,
+        /** Gate finding 2: level Dart enforced for this grant (only tightens). */
+        val floor: SecurityLevel? = null,
     )
+
+    /** Stricter of the store level and the authorization's own floor. */
+    private fun levelFor(
+        packageName: String,
+        authorization: Authorization,
+        levelOf: (String) -> SecurityLevel,
+    ): SecurityLevel {
+        val stored = levelOf(packageName)
+        return authorization.floor?.let { SecurityLevel.stricter(stored, it) } ?: stored
+    }
 
     private val authorizations = mutableMapOf<String, Authorization>()
     private var currentForegroundPackage: String? = null
@@ -34,18 +46,32 @@ object ProtectionAccessState {
         }
     }
 
-    /** Called only after Dart has observed explicit authentication success. */
+    /**
+     * Called only after Dart has observed explicit authentication success.
+     * Phase 8 / M2: the H-2 window is capped by the package's [level]
+     * ([SecurityLevelPolicy.sessionWindowMs]); a level can only shorten it.
+     *
+     * Gate finding 2: [floor] is the level Dart enforced for this grant. The
+     * authorization keeps it for its whole lifetime, so its window and every
+     * leave/re-entry grace use the stricter of [floor] and the native store
+     * level, even while the store still holds a legacy (pre-M2) Standard map
+     * because the first Dart level sync has not been applied yet or failed.
+     */
     @Synchronized
     fun authorize(
         packageName: String,
         sessionWindowMs: Long,
         nowElapsedMs: Long = SystemClock.elapsedRealtime(),
+        level: SecurityLevel = SecurityLevel.STANDARD,
+        floor: SecurityLevel? = null,
     ) {
         if (packageName.isBlank()) return
-        val safeWindow = sessionWindowMs.coerceAtLeast(0L)
+        val windowLevel = floor?.let { SecurityLevel.stricter(level, it) } ?: level
+        val safeWindow = SecurityLevelPolicy.sessionWindowMs(windowLevel, sessionWindowMs)
         authorizations[packageName] = Authorization(
             activeUntilElapsedMs = nowElapsedMs + safeWindow,
             sessionWindowMs = safeWindow,
+            floor = floor,
         )
         currentForegroundPackage = packageName
     }
@@ -74,6 +100,13 @@ object ProtectionAccessState {
      * latest Accessibility evidence does not corroborate. Such a report is
      * still enforced (it may revoke or challenge) but it can neither re-admit
      * an away authorization within grace nor slide the H-2 deadline.
+     *
+     * Phase 8 / M2: [levelOf] gives each package's effective security level.
+     * The grace used at a leave and at a re-entry is
+     * [SecurityLevelPolicy.graceMs] of that level: Standard keeps the
+     * configured grace, Sensitive is capped, Critical has none (a leave
+     * removes the authorization, so every observed re-entry challenges).
+     * The default treats every package as Standard (pre-M2 behaviour).
      */
     @Synchronized
     fun observeForeground(
@@ -81,13 +114,17 @@ object ProtectionAccessState {
         protected: Boolean,
         nowElapsedMs: Long = SystemClock.elapsedRealtime(),
         mayRenew: Boolean = true,
+        levelOf: (String) -> SecurityLevel = { SecurityLevel.STANDARD },
     ): Decision {
         val previous = currentForegroundPackage
         if (previous != packageName) {
             currentForegroundPackage = packageName
             val previousAuthorization = previous?.let(authorizations::get)
             if (previousAuthorization != null) {
-                if (gracePeriodMs == 0L ||
+                if (SecurityLevelPolicy.graceMs(
+                        levelFor(previous, previousAuthorization, levelOf),
+                        gracePeriodMs,
+                    ) == 0L ||
                     nowElapsedMs >= previousAuthorization.activeUntilElapsedMs
                 ) {
                     authorizations.remove(previous)
@@ -101,7 +138,11 @@ object ProtectionAccessState {
         val authorization = authorizations[packageName] ?: return Decision.CHALLENGE
         val awaySince = authorization.awaySinceElapsedMs
         if (awaySince != null) {
-            if (mayRenew && gracePeriodMs > 0L && nowElapsedMs - awaySince < gracePeriodMs) {
+            val graceMs = SecurityLevelPolicy.graceMs(
+                levelFor(packageName, authorization, levelOf),
+                gracePeriodMs,
+            )
+            if (mayRenew && graceMs > 0L && nowElapsedMs - awaySince < graceMs) {
                 authorization.awaySinceElapsedMs = null
                 authorization.activeUntilElapsedMs =
                     nowElapsedMs + authorization.sessionWindowMs
@@ -140,6 +181,20 @@ object ProtectionAccessState {
     fun revokeAll() {
         authorizations.clear()
     }
+
+    /**
+     * Phase 8 / M2: removes the authorization (active or away) of exactly
+     * these packages. Used when their level became stricter, so an older,
+     * more permissive grace or window can never outlive the change.
+     */
+    @Synchronized
+    fun revoke(packages: Set<String>) {
+        authorizations.keys.removeAll(packages)
+    }
+
+    /** Test/diagnostic: whether [packageName] holds any authorization. */
+    @Synchronized
+    fun isAuthorized(packageName: String): Boolean = authorizations.containsKey(packageName)
 
     @Synchronized
     fun retainProtectedPackages(packages: Set<String>) {

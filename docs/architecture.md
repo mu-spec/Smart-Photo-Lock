@@ -2316,3 +2316,290 @@ Security tab's own resume synchronization is pre-existing (Phase 4G) and is
 not a health refresh. A second after-change request during a running check
 costs one extra collection by design. Whether OEM Settings pages report the
 change before the app resumes is device-dependent (combined device QA).
+
+## Phase 8 / M1 — Security levels & per-app selection
+
+PRD v2.1, Phase 8 / Milestone 1 (8A Security Level Model, 8B Per-App Level
+Selection). The request referenced "Master PRD v2.0"; the repository's
+uploaded PRD is v2.1, whose Phase 8 / M1 text is identical in scope (create
+Standard / Sensitive / Critical; allow each protected app to receive a
+level). M1 is classification and persistence only.
+
+**Model (`lib/data/models/app_security_level.dart`).** `enum AppSecurityLevel
+{ standard, sensitive, critical }` with a stable `storageId` (`standard`,
+`sensitive`, `critical`), `rank` 0/1/2 (Critical > Sensitive > Standard,
+matching the later rule-priority order), label and a one-line purpose that
+states intent only. Named `AppSecurityLevel` because
+`design_system/security/security_level.dart` already defines an unrelated
+status-tone `SecurityLevel`. Parsing (`fromStorage`) never throws and never
+drops a record: missing (`null`, legacy) → Standard; any present value that
+is not an exact id (unknown id from a newer build, wrong case, wrong type,
+corruption) → Critical. A damaged value can only make the classification
+stricter. The fallback is applied on read only: the stored value is never
+rewritten by reading, by a repeated protect (the refresh `UPDATE` does not
+name the column) or by opening the picker. Only an explicit user choice
+replaces it, so a damaged value stays visible for diagnosis.
+
+**Single source of truth.** The level is a field of `ProtectedApp` and a
+column of the existing `protected_apps` row (package name is the primary
+key, so one level per package and no duplicate assignments). There is no
+separate preference store. Removing protection deletes the row and retires
+its level; protecting the app again starts from Standard (deterministic,
+documented default). Package identity is the existing repository key
+(`ProtectedApp.packageName`, exact match, same as `remove`).
+
+**Storage schema v2 (SQLite).**
+
+| Version | `protected_apps` |
+| --- | --- |
+| v1 (Phases 1E–7) | `package_name PK, label, added_at, sort_order` |
+| v2 (Phase 8 / M1) | v1 + `security_level TEXT NOT NULL DEFAULT 'standard'` |
+
+Migration v1 → v2 is one `ALTER TABLE … ADD COLUMN` with a constant default,
+run by sqflite inside the open transaction together with the version bump
+(all-or-nothing). Every existing protected app keeps its row and reads as
+Standard; no row is rewritten or dropped. The migration is guarded by
+`PRAGMA table_info`: a v2 file once opened by an older v1 build is re-labelled
+v1 by sqflite (no `onDowngrade`) but keeps the column, and an unguarded second
+`ADD COLUMN` would fail the open and make the whole store unreadable. All SQL
+avoids UPSERT / RETURNING (SQLite 3.22 on Android 9).
+
+**Write semantics.**
+- `add` / `saveProtectedApp` (protect): one transaction of `INSERT OR IGNORE`
+  (new row with the given level, Standard by default) + `UPDATE` of label,
+  addedAt and sortOrder only. A repeated or racing protect can never reset or
+  downgrade an existing level.
+- `setSecurityLevel` / `updateProtectedAppSecurityLevel`: a single
+  `UPDATE … WHERE package_name = ?`. Zero rows changed → failure: a level
+  change never protects, re-protects or unprotects an app. A blank package
+  fails; database errors are returned as `Result.failure`.
+- Concurrent writes are serialized by the store; the last request wins. A
+  level write racing a removal fails without recreating the row.
+- The in-memory store implements the same contract (tests).
+
+**UI (Apps tab).** A protected row shows `Locked · <level>` (the existing
+"Locked" text is unchanged; the level is a separate label). Tapping a
+protected row opens a bottom sheet (`security_level_sheet.dart`) with the
+three levels, their purpose, the current one marked (merged radio semantics:
+checked, mutually exclusive), ≥ 48 dp rows and a notice that stricter
+locking for Sensitive and Critical is not active yet. The choice is saved
+non-optimistically: the row shows `· Saving…`, then the new level only after
+the repository confirms; a failure keeps the old level and says so; further
+taps on that row are ignored while saving; one sheet at a time; no sheet in
+selection mode, during an unprotect confirmation or a bulk action; if the
+app was unprotected while the sheet was open nothing is saved. Unprotected
+rows, search, filters, bulk selection and the CR-2 unprotect confirmation are
+unchanged.
+
+**M1 / M2 boundary.** M1 does not change locking. Every protected app still
+uses the same PIN/pattern challenge, global grace setting, unlock sessions,
+native tickets and re-lock rules as Phase 7. A level change calls only the
+repository: no `ProtectionBootstrap.synchronize`, no watcher, overlay,
+access-controller, ticket, challenge, grace or lockout call (asserted by
+tests, including a pending native challenge). No enforcement source
+(`lib/protection`, `lib/services`, the lock host, Kotlin) reads the level
+(source-contract test). *These M1 statements are superseded by Phase 8 / M2
+below: levels are now transported and enforced, a level change runs one
+protection sync, and lowering a level needs CR-2.*
+
+**Integration contract for Phase 8 / M2 (implemented; see Phase 8 / M2).**
+1. Transport: extend `WatcherService.configureProtection` with a per-package
+   level map, written by `ProtectionBootstrap.synchronize` from the same
+   repository read that produces the package set (one source of truth), and
+   persisted next to the package set in `ProtectionStateStore` so recovery
+   after process death and reboot keeps it.
+2. Missing versus invalid level data (must stay distinct, as in the M1
+   data layer):
+   - **Legacy missing data.** Example: a native store or transport written by
+     a pre-M2 build that never carried a level map, or a level-map
+     version/flag that is absent. This means "not yet upgraded". It must
+     enforce exactly today's Standard behaviour for every protected package.
+     M2 must NOT turn all legacy Standard apps into Critical just because
+     the native transport or store has not been upgraded yet. The level map
+     needs an explicit version or presence marker so that native code can
+     tell "no map yet" apart from "map present but damaged".
+   - **Invalid transport data.** Example: a map that is present but has an
+     unknown id, a wrong type, or is missing an entry for a protected
+     package. It is treated as the strictest level the native engine
+     supports (fail-strict). It is never unprotected and never weaker than
+     the last valid level.
+   - **In every case**, a missing, malformed or unreadable native
+     enforcement signal must never authorize access, create or extend grace,
+     clear a pending ticket, reset lockout, or silently weaken existing
+     protection. The protected package set remains the gate. A level only
+     ever adds strictness on top of today's Standard enforcement.
+   - Tests in M2 must cover legacy (no map) → Standard behaviour,
+     present-but-invalid → strictest, and neither path ever authorizing.
+3. A level change must then trigger one synchronization (as protect/unprotect
+   do today) and must still never authorize, clear a ticket or reset lockout.
+4. Lowering a level (Critical/Sensitive → weaker) weakens protection once
+   enforced; M2 should require CR-2-style credential confirmation for
+   downgrades. M1 does not, because levels have no effect yet.
+5. Sensitive-app recommendations (M2) may only suggest; they never change a
+   level without the user.
+
+## Phase 8 / M2 — Security level enforcement & recommendations
+
+PRD v2.1, Phase 8 / Milestone 2 (8C Standard, 8D Sensitive, 8E Critical, 8F
+recommendations). The user cites "Master PRD v2.0"; the uploaded file is v2.1
+and its M2 text is the reference. Built on local commit `8b1a2fe` (P8 M1).
+There is **no new lock engine**: the levels parameterize the existing
+re-lock grace and H-2 inactivity window in both layers. Native
+`ProtectionAccessState` stays the final gate; Dart `DefaultAccessController`
+mirrors it.
+
+**Policy (`SecurityLevelPolicy.kt` / `lib/protection/security_level_policy.dart`,
+same numbers, parity asserted by a source-contract test).** G = the user's
+configured re-lock grace; W = the H-2 sliding window requested for an
+unlock (2 min).
+
+| | Standard (8C) | Sensitive (8D) | Critical (8E) |
+| --- | --- | --- | --- |
+| Grace after leaving | G (unchanged) | min(G, 15 s) | none |
+| Inactivity window | W (unchanged, uncapped) | min(W, 1 min) | min(W, 1 min) |
+| Re-entry after an observed departure | allowed within G | allowed within ≤ 15 s | always challenges |
+| Same foreground interaction | allowed, slides W | allowed, slides W | allowed, slides W (no challenge loop) |
+| Screen off, process/service death | revoke all (unchanged) | same | same |
+
+A level only ever shortens or removes grace and shortens the window; it
+never lengthens either, grants anything or touches tickets or lockout. The
+leave grace uses the level of the package being left; the re-entry check
+uses the level of the package re-entered. **"Every access" for Critical** is
+defined over observable foreground transitions: every observed transition
+into the package after any observed transition away from it (Home,
+launcher, another app, Smart App Lock's own UI, a system window that
+Android reports as its own package, Recents). Nothing is promised for
+unobservable events (in-app navigation without a window event, inactivity
+without any event (H-2), events while Accessibility is off beyond the
+coarser Usage fallback). The internal matrix used for implementation is
+`Phase8_M2/POLICY_MATRIX.md` (outside the repo).
+
+**Effective level.** Native: its own persisted level per package
+(`ProtectionStateStore.securityLevel`; a package with no entry reads as
+Critical). Dart: the stricter of the stored level (matcher, same read as the
+protected decision) and the level native last confirmed
+(`ProtectionBootstrap.nativeLevelFor`, a floor); an unreadable repository
+reads as Critical. So a divergence always resolves to the stricter level.
+`authorizePackage` needs no Dart-side window: native caps it from its own
+store.
+
+**Transport (one atomic snapshot).** `ProtectionBootstrap.synchronize` reads
+the repository once and sends `configureProtection(enabled,
+protectedPackages, policyVersion: 1, securityLevels: {pkg: id},
+snapshotSession, snapshotRevision, authorizedDowngrades)`. Keys are exactly
+the protected packages (same strings native stores). Calls are serialized
+(a Completer chain); the session is a random per-isolate id and the
+revision increases per call. Native (`PolicySnapshotResolver`):
+
+| Input | Result | Effective levels |
+| --- | --- | --- |
+| no `policyVersion` and no map (legacy/pre-M2 Dart) | `legacy` | known levels kept; new packages Standard |
+| v1, keys == protected set, all ids valid | `applied` | requested levels; a LOWER level is applied only for packages in `authorizedDowngrades`, else held (`heldDowngrades`) |
+| anything else (unknown version, map without version, wrong types, missing/extra keys, unknown id) | `invalid` | every protected package Critical; `lastError = security_levels_invalid` |
+| same session, revision ≤ last accepted | `stale` | nothing changes (`applied=false`) |
+
+Packages, enabled flag, levels and the level-store version marker are
+written in **one** `SharedPreferences` edit with `commit()` (durable before
+the reply; a failed write replies `persisted=false`, which Dart treats as a
+failure). Raised packages lose their native authorization; tickets for
+still-protected packages, grace, lockout and the watcher lifecycle are not
+touched (the existing rules for removed packages and `enabled=false` are
+unchanged). The reply `{applied, persisted, policyStatus, effectiveLevels,
+heldDowngrades}` becomes `ProtectionPolicyAck`; a stale, unapplied or
+unpersisted reply is a failure, a pre-M2 `true` is accepted as "levels
+unknown".
+
+**Failed native write (final native gate, finding 1).** Android's
+`SharedPreferences.commit()` applies an edit to the in-memory map *before*
+the disk write and does not roll it back when the write fails; any later
+write of another key (`lastError`, a pending ticket) then flushes that map to
+disk. So when the level edit fails, `configure` immediately rewrites the
+level map to the stricter of the last confirmed and the requested level per
+package (`PolicySnapshotResolver.unpersisted`). An unconfirmed downgrade is
+therefore never visible to enforcement and never reaches disk later; it is
+returned in `heldDowngrades` with `persisted=false`. Both edits and every
+level read run under a private leaf lock in `ProtectionStateStore` (never
+held while taking another lock, so the `ProtectionAccessState` ⇄ store lock
+order cannot deadlock). A failed *upgrade* is still enforced in memory for
+this process (raised packages lose their authorization); after a process
+death native falls back to the last durable level until the next Dart sync,
+and Dart, told the upgrade is not confirmed, keeps enforcing it on its paths.
+
+**Native store migration and forward-compat (`SecurityLevelStoreCodec`).**
+`security_levels_version` and the level map both absent (store written
+before M2) → every package Standard (today's behaviour; never mass-Critical).
+A level map without the version marker is damaged (M2 always writes both in
+one edit) → Critical. Version 1 → each
+`pkg=level` entry; a damaged or missing entry → Critical. Any other version
+(written by a newer build) → Critical. Process restart or service rebind
+reads the persisted map, so the policy is known before Dart re-syncs; a
+restart can never downgrade because a downgrade needs an explicit
+acknowledgement in a validated snapshot. The in-memory order gate resets
+with the process; the first snapshot of a new Dart session is accepted, and
+it still cannot weaken a level without the acknowledgement.
+
+**First start after an M1 → M2 upgrade (final native gate, finding 2).** M1
+levels live only in Dart's database; the native store written by M1 has no
+level map, so native reads every app as Standard until the first Dart level
+sync (run when Smart App Lock's Flutter UI starts, `LockChallengeHost`). Native
+does not read Dart's database (a separate trust and schema boundary). The
+gap cannot weaken enforcement in practice:
+- Native authorizations are process-local and an app update or reboot kills
+  the process, so after the upgrade no app has an authorization: the first
+  access to every protected app is challenged, at every level.
+- An authorization needs a credential in the Flutter challenge (exact ticket
+  and handoff), and that UI starts the level sync.
+- `authorizePackage` carries the level Dart enforced for the grant
+  (`securityLevel`). Native keeps it as a floor for that authorization's
+  lifetime: its window and every leave/re-entry grace use the stricter of the
+  floor and the store level. So even if the first sync has not been applied
+  yet, or failed, a Critical grant gets no grace and a Sensitive grant at
+  most 15 s. A missing floor (older caller) changes nothing; a malformed one
+  is Critical; it never authorizes.
+- A grant that raced ahead of the first sync is also revoked when that sync
+  raises the level.
+
+**Level changes (`AppsScreen._changeLevel`).** The comparison is against the
+**enforced** level (stricter of stored and native-held).
+- *Upgrade* (Std→Sens, Std→Crit, Sens→Crit): save → `revokeImmediately` (the
+  Dart session and any grace of that package end at once) → one sync (native
+  revokes its authorization). No confirmation.
+- *Downgrade*: CR-2 (`requestUnprotectAuthorization(title:
+  lowerLevelConfirmTitle)`, app PIN/pattern only, single-use, 60 s, consumed
+  by `lowerSecurityLevelWith` before the write) → save → sync with
+  `authorizedDowngrades = {pkg}`. Cancel, wrong credential, lockout,
+  teardown or a failed write change neither the stored nor the enforced
+  level and send nothing.
+- *Native sync failure*: the stored level is kept; the message says the
+  earlier level may still apply (upgrade) or that the stricter level is
+  still enforced (downgrade). The row shows "· X still enforced" while native
+  holds a stricter level; choosing the level again retries through CR-2.
+  Dart keeps the stricter level meanwhile (floor), so nothing falls back to
+  Standard. There is no persisted "pending downgrade": after a restart the
+  persisted lower level is re-sent without acknowledgement and native keeps
+  holding the stricter one until the user confirms again.
+- A level change never grants a session, clears a ticket, extends grace,
+  resets lockout or stops the watcher. Each change runs the existing sync
+  (configure, isRunning, heartbeat, getHealth) once, like protect/unprotect;
+  there is no timer, polling or keep-alive.
+- The acknowledgement is an intent marker, not a credential: the credential
+  gate is in Dart (as for CR-2 unprotect), native trusts its own app's
+  channel exactly as it does for `configureProtection` itself.
+
+**Recommendations (8F, `lib/data/models/security_recommendation.dart`).** A
+reviewed list of exact package names (banking/wallets/payments, password
+managers, authenticators → Critical; private messages/photos → Sensitive),
+each with a plain reason. No keyword, prefix or heuristic matching, no
+network, analytics or new dependency. A hint (row icon + sheet card) is shown
+only for a protected app below the suggested level and not dismissed.
+Accepting is the same explicit upgrade as tapping the level; "Don't suggest
+again" stores `package@level` in `PreferencesStore`
+(`pref.security_recommendation.dismissed`) and changes nothing else. A wrong
+or outdated entry can only produce a dismissible hint.
+
+**Known limitations.** Critical re-challenges after any reported foreground
+change, including brief IME or System UI windows that Android reports as a
+different package (strict by design; device QA M2-C5 records how often).
+Expiry of W is still event-driven (H-2, accepted). The Usage Access fallback
+is coarser than Accessibility (U1-R unchanged). F3 and biometric remain
+UNVERIFIED on device.

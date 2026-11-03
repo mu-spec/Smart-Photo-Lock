@@ -1,3 +1,5 @@
+import '../data/models/app_security_level.dart';
+import '../data/models/protected_app.dart';
 import '../data/repositories/protected_apps_repository.dart';
 import '../utilities/result.dart';
 import 'foreground_app_monitor.dart';
@@ -22,6 +24,7 @@ class ProtectedMatch {
     required this.packageName,
     required this.decision,
     required this.at,
+    this.securityLevel = AppSecurityLevel.standard,
   });
 
   final String packageName;
@@ -29,6 +32,11 @@ class ProtectedMatch {
 
   /// When the decision was produced.
   final DateTime at;
+
+  /// Phase 8 / M2: the app's stored level when [decision] is `protected`;
+  /// [AppSecurityLevel.strictest] when the state is `unknown` (a failed
+  /// read never yields a weaker policy); Standard (unused) otherwise.
+  final AppSecurityLevel securityLevel;
 
   /// Convenience: true only for [ProtectedMatchDecision.protected].
   bool get isProtected => decision == ProtectedMatchDecision.protected;
@@ -74,25 +82,35 @@ class ProtectedAppMatcher {
         at: at,
       );
     }
-    final Result<bool> result = await _repository.isProtected(trimmed);
-    if (result.isFailure) {
+    // Phase 8 / M2: one read gives both protection and the level.
+    final Result<List<ProtectedApp>> result =
+        await _repository.getProtectedApps();
+    final List<ProtectedApp>? apps = result.valueOrNull;
+    if (result.isFailure || apps == null) {
       return ProtectedMatch(
         packageName: trimmed,
         decision: ProtectedMatchDecision.unknown,
         at: at,
+        securityLevel: AppSecurityLevel.strictest,
       );
+    }
+    for (final ProtectedApp app in apps) {
+      if (app.packageName == trimmed) {
+        return ProtectedMatch(
+          packageName: trimmed,
+          decision: ProtectedMatchDecision.protected,
+          at: at,
+          securityLevel: app.securityLevel,
+        );
+      }
     }
     return ProtectedMatch(
       packageName: trimmed,
-      decision: result.valueOrNull == true
-          ? ProtectedMatchDecision.protected
-          : ProtectedMatchDecision.notProtected,
+      decision: ProtectedMatchDecision.notProtected,
       at: at,
     );
   }
 
-  /// Matches the package carried by a [ForegroundAppChange] — the direct
-  /// wiring the lock engine will consume (5D+).
   Future<ProtectedMatch> matchChange(ForegroundAppChange change) =>
       match(change.packageName);
 }

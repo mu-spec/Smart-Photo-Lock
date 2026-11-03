@@ -1,8 +1,10 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
+import '../../models/app_security_level.dart';
 import '../../models/protected_app.dart';
 import '../../../profiles/lock_profile.dart';
 import '../../../rules/lock_rule.dart';
@@ -10,18 +12,66 @@ import '../local_database.dart';
 
 /// Production [LocalDatabase] backed by SQLite (`sqflite`).
 ///
-/// Schema v1:
+/// Schema v2 (Phase 8 / M1 added `security_level`):
 /// ```
-/// protected_apps(package_name PK, label, added_at, sort_order)
+/// protected_apps(package_name PK, label, added_at, sort_order,
+///                security_level TEXT NOT NULL DEFAULT 'standard')
 /// security_settings(key PK, value, updated_at)
 /// profiles(id PK, name, description, is_active, locked_packages JSON)
 /// lock_rules(id PK, type, package_name, start_minute, end_minute,
 ///            max_launches, enabled)
 /// ```
 /// Future schema changes bump [_schemaVersion] and extend `_onUpgrade`.
+///
+/// Migration v1 → v2: one `ALTER TABLE ... ADD COLUMN` with a constant
+/// default, run by sqflite inside the open transaction (all-or-nothing).
+/// Every existing protected app keeps its row and reads as Standard; no
+/// row is rewritten or dropped. SQL is limited to SQLite 3.22 (Android 9):
+/// no UPSERT / RETURNING.
 class SqfliteLocalDatabase implements LocalDatabase {
   static const String _dbName = 'smart_app_lock.db';
-  static const int _schemaVersion = 1;
+  static const int _schemaVersion = 2;
+
+  /// `protected_apps` as created on a fresh install (schema v2).
+  @visibleForTesting
+  static const String createProtectedAppsSql = '''
+          CREATE TABLE protected_apps (
+            package_name TEXT PRIMARY KEY,
+            label TEXT NOT NULL,
+            added_at INTEGER NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            security_level TEXT NOT NULL DEFAULT 'standard'
+          )
+        ''';
+
+  /// v1 → v2: adds the level column; existing rows get 'standard'.
+  @visibleForTesting
+  static const String migrateV1ToV2Sql =
+      "ALTER TABLE protected_apps ADD COLUMN security_level TEXT NOT NULL "
+      "DEFAULT 'standard'";
+
+  /// True when `PRAGMA table_info(protected_apps)` lacks `security_level`.
+  @visibleForTesting
+  static bool needsSecurityLevelColumn(List<Map<String, Object?>> columns) =>
+      !columns.any((Map<String, Object?> c) => c['name'] == 'security_level');
+
+  /// Protect step 1: insert a new row; ignored when the package exists.
+  @visibleForTesting
+  static const String insertProtectedAppSql =
+      'INSERT OR IGNORE INTO protected_apps '
+      '(package_name, label, added_at, sort_order, security_level) '
+      'VALUES (?, ?, ?, ?, ?)';
+
+  /// Protect step 2: refresh display fields; the level is never touched.
+  @visibleForTesting
+  static const String refreshProtectedAppSql =
+      'UPDATE protected_apps SET label = ?, added_at = ?, sort_order = ? '
+      'WHERE package_name = ?';
+
+  /// Level change for an existing row only.
+  @visibleForTesting
+  static const String updateSecurityLevelSql =
+      'UPDATE protected_apps SET security_level = ? WHERE package_name = ?';
 
   Database? _db;
 
@@ -47,14 +97,7 @@ class SqfliteLocalDatabase implements LocalDatabase {
       path,
       version: _schemaVersion,
       onCreate: (Database db, int version) async {
-        await db.execute('''
-          CREATE TABLE protected_apps (
-            package_name TEXT PRIMARY KEY,
-            label TEXT NOT NULL,
-            added_at INTEGER NOT NULL,
-            sort_order INTEGER NOT NULL DEFAULT 0
-          )
-        ''');
+        await db.execute(createProtectedAppsSql);
         await db.execute('''
           CREATE TABLE security_settings (
             key TEXT PRIMARY KEY,
@@ -88,7 +131,16 @@ class SqfliteLocalDatabase implements LocalDatabase {
         );
       },
       onUpgrade: (Database db, int oldVersion, int newVersion) async {
-        // No migrations yet — schema v1 is the foundation.
+        if (oldVersion < 2) {
+          // Idempotent: a v2 file opened once by an older (v1) build is
+          // re-labelled v1 by sqflite but keeps the column; adding it twice
+          // would fail the open and make the whole store unreadable.
+          final List<Map<String, Object?>> columns =
+              await db.rawQuery('PRAGMA table_info(protected_apps)');
+          if (needsSecurityLevelColumn(columns)) {
+            await db.execute(migrateV1ToV2Sql);
+          }
+        }
       },
     );
   }
@@ -108,16 +160,34 @@ class SqfliteLocalDatabase implements LocalDatabase {
   @override
   Future<void> saveProtectedApp(ProtectedApp app) async {
     final Database db = await _database;
-    await db.insert(
-      'protected_apps',
-      <String, Object?>{
-        'package_name': app.packageName,
-        'label': app.label,
-        'added_at': app.addedAt.millisecondsSinceEpoch,
-        'sort_order': app.sortOrder,
-      },
-      conflictAlgorithm: ConflictAlgorithm.replace,
+    await db.transaction((Transaction txn) async {
+      await txn.rawInsert(insertProtectedAppSql, <Object?>[
+        app.packageName,
+        app.label,
+        app.addedAt.millisecondsSinceEpoch,
+        app.sortOrder,
+        app.securityLevel.storageId,
+      ]);
+      await txn.rawUpdate(refreshProtectedAppSql, <Object?>[
+        app.label,
+        app.addedAt.millisecondsSinceEpoch,
+        app.sortOrder,
+        app.packageName,
+      ]);
+    });
+  }
+
+  @override
+  Future<bool> updateProtectedAppSecurityLevel(
+    String packageName,
+    AppSecurityLevel level,
+  ) async {
+    final Database db = await _database;
+    final int changed = await db.rawUpdate(
+      updateSecurityLevelSql,
+      <Object?>[level.storageId, packageName],
     );
+    return changed > 0;
   }
 
   @override
@@ -130,11 +200,19 @@ class SqfliteLocalDatabase implements LocalDatabase {
     );
   }
 
-  ProtectedApp _protectedAppFromRow(Map<String, Object?> row) => ProtectedApp(
+  ProtectedApp _protectedAppFromRow(Map<String, Object?> row) =>
+      protectedAppFromRow(row);
+
+  /// Row → model. The level never makes a row unreadable: missing → Standard,
+  /// unreadable → Critical ([AppSecurityLevel.fromStorage]).
+  @visibleForTesting
+  static ProtectedApp protectedAppFromRow(Map<String, Object?> row) =>
+      ProtectedApp(
         packageName: row['package_name'] as String,
         label: row['label'] as String,
         addedAt: DateTime.fromMillisecondsSinceEpoch(row['added_at'] as int),
         sortOrder: row['sort_order'] as int? ?? 0,
+        securityLevel: AppSecurityLevel.fromStorage(row['security_level']),
       );
 
   // -- security settings (key-value) ----------------------------------------
@@ -237,9 +315,9 @@ class SqfliteLocalDatabase implements LocalDatabase {
         name: row['name'] as String,
         description: row['description'] as String?,
         isActive: (row['is_active'] as int? ?? 0) == 1,
-        lockedPackages: (jsonDecode(row['locked_packages'] as String)
-                as List<dynamic>)
-            .cast<String>(),
+        lockedPackages:
+            (jsonDecode(row['locked_packages'] as String) as List<dynamic>)
+                .cast<String>(),
       );
 
   // -- lock rules ----------------------------------------------------------

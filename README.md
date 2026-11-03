@@ -17,7 +17,14 @@ implemented and simulated-tested; their physical-device QA is pending
 Phase 7 / Milestones 1–3 (Protection Health engine, dashboard & repair,
 refresh & regression) are implemented and simulated-tested; their device QA
 runs in the same combined Phase 6 + 7 round (`docs/regression.md`, Phase 7 /
-M3 consolidated plan) — production scaffold, architecture, navigation, design
+M3 consolidated plan). Phase 8 / Milestone 1 (Security Levels & Per-App
+Selection: Standard / Sensitive / Critical stored per protected app) and
+Milestone 2 (level enforcement: Standard keeps the configured re-lock,
+Sensitive re-locks within 15 s and after 1 minute idle, Critical asks on
+every return to the app; lowering a level needs the PIN or pattern;
+advisory, local-only level suggestions) are implemented and
+simulated-tested; device QA joins the combined Phase 6–10 round
+(`docs/regression.md`, Phase 8 / M1 and M2) — production scaffold, architecture, navigation, design
 system, persistence, secure storage, full authentication with settings,
 installed-apps management, the complete capability/permission layer,
 and the **core lock engine**: foreground detection (usage-stats +
@@ -98,6 +105,7 @@ top of the protected app) remains for a later phase.
 | 7-M1 | Protection Health engine & signals (SECURE / ATTENTION REQUIRED / PROTECTION OFFLINE; capability, engine, background-restriction and biometric signals; UNKNOWN never reported as healthy; read-only, no dashboard yet) | ✅ code + simulated · ⚠️ device QA pending (combined Phase 6 + 7 round) |
 | 7-M2 | Protection Health dashboard & repair (Home PROTECTION STATUS from the M1 report; issue details by severity and cause; user-initiated repairs via existing setup screens, allowlisted Android Settings links and one-tap protection restart; no false success) | ✅ code + simulated · ⚠️ device QA pending (combined Phase 6 + 7 round) |
 | 7-M3 | Protection Health refresh & regression (automatic refresh on return from Android Settings / app resume for the visible Home or details screen; bounded coalescing: one running + one queued check, newest result wins, no polling; old SECURE hidden while re-checking; repair outcome never "fixed" from an unobservable signal; revocation / restoration and lifecycle regression; consolidated Phase 6 + 7 device-QA plan) | ✅ code + simulated · ⚠️ device QA pending (combined Phase 6 + 7 round) |
+| 8-M1 | Security levels & per-app selection (Standard / Sensitive / Critical model with stable ids; level stored on the protected-app record, schema v2 migration keeps every app as Standard; unreadable values read as Critical; Apps-tab level picker with save confirmation; classification only — no change to locking, grace, sessions or native enforcement until 8-M2) | ✅ code + simulated · ⚠️ device QA pending (combined Phase 6–10 round) |
 
 ### Phase 1A ✅ — Create Android Project
 

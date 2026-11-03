@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../data/models/app_security_level.dart';
 import '../../../data/repositories/protected_apps_repository.dart';
 import '../../../security/credentials/auth_result.dart';
 import '../../../security/credentials/auth_type.dart';
@@ -36,6 +37,10 @@ import '../pin/pin_unlock_screen.dart';
 /// Cancellation, Back, a wrong credential, a lockout, a storage failure,
 /// teardown or process death all yield no authorization, so nothing is
 /// removed.
+///
+/// Phase 8 / M2: LOWERING a security level reuses this exact gate (same
+/// proof, same rules) through [lowerSecurityLevelWith], with its own
+/// confirmation title. Raising a level needs no confirmation.
 
 /// Why an unprotect request was not authorized.
 enum UnprotectDenial {
@@ -106,11 +111,14 @@ final class UnprotectAuthorization {
 ///
 /// [navigator] and [credentials] are captured by the caller before any
 /// await, so no BuildContext crosses an async gap. [clock] is a test seam.
+/// [title] is the confirmation screen's title (Phase 8 / M2 uses
+/// [lowerLevelConfirmTitle] for downgrades).
 Future<UnprotectRequestResult> requestUnprotectAuthorization({
   required NavigatorState navigator,
   required CredentialManager credentials,
   required Set<String> packages,
   DateTime Function()? clock,
+  String title = unprotectConfirmTitle,
 }) async {
   final DateTime Function() now = clock ?? DateTime.now;
   final Result<CredentialState> statusResult = await credentials.status();
@@ -142,11 +150,11 @@ Future<UnprotectRequestResult> requestUnprotectAuthorization({
       builder: (BuildContext _) => usePattern
           ? PatternUnlockScreen(
               credentialManager: verifier,
-              title: unprotectConfirmTitle,
+              title: title,
             )
           : PinUnlockScreen(
               credentialManager: verifier,
-              title: unprotectConfirmTitle,
+              title: title,
             ),
     ),
   );
@@ -190,6 +198,30 @@ Future<Result<void>> removeProtectionWith(
   authorization._consumed.add(packageName);
   return repository.remove(packageName);
 }
+
+/// Phase 8 / M2: lowers [packageName]'s level to [level] only if
+/// [authorization] covers it, has not expired and has not been used for it.
+/// Consumed BEFORE the write (a failed write needs a new confirmation).
+/// Callers use it only for a strictly LOWER level.
+Future<Result<void>> lowerSecurityLevelWith(
+  UnprotectAuthorization authorization,
+  ProtectedAppsRepository repository,
+  String packageName,
+  AppSecurityLevel level, {
+  DateTime Function()? clock,
+}) async {
+  final DateTime now = (clock ?? DateTime.now)();
+  if (!authorization.allows(packageName, now)) {
+    return Result.failure(
+      StateError('Lowering the level is not authorized for $packageName.'),
+    );
+  }
+  authorization._consumed.add(packageName);
+  return repository.setSecurityLevel(packageName, level);
+}
+
+/// Title of the confirmation shown before a security level is lowered.
+const String lowerLevelConfirmTitle = 'Confirm to lower the security level';
 
 /// Route name of the confirmation screen (diagnostics and tests).
 const String unprotectConfirmRouteName = '/apps/unprotect-confirm';

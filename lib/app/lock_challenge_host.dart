@@ -922,8 +922,12 @@ class _LockChallengeHostState extends State<LockChallengeHost>
             await container.accessController.revokeAllAccess();
             return;
           }
+          // Phase 8 / M2 gate: the level Dart enforced for this grant is a
+          // native floor, so a store still awaiting the first level sync
+          // (M1 → M2 upgrade, failed sync) cannot give it Standard grace.
           final nativeGrant = await container.watcher.authorizePackage(
             grantingChallenge,
+            securityLevel: dartGrant.valueOrNull?.securityLevel,
           );
           if (nativeGrant.isFailure) {
             await container.accessController.revokeAllAccess();

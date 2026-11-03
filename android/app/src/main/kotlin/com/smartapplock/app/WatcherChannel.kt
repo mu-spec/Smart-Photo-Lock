@@ -27,14 +27,28 @@ object WatcherChannel {
                             val enabled = call.argument<Boolean>("enabled") ?: false
                             val packages = call.argument<List<String>>("protectedPackages")
                                 ?.toSet() ?: emptySet()
-                            ProtectionStateStore.configure(activity, enabled, packages)
-                            if (enabled) {
-                                ProtectionOverlayController.arm(activity)
-                            } else {
-                                ProtectionStateStore.clearPendingChallenge(activity)
-                                ProtectionOverlayController.disarm()
+                            // Phase 8 / M2: optional level snapshot (absent
+                            // keys = legacy transport; see PolicySnapshotResolver).
+                            val policy = ProtectionStateStore.PolicyInput(
+                                version = call.argument<Any>("policyVersion"),
+                                rawLevels = call.argument<Any>("securityLevels"),
+                                session = call.argument<String>("snapshotSession"),
+                                revision = call.argument<Number>("snapshotRevision")?.toLong(),
+                                authorizedDowngrades =
+                                    call.argument<List<String>>("authorizedDowngrades")
+                                        ?.toSet() ?: emptySet(),
+                            )
+                            val outcome =
+                                ProtectionStateStore.configure(activity, enabled, packages, policy)
+                            if (outcome.applied) {
+                                if (enabled) {
+                                    ProtectionOverlayController.arm(activity)
+                                } else {
+                                    ProtectionStateStore.clearPendingChallenge(activity)
+                                    ProtectionOverlayController.disarm()
+                                }
                             }
-                            result.success(true)
+                            result.success(outcome.toMap())
                         }
                         "setGracePeriod" -> {
                             val milliseconds =
@@ -55,6 +69,11 @@ object WatcherChannel {
                                     packageName,
                                     generation,
                                     sessionWindowMs,
+                                    SecurityLevelPolicy.authorizationFloor(
+                                        (call.arguments as? Map<*, *>)
+                                            ?.containsKey("securityLevel") == true,
+                                        (call.arguments as? Map<*, *>)?.get("securityLevel"),
+                                    ),
                                 ),
                             )
                         }

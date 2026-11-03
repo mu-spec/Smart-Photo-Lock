@@ -2129,3 +2129,149 @@ evidence only.
   - H9 recorded;
   - step 20 where Android 13+ is available;
   - H7/D8 UNVERIFIED until a compatible device is available.
+
+# Phase 8 / M1 — Security Levels & Per-App Selection
+
+PRD v2.1, Phase 8 / Milestone 1 (8A model, 8B per-app selection). Design and
+the M2 integration contract: `docs/architecture.md` (Phase 8 / M1); platform
+notes: `docs/capabilities.md` (Security levels). M1 stores and shows a level
+per protected app. **It does not change enforcement**: every protected app
+is challenged, granted and re-locked exactly as before, whatever its level.
+All results below are automated and SIMULATED (production model, repository,
+in-memory store and Apps screen; the SQL is checked as text and against a
+host SQLite); none is device evidence.
+
+## Automated evidence (Phase 8 / M1)
+
+| Suite | Tests | Evidence level | Covers |
+| --- | --- | --- | --- |
+| `test/data/app_security_level_test.dart` (new) | 20 | production Dart (model, repository, in-memory store, sqflite SQL statics and row mapper) | **Model:** exactly three levels with stable explicit ids `standard` / `sensitive` / `critical`, ranks and ordering; descriptions state intent, never active enforcement; missing → Standard, unreadable/unknown → Critical (never weaker); `ProtectedApp` defaults to Standard, JSON round-trip and legacy JSON. **Persistence:** new app → Standard; Standard → Sensitive → Critical → Standard each persisted and re-read; per-app independence (other fields and the protected set unchanged); remove retires the level, re-protect → Standard; a level change never protects (unknown / removed / blank package fails, nothing stored); duplicate protect keeps one record and the level; explicit-level record creation; rapid/concurrent writes deterministic (last request wins); a protect racing a level change cannot downgrade it; a level change racing removal: removal wins, nothing re-created, failure reported; write failure reported, stored level unchanged. **SQLite:** schema v2 in both stores; fresh-install column `NOT NULL DEFAULT 'standard'`; v1 → v2 is one `ADD COLUMN` with no row rewrite and no UPSERT/RETURNING (SQLite 3.22); PRAGMA guard alters only a table without the column; row mapper: legacy → Standard, malformed → Critical, app never dropped |
+| `test/ui/apps_security_level_test.dart` (new) | 14 | widgets + production repository/screen over simulated services | Protected row shows its level (Standard by default), unprotected row none; the sheet explains the levels, marks the current one, merged radio semantics, ≥ 48 dp options, and says stricter locking is not active yet; Sensitive → Critical → Standard shown only after the write and survive a screen restart; independent apps; dismiss / choose current → no write; rapid taps → "Saving…", one write; a failed write is reported and the old level stays; app unprotected while the sheet is open → nothing saved, nothing re-protected; protect → Standard, CR-2 unprotect retires, re-protect → Standard; search, switch and selection mode keep working (selection-mode tap selects, never opens the sheet). **Security isolation:** with a pending native challenge, a level change keeps the ticket and never authorizes, syncs native, changes grace, touches the challenge or the lockout; full app: a shown challenge stays enforced across a level change, a wrong PIN is refused and only the exact PIN grants; a protection sync after level changes sends the same package set and enabled flag; source contract: no code in `lib/protection`, `lib/services`, the lock host or Kotlin reads the level |
+| Existing Apps / data / protection suites | unchanged (4 fakes gained the new store method) | production Dart | the separate "Locked" status text keeps every existing finder working |
+| Host SQLite script (`Phase8_M1/sql_migration_check.py`, outside the repo) | 16 checks | real SQLite 3.46 on the host, not Android | v1 database with rows → v2 keeps rows as Standard; re-upgrade after a downgrade is a no-op; repeat protect keeps the level; level update of a missing row changes 0 rows; downgrade-build `INSERT OR REPLACE` resets that row to Standard (documented risk) |
+
+Mutation checks (Dart): 14/15 killed. The killed mutants were:
+- wrong default;
+- unreadable → Standard;
+- repeat protect overwrites the level;
+- refresh SQL touches the level;
+- migration default Critical;
+- guard always alters;
+- level write creates a row;
+- success reported on 0 rows;
+- row mapper ignores the level;
+- optimistic UI level;
+- saving guard removed;
+- no refresh after protect;
+- no protected re-check after the sheet;
+- a level change re-syncs native.
+
+The one survivor is an **equivalent mutant**: it removes the selection-mode guard in `_changeLevel`. In selection mode the row's tap selects the row instead (tested), and the open sheet's barrier blocks entering selection mode, so the guard cannot be reached. It is kept as defence in depth.
+
+Not covered automatically: a real Android SQLite migration of an installed
+P7 database (device step L6), Talkback reading the picker, OEM font scaling.
+
+## Phase 8 / M1 device QA (adds to the consolidated plan; not executed)
+
+Use two protected apps: A (for example Gallery) and B (for example a notes
+app). PIN credential. A step FAILS if a level change unlocks anything,
+removes a challenge, skips a challenge, or changes how either app locks.
+
+| Step | Actions | Expected |
+| --- | --- | --- |
+| L1 Default | Protect a new app C from the Apps tab. | Row shows "Locked · Standard". |
+| L2 Select | Tap A → choose Sensitive; tap B → choose Critical. Read the picker. | Each row shows its own level after the save confirmation; the picker marks the current level and states stricter locking is not active yet. |
+| L3 Persist | Swipe Smart App Lock from Recents, reopen; then reboot and reopen. | A Sensitive, B Critical, C Standard; all still protected. |
+| L4 Remove / re-add | Unprotect B (CR-2 PIN), then protect B again. | B shows Standard. |
+| L5 Challenge unchanged | Grace 0: open A, B and C; wrong PIN then right PIN on each. Then grace 30 s: unlock B, leave, return within 30 s; repeat with C. Change B's level while its challenge is pending (open B, Home, Smart App Lock → Apps → change B, open B). | All three challenge identically; wrong PIN refused; only the exact PIN opens; the same grace for B and C; the pending challenge re-presents after the level change. Any difference between levels is a FAIL (enforcement is M2). |
+| L6 Upgrade | On a P7 build with ≥ 2 protected apps, install the M1 build over it (no uninstall). | All apps kept and still challenged; each shows Standard. |
+
+Minimum acceptance (Phase 8 / M1): L1–L6 on the Oppo, run inside the
+consolidated round (Session 1b). L5 is a release blocker: any difference in
+locking between levels is a FAIL until Phase 8 / M2.
+
+*Phase 8 / M2 update:* L2's picker text and L5's "any difference between
+levels is a FAIL" no longer apply to the M2 build. Run L2/L5 with the M2
+expectations in the consolidated plan and verify level differences with the
+E-series below.
+
+# Phase 8 / M2 — Security Level Enforcement & Recommendations
+
+PRD v2.1, Phase 8 / Milestone 2 (8C Standard, 8D Sensitive, 8E Critical, 8F
+recommendations). Design, policy table, transport and migration:
+`docs/architecture.md` (Phase 8 / M2); platform limits:
+`docs/capabilities.md` (Security level enforcement). Every result below is
+automated and **SIMULATED** (production Dart and Kotlin logic driven by
+simulated inputs: in-memory stores, a static native fake mirroring the
+Kotlin resolver, a mocked method channel, fake `SharedPreferences` on the
+JVM). None of it is device evidence.
+
+## Automated evidence (Phase 8 / M2)
+
+| Suite | Tests | Evidence level | Covers |
+| --- | --- | --- | --- |
+| `android/.../SecurityLevelEnforcementTest.kt` (new, JVM) | 47 (33 + 14 gate) | production Kotlin (`SecurityLevelPolicy`, `PolicySnapshotResolver`, `SecurityLevelStoreCodec`, `SnapshotOrderGate`, `ProtectionAccessState`, `ProtectionStateStore` over a fake `Context`) | grace/window tables (never above configured, Standard uncapped); Standard unchanged; Sensitive capped where Standard still allows; Critical challenges every re-entry at any grace, Home/task switch/system window/own UI are departures, same-interaction stays usable, window capped natively; mixed levels independent; legacy (no map) → known/Standard, valid → applied, malformed/missing keys/unknown id/version → Critical with an error, a malformed update never wipes a stricter level; unacknowledged downgrade held, acknowledged applied, a restarted Dart session cannot downgrade without it; stale/out-of-order snapshots rejected per session; codec: legacy store → Standard, damaged entry or unknown version → Critical; raised package loses its authorization, the pending ticket is kept; no policy outside the protected set; durable write, failed write reported as not persisted |
+| `test/protection/security_level_enforcement_test.dart` (new) | 28 (25 + 3 gate) | production Dart (policy, controller, matcher, bootstrap, method channel with a mocked platform) + simulated native | items 1–12, 17, 18: Standard unchanged; Sensitive 15 s cap (never above configured) and 1-min window; Critical re-entry, no challenge loop within the interaction, Home/blind start/screen off; unreadable state → challenge and strictest window; native floor; `revokeImmediately` scoped; snapshot wire format; ack parsing (unreadable level → Critical); legacy call sends no level keys; stale/unapplied/unpersisted/false/null replies are failures; simulated native legacy/applied/held/invalid/stale; configure never clears a ticket or grants; upgrade revokes only that package; bootstrap revision/session/serialization; failed sync keeps the last confirmed level; restart keeps a held downgrade; a sync never stops the watcher or changes grace |
+| `test/ui/apps_security_level_m2_test.dart` (new) | 12 | widgets + production screen/sheet/CR-2/repository/bootstrap over simulated services | items 13–20: upgrade (no PIN) ends Dart and native authorization at once; downgrade asks for the PIN first, then saves and sends a confirmed downgrade; cancel/wrong PIN → saved and enforced level unchanged, nothing sent; failed write after the PIN → stricter kept; native sync failure on upgrade (honest message, Dart enforces) and on downgrade ("still enforced" row and message, Dart floor, survives a screen restart, retry through CR-2 applies); pending challenge survives changes; rapid changes on two apps serialize in order. CR-2 proof for downgrades: package-scoped, single-use, expiring. Items 21–24 (UI): hints only on protected catalog apps below the suggestion, accepting is an explicit upgrade, "Don't suggest again" changes no level and persists across restart |
+| Final native gate (findings 1 and 2), inside the two files above plus `test/regression/host_auth_binding_test.dart` (+2) | 14 Kotlin, 3 + 2 Dart | production Kotlin over a fake `SharedPreferences` with AOSP commit semantics (memory first, separate disk map, restart = disk only); production Dart host with the simulated native contract. SIMULATED disk failure and process start, not device evidence | failed Critical→Standard and Sensitive→Standard writes keep the confirmed level in memory and on disk, report it held and `persisted=false`; strict grace, the existing authorization and the pending ticket unchanged; later unrelated writes and a restart cannot make the downgrade durable, a retry without acknowledgement stays held; failed upgrade enforced in this process and revoking, restart → last durable level (documented); M1 store → Standard, versionless map → Critical; no authorization after process start; a pre-sync grant is revoked by the raising sync; the Dart floor keeps Critical/Sensitive grace and window while the store is still legacy and never loosens; floor transport (missing → none, malformed → Critical); restart keeps known stricter levels; native wiring pinned by a source contract; the host sends the grant's level; 13/13 gate mutations killed (`Phase8_M2/run_gate_mutations.py`) |
+| `test/data/security_recommendation_test.dart` (new) | 4 | production catalog + `PreferencesStoreImpl` over the in-memory store | items 21–24: every 8F category with a reason; exact names only (no keyword/prefix/case matching); only stricter suggestions; dismissal per `package@level`, idempotent, survives restart, local storage only |
+| `test/ui/apps_security_level_test.dart` (M1, **intentionally updated**) | 14 | as M1 | see "Changed M1 tests" below |
+| `test/data/app_security_level_test.dart` (M1, title only) | 20 | as M1 | descriptions still never overclaim (same banned phrases) |
+| Existing suites (items 25–28: Phase 6, Phase 7, lock/CR-2, M1) | unchanged, all pass | production Dart / Kotlin | Phase 6 hardening, Phase 7 health, H-2, CR-2/CR-3, tickets, the existing 249 Kotlin tests (two of them caught and forced the fix of an early Standard window cap) |
+
+**Changed M1 tests (intentional, M2 changes the M1-only contract):**
+1. Sheet test: asserts the new `levelNotice` instead of the removed "not active yet" notice.
+2. Sensitive → Critical → Standard: the downgrade to Standard now enters the PIN (CR-2).
+3. Security isolation: uses upgrades only, and expects exactly one protection snapshot and one heartbeat per change (was 0). Every other counter, the ticket, grace and lockout assertions are unchanged.
+4. Full-app Critical test: same assertions, reason text updated (the current interaction stays usable).
+5. "Native contract unchanged (levels not transported)" → "M2 transport": the same package set and enabled flag, plus the levels of exactly those packages.
+6. "Source contract: no enforcement code reads the level" → "Dart and Kotlin policies use the same numbers".
+7. `app_security_level_test`: description test title only.
+
+**Mutation checks: 27/27 killed** (`Phase8_M2/run_mutations.py`, outside the repo; every mutant killed by an assertion, not a compile error).
+- Policy: Sensitive grace not capped; Critical keeps grace; strict window not capped; leave ignores the level; native floor ignored; unknown state → Standard; native Critical grace; native Sensitive cap; native window cap; re-entry grace ignores the level.
+- Downgrade gate: CR-2 skipped; downgrade judged against the saved, not enforced, level; upgrade keeps the old window; success claimed without native confirmation; lowering proof not checked (survived the first run; a direct proof test was added).
+- Fail-closed transport: stale reply treated as success; confirmed downgrades never sent; revision not incremented; failed sync forgets the native level; unpersisted reply treated as success; unconfirmed downgrade applied natively; malformed snapshot → Standard; stale snapshot accepted; raised packages keep authorization; damaged store entry → Standard; unknown store version → Standard; failed native write reported as persisted.
+
+Not covered automatically: real Android `SharedPreferences` durability,
+OEM foreground-event behaviour (IME, System UI, Recents), real Accessibility
+and Usage Access delivery, Talkback reading the suggestion card.
+
+## Phase 8 / M2 device QA (adds to the consolidated plan; not executed)
+
+Run as Session 1c of the consolidated round (Oppo A9, after Session 1b).
+
+Setup: PIN credential, **grace 30 s**, Accessibility on. Protected apps:
+A = Standard (for example Gallery), B = Sensitive (a notes app), C =
+Critical (a banking or test app). A step FAILS if: a Critical app opens
+without a challenge after an observed departure; a challenge loops or
+re-appears while the user stays in the authenticated app; a lower level
+takes effect without the PIN/pattern; a level change unlocks anything,
+clears a pending challenge or resets lockout; SECURE is shown while a fault
+is present (Phase 7 rules). Reuses the Phase 6 S-series setups where
+named.
+
+| Step | Closes | Actions | Expected |
+| --- | --- | --- | --- |
+| E1 Standard unchanged | 8C, S5 grace | Unlock A, Home, reopen at ~10 s; leave again, reopen after ~40 s. | Opens at 10 s; challenge after 40 s (same as before M2). |
+| E2 Sensitive grace | 8D | Unlock B, Home, reopen at ~10 s; leave, reopen at ~20 s. Then set grace 5 s and repeat at ~8 s. | Opens at 10 s; challenge at 20 s; with grace 5 s challenge at 8 s (never more grace than configured). |
+| E3 Sensitive idle | 8D, H-2 | Unlock B, leave the phone untouched inside B for ~70 s, then tap/scroll so B changes screen. | Challenge on the next reported event after 1 minute idle (event-driven, H-2). Record if no event is produced. |
+| E4 Critical re-entry | 8E | Unlock C, Home, reopen immediately (< 2 s). Repeat via the launcher icon and via Recents. | Challenge every time. |
+| E5 Critical same interaction | 8E | Unlock C, navigate inside C actively for 2 minutes (menus, back, rotate if supported). | No challenge while staying in C; no loop; no flicker of the shield. |
+| E6 Critical task switch / own UI | 8E, S5 | Unlock C → Recents → C; unlock C → another app → C; unlock C → Smart App Lock → C. | Challenge on each return. |
+| E7 Critical screen off/on | 8E, S9.1 | Unlock C, screen off, screen on (with and without secure keyguard). | Challenge before content (as S9.1). |
+| E8 Critical transient windows (record) | 8E limitation | Inside C: open the keyboard, pull the notification shade, show a toast/heads-up, volume panel. | Record which ones trigger a challenge on return (strict by design). It must never loop, never open C without the PIN. |
+| E9 Upgrade revokes | 8C–8E, §4 | Grace 5 min: unlock A, Home; Smart App Lock → Apps → A → Critical; reopen A. | Challenge (old grace not kept). No PIN asked for the upgrade itself. |
+| E10 Downgrade gate | §4, CR-2 | C Critical → choose Standard: confirm screen titled "Confirm to lower the security level". Back out. Reopen C after a leave. Then repeat and enter the PIN. | Cancel: row still Critical, C still challenges on re-entry. With PIN: row Standard; C now has the 30 s grace. |
+| E11 Downgrade wrong PIN / lockout | §4, CR-2 | On the downgrade confirm, enter wrong PINs up to lockout. | Level unchanged; lockout shared with the lock screen; no unlock of any app. |
+| E12 Restart / reboot | §2, §3 | With A/B/C set, swipe Smart App Lock from Recents; force-stop from Settings; reboot. **Before** opening Smart App Lock, unlock C (via the challenge), leave, return. | Levels survive; C still challenges on re-entry after reboot (native persisted levels). |
+| E13 Upgrade install | §2 migration | Install M2 over an M1 build with levels set (A Sensitive, B Critical), no uninstall. Before opening Smart App Lock: open B, unlock it through the challenge, leave, return within the grace. Then open Smart App Lock once and repeat. | Before the first open, B still asks for the PIN on first access, and after the unlock every return re-challenges (Critical floor sent with the unlock). After opening Smart App Lock: same. Nothing unprotected; A's return after more than 15 s re-challenges. |
+| E14 Pending challenge | §4, S5.4 | Open C (challenge shown), Home, Smart App Lock → Apps → change A's level; open C. | C's challenge re-presents; nothing unlocked. |
+| E15 Recommendations | 8F | Protect a listed app if installed (WhatsApp, Easypaisa, JazzCash, Google Authenticator, Bitwarden). Airplane mode on. | Hint icon on the row; sheet shows "Suggested: …" with a reason; "Don't suggest again" hides it (also after restart) and changes no level; "Use …" changes the level only on tap; works offline. Unlisted apps show no hint. |
+| E16 Health unchanged | Phase 7 | After E9–E11, open the health dashboard. | Same states as before M2; no new state; repair never unlocks. |
+| E17 Usage fallback (record) | U1-R | Accessibility off (Usage Access on): repeat E4 and E1. | Record behaviour; Critical must never be more permissive than Standard. |
+
+Minimum acceptance: E1, E2, E4–E7, E9–E12,
+E14, E15 on the Oppo. Release blockers: E4, E6, E7, E10, E11, E12. Record
+E3, E8, E13 and E17; run E16 with the Phase 7 set. F3 and biometric remain
+UNVERIFIED; H-2 is not reopened.

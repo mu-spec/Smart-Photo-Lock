@@ -20,6 +20,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:smart_app_lock/app/app.dart';
 import 'package:smart_app_lock/app/app_container.dart';
+import 'package:smart_app_lock/data/models/app_security_level.dart';
 import 'package:smart_app_lock/data/models/protected_app.dart';
 import 'package:smart_app_lock/data/storage/impl/in_memory_local_database.dart';
 import 'package:smart_app_lock/security/storage/impl/in_memory_secret_store.dart';
@@ -460,6 +461,43 @@ void main() {
       await tester.tap(find.byKey(const Key('pin_key_biometric')));
       await tester.pumpAndSettle();
       app.expectGrantedOnce(_pkgA);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Phase 8 / M2 final native gate, finding 2 (SIMULATED native).
+  group('the grant level is sent to native as a floor', () {
+    testWidgets(
+        'a Critical app unlocked while native still holds the legacy '
+        'Standard map sends a Critical floor', (WidgetTester tester) async {
+      final _App app = await _launch(tester);
+      // Dart knows Critical; the native level sync was not applied (first
+      // start after the M1 -> M2 upgrade, or a failed sync).
+      await app.c.protectedApps
+          .setSecurityLevel(_pkgA, AppSecurityLevel.critical);
+      expect(
+          app.watcher.securityLevels[_pkgA], isNot(AppSecurityLevel.critical));
+      await app.open(_pkgA);
+      await _typePin(tester, _pin);
+      await tester.pumpAndSettle();
+      app.expectGrantedOnce(_pkgA);
+      expect(
+        app.watcher.authorizeLevelFloors,
+        <String, AppSecurityLevel?>{_pkgA: AppSecurityLevel.critical},
+      );
+    });
+
+    testWidgets('a Standard app sends a Standard floor (no tightening)',
+        (WidgetTester tester) async {
+      final _App app = await _launch(tester);
+      await app.open(_pkgA);
+      await _typePin(tester, _pin);
+      await tester.pumpAndSettle();
+      app.expectGrantedOnce(_pkgA);
+      expect(
+        app.watcher.authorizeLevelFloors,
+        <String, AppSecurityLevel?>{_pkgA: AppSecurityLevel.standard},
+      );
     });
   });
 

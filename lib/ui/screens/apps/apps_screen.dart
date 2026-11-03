@@ -2,9 +2,12 @@ import 'package:flutter/material.dart';
 
 import '../../../app/app_scope.dart';
 import '../../../data/models/app_entry.dart';
+import '../../../data/models/app_security_level.dart';
 import '../../../data/models/protected_app.dart';
+import '../../../data/models/security_recommendation.dart';
 import '../../../design_system/design_system.dart';
 import '../../widgets/app_icon.dart';
+import 'security_level_sheet.dart';
 import 'unprotect_gate.dart';
 
 /// Filter groups of the Apps tab (Phase 3D).
@@ -67,6 +70,58 @@ class AppsScreen extends StatefulWidget {
   static String bulkPartialFailure(int n) =>
       'Could not update $n ${n == 1 ? 'app' : 'apps'}.';
 
+  // Phase 8 — per-app security level (M1 stores it; M2 enforces it).
+  static String levelSuffix(AppSecurityLevel level) => ' · ${level.label}';
+  static const String levelSavingSuffix = ' · Saving…';
+  static const String levelTapHint = 'change security level';
+  static String levelSaved(String app, AppSecurityLevel level) =>
+      '$app: ${level.label} saved';
+  static String levelSaveFailed(AppSecurityLevel kept) =>
+      'Could not save the security level. It is still ${kept.label}.';
+  static const String levelNotProtectedMessage =
+      'This app is no longer protected. Nothing was saved.';
+
+  // Phase 8 / M2 — enforcement status and suggestions.
+  /// Row hint: native still enforces a stricter level than the saved one.
+  static String levelHeldSuffix(AppSecurityLevel enforced) =>
+      ' · ${enforced.label} still enforced';
+
+  /// Upgrade saved, but native did not confirm it.
+  static String levelSavedNotConfirmed(String app, AppSecurityLevel level) =>
+      '$app: ${level.label} saved, but Smart App Lock could not confirm it '
+      'is active everywhere yet. The earlier level may still apply in some '
+      'cases until it is.';
+
+  /// Downgrade saved, but native still enforces the stricter level.
+  static String levelLowerNotApplied(
+    String app,
+    AppSecurityLevel level,
+    AppSecurityLevel enforced,
+  ) =>
+      '$app: ${level.label} saved, but ${enforced.label} is still enforced '
+      'until the change is confirmed. Try again to apply it.';
+
+  static const String levelLowerNotConfirmedMessage =
+      'Security level unchanged. Confirm with your PIN or pattern to lower '
+      'it.';
+  static const String levelLowerNoCredentialMessage =
+      'Set up a PIN or pattern in Security before lowering a security level.';
+  static const String levelLowerUnavailableMessage =
+      'Could not verify your identity. Security level unchanged.';
+
+  /// Maps a CR-2 denial of a downgrade to its user-facing message.
+  static String levelLowerDeniedMessage(UnprotectDenial denial) =>
+      switch (denial) {
+        UnprotectDenial.notAuthenticated => levelLowerNotConfirmedMessage,
+        UnprotectDenial.noAppCredential => levelLowerNoCredentialMessage,
+        UnprotectDenial.credentialUnavailable => levelLowerUnavailableMessage,
+      };
+
+  static String suggestionSemantics(AppSecurityLevel level) =>
+      'Suggested level: ${level.label}';
+  static const String suggestionDismissedMessage =
+      'Suggestion hidden. The security level was not changed.';
+
   /// CR-2: shown when an unprotect was not confirmed with the app
   /// credential. Protection is unchanged.
   static const String unprotectNotConfirmedMessage =
@@ -95,6 +150,19 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
   List<AppEntry> _apps = <AppEntry>[];
   Set<String> _protected = <String>{};
   int _fetchGeneration = 0;
+
+  /// Phase 8 / M1: stored level per protected package, as last read from
+  /// (or confirmed by) the repository. Never set optimistically.
+  Map<String, AppSecurityLevel> _levels = <String, AppSecurityLevel>{};
+
+  /// Packages whose level write is in flight (further taps are ignored).
+  final Set<String> _levelSaving = <String>{};
+
+  /// One level picker at a time.
+  bool _levelSheetOpen = false;
+
+  /// Phase 8 / M2 (8F): suggestions the user dismissed (`pkg@level`).
+  Set<String> _dismissedSuggestions = <String>{};
 
   final TextEditingController _searchController = TextEditingController();
   String _query = '';
@@ -151,8 +219,217 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
     }
     setState(() {
       _protected = result.valueOrNull!.map((app) => app.packageName).toSet();
+      _levels = _levelsOf(result.valueOrNull!);
       _recomputeVisible();
     });
+  }
+
+  static Map<String, AppSecurityLevel> _levelsOf(List<ProtectedApp> apps) =>
+      <String, AppSecurityLevel>{
+        for (final ProtectedApp app in apps) app.packageName: app.securityLevel,
+      };
+
+  /// Phase 8 / M2 (8F): advisory only; a read failure shows no hints.
+  Future<Set<String>> _readDismissedSuggestions() async {
+    final container = AppScope.read(context);
+    if (container == null) return <String>{};
+    try {
+      return await container.preferences.getDismissedSecurityRecommendations();
+    } on Object {
+      return <String>{};
+    }
+  }
+
+  /// Phase 8 / M2: the level native last confirmed when it is STRICTER than
+  /// the saved one (e.g. a downgrade not yet confirmed), else null.
+  AppSecurityLevel? _heldLevel(String pkg) {
+    final AppSecurityLevel? stored = _levels[pkg];
+    final AppSecurityLevel? native =
+        AppScope.read(context)?.protectionBootstrap.nativeLevelFor(pkg);
+    if (stored == null || native == null) return null;
+    return native.isStricterThan(stored) ? native : null;
+  }
+
+  /// Phase 8 / M2 (8F): the advisory suggestion for a protected row.
+  SecurityRecommendation? _suggestionFor(String pkg) {
+    final AppSecurityLevel? stored = _levels[pkg];
+    if (stored == null) return null;
+    return SecurityRecommendations.forApp(
+      pkg,
+      _heldLevel(pkg) ?? stored,
+      dismissed: _dismissedSuggestions,
+    );
+  }
+
+  /// Phase 8 (PRD 8B; M2 8C–8F): lets the user pick the security level of
+  /// a protected app. Not optimistic: the row changes only after the
+  /// repository confirms the write.
+  ///
+  ///  * Raising the level saves it, ends any unlock window or grace of the
+  ///    app at once, then sends one snapshot to native (which also revokes
+  ///    its authorization). No confirmation is needed.
+  ///  * Lowering it (relative to the level actually ENFORCED, i.e. the
+  ///    stricter of saved and native) first requires the CR-2 credential
+  ///    gate; cancel or failure changes nothing. Only then is it saved and
+  ///    sent to native with that package marked as a confirmed downgrade.
+  ///  * If native does not confirm, the message says which level still
+  ///    applies; a weaker level is never reported as active.
+  ///
+  /// Never grants a session, extends grace, clears a challenge or resets
+  /// lockout.
+  Future<void> _changeLevel(AppEntry app) async {
+    final container = AppScope.read(context);
+    final String pkg = app.packageName;
+    final AppSecurityLevel? stored = _levels[pkg];
+    if (container == null ||
+        stored == null ||
+        !_protected.contains(pkg) ||
+        _levelSheetOpen ||
+        _levelSaving.contains(pkg) ||
+        _unprotectConfirming ||
+        _bulkBusy ||
+        _selectionMode) {
+      return;
+    }
+    final AppSecurityLevel? held = _heldLevel(pkg);
+    final AppSecurityLevel enforced = held ?? stored;
+    final SecurityRecommendation? suggestion = _suggestionFor(pkg);
+    _levelSheetOpen = true;
+    final SecurityLevelSheetResult? picked;
+    try {
+      picked = await showSecurityLevelSheet(
+        context,
+        appLabel: app.label,
+        current: stored,
+        enforced: held,
+        recommendation: suggestion,
+      );
+    } finally {
+      _levelSheetOpen = false;
+    }
+    if (!mounted || picked == null) {
+      return;
+    }
+    if (picked.dismissRecommendation) {
+      if (suggestion == null) return;
+      try {
+        await container.preferences
+            .dismissSecurityRecommendation(suggestion.dismissalKey);
+      } on Object {
+        // Advisory only: the hint is hidden for this session regardless.
+      }
+      if (!mounted) return;
+      setState(() => _dismissedSuggestions = <String>{
+            ..._dismissedSuggestions,
+            suggestion.dismissalKey,
+          });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text(AppsScreen.suggestionDismissedMessage)),
+      );
+      return;
+    }
+    final AppSecurityLevel chosen = picked.level!;
+    if (chosen == stored && chosen == enforced) {
+      return;
+    }
+    if (!_protected.contains(pkg)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text(AppsScreen.levelNotProtectedMessage)),
+      );
+      return;
+    }
+    final bool lowering = enforced.isStricterThan(chosen);
+    UnprotectAuthorization? authorization;
+    if (lowering) {
+      final NavigatorState navigator = Navigator.of(context);
+      _unprotectConfirming = true;
+      final UnprotectRequestResult request;
+      try {
+        request = await requestUnprotectAuthorization(
+          navigator: navigator,
+          credentials: container.auth,
+          packages: <String>{pkg},
+          title: lowerLevelConfirmTitle,
+        );
+      } finally {
+        _unprotectConfirming = false;
+      }
+      if (!mounted) {
+        return; // torn down: nothing was changed
+      }
+      authorization = request.authorization;
+      if (authorization == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(AppsScreen.levelLowerDeniedMessage(request.denial!)),
+          ),
+        );
+        return;
+      }
+      if (!_protected.contains(pkg)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text(AppsScreen.levelNotProtectedMessage)),
+        );
+        return;
+      }
+    }
+    setState(() => _levelSaving.add(pkg));
+    final result = lowering
+        ? await lowerSecurityLevelWith(
+            authorization!,
+            container.protectedApps,
+            pkg,
+            chosen,
+          )
+        : await container.protectedApps.setSecurityLevel(pkg, chosen);
+    if (!mounted) {
+      return;
+    }
+    if (result.isFailure) {
+      setState(() => _levelSaving.remove(pkg));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _protected.contains(pkg)
+                ? AppsScreen.levelSaveFailed(enforced)
+                : AppsScreen.levelNotProtectedMessage,
+          ),
+        ),
+      );
+      return;
+    }
+    if (!lowering) {
+      // An older, more permissive unlock window never outlives an upgrade.
+      await container.accessController.revokeImmediately(pkg);
+    }
+    final sync = await container.protectionBootstrap.synchronize(
+      authorizedDowngrades: lowering ? <String>{pkg} : const <String>{},
+    );
+    if (!mounted) {
+      return;
+    }
+    final AppSecurityLevel? native =
+        container.protectionBootstrap.nativeLevelFor(pkg);
+    final bool confirmed = sync.isSuccess && native == chosen;
+    setState(() {
+      _levelSaving.remove(pkg);
+      _levels = <String, AppSecurityLevel>{..._levels, pkg: chosen};
+    });
+    final String message;
+    if (confirmed) {
+      message = AppsScreen.levelSaved(app.label, chosen);
+    } else if (lowering) {
+      message = AppsScreen.levelLowerNotApplied(
+        app.label,
+        chosen,
+        native != null && native.isStricterThan(chosen) ? native : enforced,
+      );
+    } else {
+      message = AppsScreen.levelSavedNotConfirmed(app.label, chosen);
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
   }
 
   void _onSearchChanged(String value) {
@@ -266,6 +543,17 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
     if (!mounted) {
       return;
     }
+    // Phase 8 / M1: show the stored level of every newly protected app.
+    if (changed > 0) {
+      final levels = await container.protectedApps.getProtectedApps();
+      if (!mounted) {
+        return;
+      }
+      _levels = levels.isSuccess
+          ? _levelsOf(levels.valueOrNull!)
+          : (Map<String, AppSecurityLevel>.of(_levels)
+            ..removeWhere((String p, _) => succeeded.contains(p)));
+    }
     if (failed.isNotEmpty) {
       setState(() {
         _protected = <String>{..._protected, ...succeeded};
@@ -310,8 +598,7 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
     }
     // Snapshot: only apps that are protected now can lose protection, and
     // the confirmation covers exactly this set.
-    final Set<String> targets =
-        _selected.where(_protected.contains).toSet();
+    final Set<String> targets = _selected.where(_protected.contains).toSet();
     final NavigatorState navigator = Navigator.of(context);
     setState(() => _bulkBusy = true);
 
@@ -367,6 +654,8 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
     if (!mounted) {
       return;
     }
+    _levels = Map<String, AppSecurityLevel>.of(_levels)
+      ..removeWhere((String p, _) => succeeded.contains(p));
     if (failed.isNotEmpty) {
       setState(() {
         _protected = _protected.difference(succeeded);
@@ -477,6 +766,17 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
     if (!mounted) {
       return;
     }
+    // Phase 8 / M1: an unprotected app's level is retired with its record;
+    // a newly protected app shows its stored level (Standard when new).
+    if (wasProtected) {
+      setState(() => _levels = Map<String, AppSecurityLevel>.of(_levels)
+        ..remove(app.packageName));
+    } else {
+      await _refreshProtection();
+      if (!mounted) {
+        return;
+      }
+    }
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
@@ -567,10 +867,16 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
     }
     final Set<String> protected =
         protectedResult.valueOrNull!.map((app) => app.packageName).toSet();
+    final Set<String> dismissed = await _readDismissedSuggestions();
+    if (!mounted || generation != _fetchGeneration) {
+      return;
+    }
 
     setState(() {
+      _dismissedSuggestions = dismissed;
       _apps = appsResult.valueOrNull!;
       _protected = protected;
+      _levels = _levelsOf(protectedResult.valueOrNull!);
       _recomputeVisible();
       _state = _LoadState.ready;
     });
@@ -817,36 +1123,98 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
               );
             }
 
-            return ListTile(
-              leading: repository == null
-                  ? null
-                  : AppIcon(
-                      packageName: app.packageName,
-                      repository: repository,
+            // Phase 8 / M1: a protected row shows its stored level and a
+            // tap opens the level picker; unprotected rows are unchanged.
+            final AppSecurityLevel? level =
+                isProtected ? _levels[app.packageName] : null;
+            final bool levelSaving = _levelSaving.contains(app.packageName);
+            final AppSecurityLevel? held =
+                isProtected ? _heldLevel(app.packageName) : null;
+            final SecurityRecommendation? suggestion =
+                isProtected ? _suggestionFor(app.packageName) : null;
+            final bool canChangeLevel =
+                container != null && level != null && !levelSaving;
+            return Semantics(
+              onTapHint: canChangeLevel ? AppsScreen.levelTapHint : null,
+              child: ListTile(
+                key: Key('app_tile_${app.packageName}'),
+                onTap: canChangeLevel ? () => _changeLevel(app) : null,
+                leading: repository == null
+                    ? null
+                    : AppIcon(
+                        packageName: app.packageName,
+                        repository: repository,
+                      ),
+                title: Text(
+                  app.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                // Status text sits under the name; the trailing switch is
+                // the explicit Protected/Unprotected toggle (Phase 3E).
+                subtitle: Row(
+                  children: <Widget>[
+                    Text(
+                      isProtected
+                          ? AppsScreen.protectedLabel
+                          : AppsScreen.unlockedLabel,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: isProtected
+                                ? context.dsColors.success
+                                : context.dsColors.textSecondary,
+                          ),
                     ),
-              title: Text(
-                app.label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              // Status text sits under the name; the trailing switch is
-              // the explicit Protected/Unprotected toggle (Phase 3E).
-              subtitle: Text(
-                isProtected
-                    ? AppsScreen.protectedLabel
-                    : AppsScreen.unlockedLabel,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: isProtected
-                          ? context.dsColors.success
-                          : context.dsColors.textSecondary,
-                    ),
-              ),
-              trailing: Switch(
-                key: Key('app_toggle_${app.packageName}'),
-                value: isProtected,
-                activeThumbColor: context.dsColors.primary,
-                onChanged:
-                    container == null ? null : (_) => _toggleProtection(app),
+                    if (isProtected && (levelSaving || level != null))
+                      Flexible(
+                        child: Text(
+                          levelSaving
+                              ? AppsScreen.levelSavingSuffix
+                              : AppsScreen.levelSuffix(level!),
+                          key: Key('app_level_${app.packageName}'),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodySmall
+                              ?.copyWith(color: context.dsColors.textSecondary),
+                        ),
+                      ),
+                    if (isProtected && !levelSaving && held != null)
+                      Flexible(
+                        child: Text(
+                          AppsScreen.levelHeldSuffix(held),
+                          key: Key('app_level_held_${app.packageName}'),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodySmall
+                              ?.copyWith(color: context.dsColors.warning),
+                        ),
+                      ),
+                    if (isProtected && !levelSaving && suggestion != null)
+                      Padding(
+                        padding: const EdgeInsets.only(left: DsSpacing.xs),
+                        child: Semantics(
+                          label:
+                              AppsScreen.suggestionSemantics(suggestion.level),
+                          child: Icon(
+                            Icons.tips_and_updates_outlined,
+                            key: Key('app_suggestion_${app.packageName}'),
+                            size: 16,
+                            color: context.dsColors.primary,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                trailing: Switch(
+                  key: Key('app_toggle_${app.packageName}'),
+                  value: isProtected,
+                  activeThumbColor: context.dsColors.primary,
+                  onChanged:
+                      container == null ? null : (_) => _toggleProtection(app),
+                ),
               ),
             );
           },

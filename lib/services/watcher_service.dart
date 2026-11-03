@@ -1,3 +1,4 @@
+import '../data/models/app_security_level.dart';
 import '../utilities/result.dart';
 import 'pending_lock_challenge.dart';
 
@@ -120,6 +121,116 @@ enum ProtectionSettingsTarget {
 /// Native code owns the earliest detector-to-shield transition even while
 /// Dart is healthy. Dart owns credential decisions and grants only the
 /// short-lived package authorization produced by successful authentication.
+/// Phase 8 / M2: the per-app level part of one protection snapshot, sent
+/// with the protected set in the same `configureProtection` call (one
+/// atomic native write). [levels] keys are exactly the protected packages.
+class ProtectionPolicySnapshot {
+  const ProtectionPolicySnapshot({
+    required this.levels,
+    required this.session,
+    required this.revision,
+    this.authorizedDowngrades = const <String>{},
+  });
+
+  /// Transport schema version understood by native (`policyVersion`).
+  static const int currentVersion = 1;
+
+  final Map<String, AppSecurityLevel> levels;
+
+  /// Identifies one Dart isolate; with [revision] lets native reject a
+  /// stale or out-of-order snapshot.
+  final String session;
+  final int revision;
+
+  /// Packages whose LOWER level was confirmed through the CR-2 credential
+  /// gate just before this snapshot. Native applies a downgrade only for
+  /// these; any other lower level is held at the stricter one.
+  final Set<String> authorizedDowngrades;
+
+  Map<String, Object?> toChannelArguments() => <String, Object?>{
+        'policyVersion': currentVersion,
+        'securityLevels': <String, String>{
+          for (final MapEntry<String, AppSecurityLevel> e in levels.entries)
+            e.key: e.value.storageId,
+        },
+        'snapshotSession': session,
+        'snapshotRevision': revision,
+        'authorizedDowngrades': authorizedDowngrades.toList(growable: false),
+      };
+}
+
+/// How native treated the level part of a snapshot.
+enum ProtectionPolicyStatus {
+  /// Valid snapshot applied (possibly with held downgrades).
+  applied,
+
+  /// No level data was sent (legacy transport): known levels kept.
+  legacy,
+
+  /// Level data present but malformed: every app enforced as Critical.
+  invalid,
+
+  /// Older than one already applied: nothing changed.
+  stale,
+
+  /// Native did not report (e.g. an older reply format).
+  unknown,
+}
+
+/// Phase 8 / M2: native's reply to `configureProtection`, used to show the
+/// truth when persisted and enforced levels differ.
+class ProtectionPolicyAck {
+  const ProtectionPolicyAck({
+    required this.status,
+    this.effectiveLevels = const <String, AppSecurityLevel>{},
+    this.heldDowngrades = const <String>{},
+  });
+
+  static const ProtectionPolicyAck unknown =
+      ProtectionPolicyAck(status: ProtectionPolicyStatus.unknown);
+
+  final ProtectionPolicyStatus status;
+
+  /// The level native enforces per protected package (empty = unknown).
+  final Map<String, AppSecurityLevel> effectiveLevels;
+
+  /// Packages whose requested lower level native did NOT apply.
+  final Set<String> heldDowngrades;
+
+  bool get applied =>
+      status != ProtectionPolicyStatus.stale &&
+      status != ProtectionPolicyStatus.unknown;
+
+  /// Parses the native reply. Anything unreadable is [unknown]; an
+  /// unreadable level id reads as Critical (never weaker).
+  static ProtectionPolicyAck fromChannel(Object? raw) {
+    if (raw is! Map) return unknown;
+    final Object? statusRaw = raw['policyStatus'];
+    final ProtectionPolicyStatus status = ProtectionPolicyStatus.values
+            .where((ProtectionPolicyStatus s) =>
+                s != ProtectionPolicyStatus.unknown && s.name == statusRaw)
+            .firstOrNull ??
+        ProtectionPolicyStatus.unknown;
+    final Object? levelsRaw = raw['effectiveLevels'];
+    final Map<String, AppSecurityLevel> levels = <String, AppSecurityLevel>{
+      if (levelsRaw is Map)
+        for (final MapEntry<Object?, Object?> e in levelsRaw.entries)
+          if (e.key is String)
+            e.key! as String: AppSecurityLevel.fromStorage(e.value),
+    };
+    final Object? heldRaw = raw['heldDowngrades'];
+    return ProtectionPolicyAck(
+      status: status,
+      effectiveLevels: levels,
+      heldDowngrades: <String>{
+        if (heldRaw is List)
+          for (final Object? p in heldRaw)
+            if (p is String) p,
+      },
+    );
+  }
+}
+
 abstract interface class WatcherService {
   /// Starts the watcher foreground service. Notification permission is
   /// optional on API 33+: denial affects visibility, not service startup.
@@ -134,9 +245,14 @@ abstract interface class WatcherService {
   /// Persists the minimum non-secret bootstrap state needed by the native
   /// recovery engine. Package names are already persisted by the protected
   /// apps repository; no credential material crosses this bridge.
-  Future<Result<void>> configureProtection({
+  ///
+  /// Phase 8 / M2: [policy] carries the per-app levels of the same
+  /// snapshot (null = legacy call: native keeps the levels it knows). The
+  /// reply reports what native enforces.
+  Future<Result<ProtectionPolicyAck>> configureProtection({
     required bool enabled,
     required Set<String> protectedPackages,
+    ProtectionPolicySnapshot? policy,
   });
 
   /// Liveness signal from the Dart enforcement pipeline. The native watcher
@@ -150,9 +266,17 @@ abstract interface class WatcherService {
   /// Mirrors a temporary package authorization after explicit successful
   /// authentication. Native state is process-local and disappears on reboot
   /// or process death, preserving fail-closed recovery.
+  ///
+  /// Phase 8 / M2 gate: [securityLevel] is the level Dart enforced for this
+  /// grant. Native keeps it as a floor for the authorization's lifetime
+  /// (stricter of it and the native store level), so a native store that has
+  /// not yet received the first level sync (M1 → M2 upgrade, failed sync)
+  /// cannot give a Critical/Sensitive grant Standard grace. It can only
+  /// tighten; it never authorizes.
   Future<Result<void>> authorizePackage(
     PendingLockChallenge challenge, {
     Duration sessionWindow = const Duration(minutes: 2),
+    AppSecurityLevel? securityLevel,
   });
 
   /// Immediately invalidates every native authorization (screen-off path).

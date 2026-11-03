@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import '../../data/models/app_security_level.dart';
 import '../../utilities/result.dart';
 import '../pending_lock_challenge.dart';
 import '../watcher_service.dart';
@@ -57,9 +58,36 @@ class StaticWatcherService implements WatcherService {
   int heartbeatCalls = 0;
   int setGracePeriodCalls = 0;
   int authorizePackageCalls = 0;
+
+  /// Phase 8 / M2 gate: level floor sent with the last `authorizePackage`
+  /// per package (null = none sent).
+  final Map<String, AppSecurityLevel?> authorizeLevelFloors =
+      <String, AppSecurityLevel?>{};
   int revokeAllAuthorizationsCalls = 0;
   Duration gracePeriod = Duration.zero;
   final Set<String> authorizedPackages = <String>{};
+
+  /// Phase 8 / M2 (SIMULATED native): the levels the simulated engine
+  /// enforces, resolved like `PolicySnapshotResolver.kt` — legacy keeps
+  /// known levels (new → Standard); a valid v1 snapshot applies, holding
+  /// any lower level that is not in `authorizedDowngrades`; a malformed
+  /// one enforces Critical; an older (session, revision) is stale.
+  final Map<String, AppSecurityLevel> securityLevels =
+      <String, AppSecurityLevel>{};
+
+  /// Every snapshot received, in order (tests inspect transport).
+  final List<ProtectionPolicySnapshot?> receivedPolicies =
+      <ProtectionPolicySnapshot?>[];
+
+  /// When non-null, [configureProtection] fails with it and changes
+  /// nothing (a bridge or native persistence failure).
+  Object? configureError;
+
+  /// When non-null, [configureProtection] waits for it first.
+  Completer<void>? configureGate;
+
+  String? _lastSession;
+  int _lastRevision = -1;
 
   @override
   Future<Result<bool>> start() async {
@@ -79,11 +107,27 @@ class StaticWatcherService implements WatcherService {
   Future<Result<bool>> isRunning() async => Result.success(running);
 
   @override
-  Future<Result<void>> configureProtection({
+  Future<Result<ProtectionPolicyAck>> configureProtection({
     required bool enabled,
     required Set<String> protectedPackages,
+    ProtectionPolicySnapshot? policy,
   }) async {
     configureCalls++;
+    receivedPolicies.add(policy);
+    final Completer<void>? gate = configureGate;
+    if (gate != null) await gate.future;
+    final Object? error = configureError;
+    if (error != null) return Result.failure(error);
+    if (policy != null &&
+        policy.session == _lastSession &&
+        policy.revision <= _lastRevision) {
+      return Result.failure(StateError('stale protection snapshot'));
+    }
+    final ProtectionPolicyAck ack = _resolveLevels(protectedPackages, policy);
+    if (policy != null) {
+      _lastSession = policy.session;
+      _lastRevision = policy.revision;
+    }
     protectionConfigured = enabled;
     this.protectedPackages = Set<String>.of(protectedPackages);
     authorizedPackages.retainAll(this.protectedPackages);
@@ -92,7 +136,58 @@ class StaticWatcherService implements WatcherService {
       enabled: enabled,
       packages: Set<String>.of(protectedPackages),
     );
-    return Result.success(null);
+    return Result.success(ack);
+  }
+
+  ProtectionPolicyAck _resolveLevels(
+    Set<String> packages,
+    ProtectionPolicySnapshot? policy,
+  ) {
+    final Map<String, AppSecurityLevel> previous =
+        Map<String, AppSecurityLevel>.of(securityLevels);
+    final Map<String, AppSecurityLevel> next = <String, AppSecurityLevel>{};
+    final Set<String> held = <String>{};
+    ProtectionPolicyStatus status;
+    if (policy == null) {
+      status = ProtectionPolicyStatus.legacy;
+      for (final String p in packages) {
+        next[p] = previous[p] ?? AppSecurityLevel.standard;
+      }
+    } else if (policy.levels.keys.toSet().length == packages.length &&
+        policy.levels.keys.toSet().containsAll(packages)) {
+      status = ProtectionPolicyStatus.applied;
+      for (final String p in packages) {
+        final AppSecurityLevel requested = policy.levels[p]!;
+        final AppSecurityLevel? old = previous[p];
+        if (old != null &&
+            old.isStricterThan(requested) &&
+            !policy.authorizedDowngrades.contains(p)) {
+          next[p] = old;
+          held.add(p);
+        } else {
+          next[p] = requested;
+        }
+      }
+    } else {
+      status = ProtectionPolicyStatus.invalid;
+      for (final String p in packages) {
+        next[p] = AppSecurityLevel.critical;
+      }
+    }
+    for (final MapEntry<String, AppSecurityLevel> e in next.entries) {
+      final AppSecurityLevel? old = previous[e.key];
+      if (old != null && e.value.isStricterThan(old)) {
+        authorizedPackages.remove(e.key); // raised → session revoked
+      }
+    }
+    securityLevels
+      ..clear()
+      ..addAll(next);
+    return ProtectionPolicyAck(
+      status: status,
+      effectiveLevels: Map<String, AppSecurityLevel>.unmodifiable(next),
+      heldDowngrades: Set<String>.unmodifiable(held),
+    );
   }
 
   @override
@@ -113,8 +208,10 @@ class StaticWatcherService implements WatcherService {
   Future<Result<void>> authorizePackage(
     PendingLockChallenge challenge, {
     Duration sessionWindow = const Duration(minutes: 2),
+    AppSecurityLevel? securityLevel,
   }) async {
     authorizePackageCalls++;
+    authorizeLevelFloors[challenge.packageName] = securityLevel;
     final StaticNativeChallengeContract? native = nativeContract;
     if (native != null) {
       if (!native.authorizePackage(challenge)) {
