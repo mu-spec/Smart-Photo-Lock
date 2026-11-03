@@ -59,7 +59,9 @@ void main() {
     final AppContainer c = container ?? AppContainer.inMemory();
     // Taller test surface: the authentication rows (Biometric unlock sits
     // fifth) land off-screen at the default 800x600 and taps miss.
-    tester.view.physicalSize = const Size(800, 1600);
+    // Phase 9 / M3: taller, so the rows below the Security Center (which
+    // now ends with Recommended improvements) are built in the lazy list.
+    tester.view.physicalSize = const Size(800, 2400);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
     await tester.pumpWidget(

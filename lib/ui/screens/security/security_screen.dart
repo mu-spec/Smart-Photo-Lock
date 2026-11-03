@@ -56,6 +56,11 @@ class SecurityScreen extends StatefulWidget {
       'An overview of your protection, plus your unlock and protection '
       'settings.';
 
+  /// The Re-lock grace options (one definition, in the state below). Public
+  /// so the Phase 9 / M3 re-lock recommendation is pinned to them by tests.
+  static const List<(String, Duration)> graceOptions =
+      _SecurityScreenState.graceOptions;
+
   /// H-3: shown when biometric hardware exists but no usable biometric is
   /// enrolled. A secure device lock alone never enables biometric unlock.
   static const String biometricNotEnrolledMessage =
@@ -129,6 +134,12 @@ class _SecurityScreenState extends State<SecurityScreen>
   /// re-reads the score's settings input.
   int _settingsRevision = 0;
 
+  /// Phase 9 / M3: a recommendation can bring an existing control into
+  /// view (Authentication or Re-lock). Scrolling only; nothing changes.
+  final ScrollController _scroll = ScrollController();
+  final GlobalKey _authenticationKey = GlobalKey();
+  final GlobalKey _relockKey = GlobalKey();
+
   /// The grace options offered by the Re-lock section.
   static const List<(String, Duration)> graceOptions = <(String, Duration)>[
     ('Immediate', Duration.zero),
@@ -180,6 +191,7 @@ class _SecurityScreenState extends State<SecurityScreen>
   void dispose() {
     _capabilitySubscription?.cancel();
     WidgetsBinding.instance.removeObserver(this);
+    _scroll.dispose();
     super.dispose();
   }
 
@@ -439,6 +451,30 @@ class _SecurityScreenState extends State<SecurityScreen>
     }
   }
 
+  // -- Phase 9 / M3: show an existing control ---------------------------------
+
+  /// Scrolls the (lazy) list until the target section is built, then
+  /// brings it to the top. Bounded; no animation; changes nothing.
+  Future<void> _showSetting(SecurityCenterTarget target) async {
+    final GlobalKey key = switch (target) {
+      SecurityCenterTarget.authentication => _authenticationKey,
+      SecurityCenterTarget.relock => _relockKey,
+    };
+    for (int i = 0; i < 20 && key.currentContext == null; i++) {
+      if (!mounted || !_scroll.hasClients) return;
+      final ScrollPosition position = _scroll.position;
+      if (position.pixels >= position.maxScrollExtent) break;
+      _scroll.jumpTo(
+        (position.pixels + position.viewportDimension * 0.8)
+            .clamp(0.0, position.maxScrollExtent),
+      );
+      await WidgetsBinding.instance.endOfFrame;
+    }
+    final BuildContext? section = key.currentContext;
+    if (!mounted || section == null || !section.mounted) return;
+    await Scrollable.ensureVisible(section);
+  }
+
   // -- re-lock grace (Phase 5L) ---------------------------------------------
 
   /// Persists the selected grace period and applies it to the shared
@@ -661,6 +697,7 @@ class _SecurityScreenState extends State<SecurityScreen>
     final DsPalette palette = context.dsColors;
     return SafeArea(
       child: ListView(
+        controller: _scroll,
         padding: DsInsets.screen,
         children: <Widget>[
           Text(
@@ -674,9 +711,11 @@ class _SecurityScreenState extends State<SecurityScreen>
             isActive: widget.isActive,
             onNavigate: widget.onNavigate,
             settingsRevision: _settingsRevision,
+            onShowSetting: (SecurityCenterTarget target) =>
+                unawaited(_showSetting(target)),
           ),
           const SizedBox(height: DsSpacing.xl),
-          const DsSectionTitle('Authentication'),
+          DsSectionTitle('Authentication', key: _authenticationKey),
           const SizedBox(height: DsSpacing.md),
           DsCard(
             padding: const EdgeInsets.symmetric(vertical: DsSpacing.xs),
@@ -794,7 +833,7 @@ class _SecurityScreenState extends State<SecurityScreen>
           const SizedBox(height: DsSpacing.xl),
           // Phase 5L: re-lock grace — how long after LEAVING a protected
           // app it may be reopened without the PIN again.
-          const DsSectionTitle('Re-lock'),
+          DsSectionTitle('Re-lock', key: _relockKey),
           const SizedBox(height: DsSpacing.sm),
           DsCard(
             child: Column(

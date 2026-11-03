@@ -112,6 +112,13 @@ abstract final class HealthPresentation {
   /// the Security Center (Phase 9 review).
   static const String offlineMessage = 'Protection is offline. App locking '
       'may not work until protection is restored.';
+
+  /// The OFFLINE message when a permission protection needs was never
+  /// allowed (setup, not a failure). Conditional, like [offlineMessage]
+  /// (Phase 9 / M3 wording review).
+  static const String permissionNotAllowedMessage = 'A permission protection '
+      'needs has not been allowed yet. App locking may not work until it is '
+      'allowed.';
   static const String checkingTitle = 'Checking protection…';
   static const String unavailableTitle = 'Status unavailable';
 
@@ -191,8 +198,7 @@ abstract final class HealthPresentation {
         if (category == HealthIssueCategory.setup) {
           return const HealthStatusView(
             title: offlineTitle,
-            message: 'A permission protection needs has not been allowed '
-                'yet. Protected apps can open without a lock until it is.',
+            message: permissionNotAllowedMessage,
             level: SecurityLevel.vulnerable,
           );
         }

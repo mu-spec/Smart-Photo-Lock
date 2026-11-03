@@ -166,7 +166,16 @@ void main() {
           HealthPresentation.status(_eval(_signals(overlay: false)));
       expect(notYet.title, HealthPresentation.offlineTitle);
       expect(notYet.message, contains('has not been allowed yet'));
-      expect(notYet.message, isNot(contains('may not work')));
+      // Exact reviewed wording (Phase 9 / M3): conditional, and not the
+      // failure sentence.
+      expect(
+        notYet.message,
+        'A permission protection needs has not been allowed yet. App '
+        'locking may not work until it is allowed.',
+      );
+      expect(notYet.message, HealthPresentation.permissionNotAllowedMessage);
+      expect(notYet.message, isNot(contains('Protection is offline')));
+      expect(notYet.message, isNot(contains('without a lock')));
     });
 
     test('setup and user choice are OFFLINE but never worded as a failure', () {

@@ -2560,3 +2560,133 @@ the repo).
 **Status:** implemented and simulated-tested. It is **not device verified**
 (the combined Phase 6–10 round is deferred, not waived) and **not release
 ready** until that round passes, including E13, F3 and biometric.
+
+## Automated evidence (Phase 9 / M3)
+
+Recommended improvements and score integrity QA (PRD Phase 9 / M3, 9G and
+9H). Baseline: the local M2 commit `7642470` (not pushed). All results are
+**SIMULATED**:
+- the pure recommendations model and the real M2 score over real Phase 7
+  engine reports, the real Phase 8 catalog and real `ProtectedApp` records;
+- the production widgets, `MainShell`, router, challenge host, health
+  monitor and controller;
+- the real protected-app, lock-settings and preference stores (in memory),
+  with static platform services.
+
+No device, Settings screen, OEM behaviour or native enforcement is
+observed.
+
+| Suite | Tests | Covers |
+| --- | --- | --- |
+| `test/ui/security/security_center_recommendations_test.dart` (new) | 23 | Status: failed / loading reads never yield items; healthy → calm. A: first-time setup (PIN + apps steps, setup wording, not dismissible); PIN set, no apps; apps protected without a PIN (only the PIN step, no optional items even with unreadable dismissals); never-granted overlay worded as setup. B: OFFLINE item with the Phase 7 title, explanation, tag and Health Details; ATTENTION items; unknown signal → Check again; a stale report lists only "Status is out of date"; advisories (biometric, Battery Saver) never items. C: exact-package catalog only (case, unknown, unprotected), current → suggested, held-stricter native respected, dismissal per `package@level`, unreadable dismissals withhold optional items. D: re-lock proposal (longest shorter option that changes something), Critical-only / Immediate → none, unconfirmed level counted conservatively, dismissal bound to the value, options equal `SecurityScreen.graceOptions`. Priority order; dismissal never changes the score; banned wording; purity and determinism. 9H: score-integrity checks (fresh SECURE, provisional ≤ 40, withheld states, exact sums, unconfirmed ≤ confirmed, biometric / Battery Saver / app count neutral) |
+| `test/ui/security/security_recommendations_card_test.dart` (new) | 25 | Calm state (exact hedged text, no buttons) and placement after the score. 320 dp at 2× text, light and dark: no overflow, header and level-line semantics. Setup steps: "Show PIN and pattern" scrolls to Authentication, "Choose apps" opens Apps. Assessing while loading; failed health → unavailable with Check again; failed apps read → unavailable, Try again recovers. Card rendering of every state (optional-unavailable note, each unavailable reason and its button, callbacks). Permission issue → item, Health Details, restore removes it (resume, no tap). Critical + OFFLINE: problem first, no safety claims, restore keeps only optional items. Level suggestion opens Apps, no write, no auto-upgrade. Dismissal hides, writes the shared key, score unchanged, Apps tab hint gone on tab return; and the reverse (Apps tab dismissal removes the Security Center item). Re-lock values; "Show Grace period" builds and scrolls the lazy list to the selector (500 dp viewport, section not built beforehand); the user's own change updates the score (70 → 80) and the proposal. Re-lock dismissal bound to the value. Protect / level change / unprotect reflected on tab return. Rapid refresh: an older read completing last is ignored. Pending PIN challenge survives Health Details navigation and resume; wrong PIN refused, exact PIN grants. Read-only: no level, protection or setting write, sync, grace change or authorization. **Dismissal persistence (SIMULATED, 6, final gate):** saved → hidden with the confirmation and still hidden after a full container restart in both tabs; failed save → the item stays with the not-saved message (no "hidden" claim), score, levels, protected set, watcher sync and grace unchanged, tabs consistent, still shown after restart; Try again saves and hides; grouped level item failing part-way hides only the saved app; Apps tab failure keeps the hint with Try again; an Apps tab failure leaves the Security Center item listed |
+| `test/data/dismissal_persistence_test.dart` (new, final gate) | 6 | Production `SharedPreferencesKeyValueStore` over a `SharedPreferences` fake: a write the platform reports as failed throws (never success); end to end over the real plugin with mock values: a saved dismissal reads back. `PreferencesStoreImpl` over a store that caches then fails (like Android): success saves sorted and a repeat is a no-op; a failed first dismissal rolls back to none; a failed later dismissal restores the previous set, and a failing rollback still surfaces the original error; invalid keys never write |
+| **Intentional updates (existing suites)** | — | `permission_regression_test`, `protection_setup_banner_test`, `revocation_detection_test`: the top health issue's title now appears exactly twice on the Security tab (health card + Recommended improvements); a new `expectIssueNamed` helper asserts one match inside each card and two in total. `security_score_card_test` test 7: the same, scoped to the two cards. `security_screen_test`: viewport 800 × 2400 (the card adds height above rows in the lazy list). `health_presentation_test`: pins the exact new "not allowed yet" sentence and that it is not the OFFLINE message. No assertion was weakened |
+| Existing suites (P5–P9/M2) | unchanged, all pass | cross-phase regression (PIN/pattern, biometric, CR-2, tickets, sessions, grace, lockout, Phase 6/7/8) |
+
+**Totals:**
+- **Full Flutter:** **+1447, all passed**, EXIT 0, no reruns (1405 M2
+  baseline + 23 + 19).
+- **Final gate (dismissal persistence correction):** full Flutter
+  **+1459, all passed**, EXIT 0, no reruns (1447 + 6 new unit
+  tests + 6 new card tests). Focused suites (the two new/extended suites, the M3 model
+  suite, Apps level M2, preferences store, recommendation catalog, score
+  card): first run **+103 −1** (test 22 assumed WhatsApp's line is saved
+  first; the repository lists Bitwarden first, so the test now reads the
+  on-screen order); then **+104, all passed**.
+- **Focused existing suites** (Security Center, Security tab, health UI and
+  the regression suites the card touches): first run **+218 −24** (lazy
+  viewport, duplicated titles now expected twice, a banned word in the calm
+  text, an obsolete "may not work" failure marker); after the intentional
+  updates above, **+242, all passed**.
+- **New suites during development** (not counted as evidence): the model
+  suite first failed to compile (`graceOptions` was private; now a public
+  alias of the same constant); the widget suite first failed on the Apps
+  tab (WhatsApp was not an installed app in the fixture, so the hint
+  assertion was vacuous; the fixture now installs it) and then found a real
+  inconsistency: a suggestion dismissed in the Security Center stayed
+  visible on the kept-alive Apps tab. Fixed in `apps_screen.dart` /
+  `main_shell.dart` (dismissed set re-read on tab return).
+- **Static checks:** `flutter analyze` clean; scoped `dart format` 0
+  changed; `git diff --check` clean.
+- **Native:** nothing under `android/`, `ios/` or `pubspec*` changed, so
+  Kotlin JVM and typecheck were not rerun (P8 M3 baseline: 306, exit 0).
+
+**Targeted mutation checks: 29/30 killed, 1 equivalent**
+(`Phase9_M3/run_m3_mutations.py`, outside the repo; each mutant run against
+the M3 suites only; compile errors reported separately (none); restoration
+verified byte-identical):
+- **eligibility (11/11):** advisories listed; stale issues repeated; setup
+  as a failure; optional items during setup; unreadable dismissals treated
+  as none; level / re-lock dismissals ignored; held native level ignored;
+  unconfirmed level credited for re-lock; shortest instead of nearest
+  proposal; proposal that changes nothing;
+- **priority (4/4):** OFFLINE ranked as attention; order reversed; setup
+  tagged optional; Check-again repair sent to Health Details;
+- **score integrity (2/2):** a dismissal alters a score input; the level
+  action auto-applies the suggestion;
+- **unavailable states (6/7):** apps failure, failed health worded as never
+  checked, running check, calm despite unreadable dismissals, card note
+  hidden, calm shown whenever ready. **U5 (calm despite a stale check)
+  survives and is equivalent:** a stale report always carries the
+  `health_snapshot_stale` issue (the report constructor is private to the
+  engine), so the item list is never empty when stale; the explicit check
+  stays as defence in depth;
+- **lifecycle (6/6):** stale-response guard; dismissal not persisted / a
+  saved dismissal not hidden; wrong scroll target; no lazy-list scroll;
+  Apps tab ignores Security Center dismissals.
+- **dismissal persistence, final gate (4/4):** platform write failure
+  treated as saved; no rollback of an unsaved dismissal; Security Center
+  hides on a failed save; Apps tab hides on a failed save. S1, L2 and L3
+  were re-anchored to the corrected code and rerun (3/3 killed); all 34
+  anchors match exactly once.
+
+The first mutation run killed 25/30. E4, L1, L4 and L5 survived because the
+new tests did not yet cover them: apps without a PIN; an older read that
+differs from the newer one; a viewport where the Re-lock section is not
+built. Those tests were strengthened, not the mutants weakened.
+
+Not covered automatically: real devices and OEM skins, real Settings round
+trips, TalkBack, real font scaling, a real Android disk-write failure (the
+failing-store path is simulated through `AppContainer.inMemory(keyValueStore:)`
+and a `SharedPreferences` fake), and the native watcher and Accessibility
+service.
+
+## Phase 9 / M3 device QA (adds to the consolidated plan; not executed)
+
+Session 1g of the consolidated round (Oppo A9, after Session 1f). Same
+setup: PIN, grace 30 s, A = Standard, B = Sensitive, C = Critical (none on
+the catalog). Baseline expectation: one optional item, "Now: 30 seconds ·
+Suggested: Immediate".
+
+**Fail rules:**
+- a recommendation button changes a level, the grace period or protection,
+  unlocks an app or touches a challenge;
+- an optional item above a protection problem;
+- the calm state while a problem is present, while out of date, failed or
+  checking, or with unreadable data;
+- a problem still listed after a restore and return;
+- a dismissal that changes the score, a level or the grace period;
+- "%", guaranteed, secure, urgent, premium or upgrade wording.
+
+| Step | Actions | Expected |
+| --- | --- | --- |
+| RC1 Setup (record) | Fresh install before the PIN; no apps protected. | Setup-tagged steps only; buttons scroll to Authentication / open Apps. |
+| RC2 Baseline | Tap "Show Grace period". | One optional re-lock item; scrolls to Re-lock; grace still 30 s, score 90. |
+| RC3 Permission issue | Usage Access off → return → Health Details → Back; restore → return. | The health problem is the first item (no dismiss); removed after restore with no tap. |
+| RC4 Critical + OFFLINE | Overlay off → return; restore → return. | Problem first; no safety claims; no number. Restore: removed, 90. |
+| RC5 Level (record, catalog app only) | Protect catalog app D at Standard; Review in Apps; raise in Apps; lower (PIN). | "D: Standard → Sensitive"; nothing changes by itself; removed after the user raises; lowering asks for the PIN. |
+| RC6 Dismissal | Dismiss the re-lock item; restart the app; (RC5) dismiss D. | "Suggestion hidden. No level or setting was changed."; hidden; score 90 and grace 30 s unchanged; still hidden after restart; the Apps tab hint is gone too. Never "Couldn't save your choice" on a healthy device (a save failure cannot be forced on device; simulated only). |
+| RC7 Re-lock change | Immediate, 5 minutes, 30 seconds. | 100 / no item; 86 / "Now: 5 minutes · Suggested: 1 minute"; 90 / still dismissed. |
+| RC8 Stale | Idle 60 s on Security; Check again. | No number; only "Status is out of date"; never the calm state; Check again restores. |
+| RC9 Pending challenge | C challenge → Home → Security → recommendation buttons → C. | The challenge stays on top; exact PIN only. |
+| RC10 Display (record) | Dark mode, largest font, TalkBack. | Readable; heading announced; level line read as one phrase. |
+
+**Minimum acceptance:** RC2, RC3, RC4, RC6, RC7, RC8 and RC9 on the Oppo.
+Release blockers: RC3, RC4, RC6, RC8 and RC9. RC1, RC5 (only with an
+installed catalog app) and RC10 are recorded. The full plan copy is
+`Phase9_M3/P6_P9_CONSOLIDATED_QA_PLAN.md` (outside the repo).
+
+**Status:** implemented and simulated-tested. It is **not device verified**
+(the combined Phase 6–10 round is deferred, not waived) and **not release
+ready** until that round passes, including E13, F3 and biometric.

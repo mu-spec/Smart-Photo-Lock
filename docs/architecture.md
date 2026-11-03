@@ -2873,3 +2873,147 @@ The score is observational. It never:
 - runs the CR-2 sync.
 
 Phase 5 H-2, Phase 6, Phase 7 and Phase 8 code is unchanged.
+
+## Phase 9 / M3 — Recommended improvements and score integrity QA
+
+PRD Phase 9 / M3 (9G recommendations, 9H score integrity QA). Baseline: the
+local Phase 9 / M2 commit `7642470` (not pushed; GitHub `main` is still
+`463f1f5`). There is no new tab, route, permission, dependency, manifest
+entry, background work or native code.
+
+### Model (`lib/ui/screens/security/security_center_recommendations.dart`, pure Dart)
+
+`SecurityCenterRecommendations.assess(RecommendationInputs) →
+RecommendationsAssessment` is deterministic and read-only (no I/O, no
+timers). `RecommendationInputs` wraps the **same** `SecurityScoreInputs`
+object the score is computed from, plus one extra input: the dismissed set
+from the existing Phase 8 preference
+(`PreferencesStore.getDismissedSecurityRecommendations()`; `null` = could
+not be read). There is no second health classifier and no second score:
+
+| Category | Source (existing) | Rule |
+| --- | --- | --- |
+| B. Health | Phase 7 `report.issues` + `HealthPresentation.issue` (title, explanation, tag, repair) | One item per offline/attention issue, Phase 7 order. Advisories (biometric, Battery Saver) are never items. A stale report yields only `health_snapshot_stale`. `protection_not_configured` is setup (A) |
+| A. Setup | the same report (`protection_not_configured` / `setup_incomplete`) and the apps read | `setup.credential`, `setup.apps`; setup wording, never failure wording; no optional items while setup is incomplete |
+| C. Levels | Phase 8 `SecurityRecommendations.forApp` (exact-package catalog) | Basis = the stricter of saved and native (the Apps tab's own rule); one grouped item `improve.levels` with current → suggested per app |
+| D. Re-lock | `SecurityLevelPolicy.graceFor` over `SecurityScore.creditedLevel` | Only when some app's effective grace is > 0; proposes the longest Re-lock option shorter than the current one that actually shortens some app's grace; options pinned to `SecurityScreen.graceOptions` by a test |
+
+**Item fields:** stable `id` (`health.<code>.<component>`, `setup.credential`,
+`setup.apps`, `improve.levels`, `improve.relock`), `source` string, title,
+reason, `action`, `priority`, optional `categoryLabel`, level and re-lock
+details, and `dismissalKeys` (non-empty only for optional items).
+
+**Status (first match wins):** apps read failed → unavailable; apps loading
+→ assessing; grace read failed → unavailable; grace loading → assessing; no
+report → assessing (check running) / unavailable (failed or never checked);
+otherwise ready. Items are always recomputed from the current inputs, so a
+failed read never keeps an earlier list.
+
+**Priority (stable sort):** `protection` (offline-severity) → `attention` →
+`setup` → `optional` (levels, then re-lock).
+
+**Calm state** ("Nothing to suggest right now", hedged: some phone controls
+cannot be checked) only when ready, no items, the report is fresh and the
+dismissals were readable. Unreadable dismissals withhold optional items
+with a note ("Optional suggestions could not be loaded.") instead.
+
+### UI (`security_recommendations_card.dart`, wired in `security_center_section.dart`)
+
+A **Recommended improvements** card is the last card of the Security
+Center: Protection Health, Security score, Protected apps, Critical apps,
+Recommended improvements. Each item shows a tag (the Phase 7 category for
+health items, **Setup** or **Optional**), title, reason, the level lines
+(`label: Standard → Sensitive`) or re-lock values
+(`Now: 5 minutes · Suggested: 1 minute`), and buttons:
+
+| Action | Behaviour (existing paths only) |
+| --- | --- |
+| Review in Health Details | pushes the Phase 7 Health Details route (every Phase 7 repair lives there) |
+| Check again | the Phase 7 health refresh |
+| Choose apps / Review in Apps | switches to the Apps tab; level changes happen only in the existing level sheet (raising needs no credential; lowering goes through CR-2) |
+| Show PIN and pattern / Show Grace period | `SecurityScreen._showSetting` scrolls the lazy list (bounded jump loop, then `Scrollable.ensureVisible`) to the Authentication or Re-lock section; nothing changes until the user uses the existing control |
+| Don't suggest again (optional items only) | writes the dismissal keys through the existing preference (`package@level` shared with the Apps tab hints; `#relock@<seconds>` bound to the current value) and hides the item only after the write is confirmed (SnackBar "Suggestion hidden. No level or setting was changed."); if the write fails the item stays, the SnackBar says "Couldn't save your choice, so the suggestion is still shown. Nothing was changed." and offers Try again |
+
+States: assessing, unavailable (with Try again for unreadable data or Check
+again for health), calm, items. The heading is a header node; each level
+line is one semantics label ("WhatsApp: now Standard, suggested Sensitive.
+…"); buttons wrap at 320 dp with 2× text. No animation and no redesign of
+the existing cards.
+
+**Apps tab consistency (small change in `apps_screen.dart` /
+`main_shell.dart`):** the Apps tab read the dismissed set only once at
+start, so a suggestion dismissed in the Security Center stayed visible on
+the kept-alive Apps tab until restart (found by the M3 widget test). The
+shell now passes `isActive` to `AppsScreen` (as it already does for Home
+and Security); on tab return the Apps tab re-reads only the dismissed set
+and merges it additively (a failed read can never bring a hint back). No
+protection-set, level or policy behaviour changed.
+
+**Dismissal persistence (final M3 gate correction).** The gate found that
+both tabs hid a suggestion optimistically: a failed save still hid it with
+no message (the Apps tab even said "Suggestion hidden"), and it came back
+after a restart. A second, lower-level flaw made this worse:
+`SharedPreferencesKeyValueStore.setString` ignored the plugin's `false`
+result, and the plugin's in-memory cache (like Android's
+`SharedPreferencesImpl`, which applies `commitToMemory()` before the disk
+write and does not roll it back) kept the unsaved value, so the app read
+"dismissed" until it restarted. The smallest fix:
+
+- `SharedPreferencesKeyValueStore.setString` throws a `StateError` when the
+  plugin reports the write as failed (it no longer counts as success).
+- `PreferencesStoreImpl.dismissSecurityRecommendation` remembers the
+  previous value; on a failed write it restores it (or removes the key if
+  there was none) as a best effort and rethrows the original error, so no
+  unsaved dismissal stays readable in memory.
+- Security Center: keys are saved one at a time; only keys whose save
+  completed are hidden. Success → "Suggestion hidden. No level or setting
+  was changed."; any failure → the item (or the unsaved part of a grouped
+  level item) stays, with "Couldn't save your choice, so the suggestion is
+  still shown. Nothing was changed." and a **Try again** action. A guard
+  ignores repeated taps while a save is running.
+- Apps tab: the same rule and the same message and **Try again**; the hint
+  is hidden and "Suggestion hidden. The security level was not changed."
+  shown only after a successful save.
+- Test seam: `AppContainer.inMemory(keyValueStore:)` (tests only; production
+  bootstrap unchanged).
+
+Dismissal still never touches the score inputs, levels, grace, the
+protected set, native enforcement or authorization. Because nothing unsaved
+is ever shown as hidden, the two tabs cannot disagree and a restart cannot
+"resurrect" a suggestion the user was told was saved.
+
+### Refresh
+
+The card is recomputed in `build` from the inputs the score uses
+(`_scoreInputs()`), so it can never disagree with the health card or the
+score. The dismissed set is read inside the same generation-guarded
+`_loadSummary`. Triggers are the M1/M2 ones (tab activation, return to the
+top route, resume, revocation, settings revision after a grace change,
+Check again, Try again). No polling, timers or loops were added.
+
+### Score integrity (9H)
+
+The M2 score was re-verified against the M3 checklist; **no defect was
+found and the score model is unchanged**. Model tests pin: SECURE only when
+fresh; ATTENTION provisional and at most 40; OFFLINE, stale, failed and
+unknown withhold the number (never an old one); setup is not a failure;
+factor sums exact and rounding floored; unconfirmed and pending-downgrade
+levels never credited above native; held-stricter credited at the saved
+level; biometric and Battery Saver never change the score; app count does
+not inflate it; dismissals are not a score input; a gain appears only after
+re-read inputs.
+
+### Wording
+
+The Phase 7 never-granted setup message said "Protected apps can open
+without a lock until it is.", a definite claim the app cannot observe. It is
+now the shared constant `HealthPresentation.permissionNotAllowedMessage`:
+"A permission protection needs has not been allowed yet. App locking may not
+work until it is allowed." No classification changed.
+
+### Security boundary
+
+Recommendations are advisory. Nothing in M3 authorizes, unlocks, creates or
+extends grace, clears a challenge or ticket, resets lockout, changes a
+level, protects an app or runs the CR-2 sync. Phase 5 H-2, Phase 6, Phase 7
+classification and Phase 8 enforcement are unchanged.

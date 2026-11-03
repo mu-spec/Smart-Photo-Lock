@@ -120,6 +120,26 @@ void main() {
         matching: find.text(text),
       );
 
+  /// Phase 9 / M3: an issue is named once in the Protection Health card and
+  /// once, as a recommendation, in Recommended improvements (exactly twice).
+  void expectIssueNamed(String text) {
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('security_center_health')),
+        matching: find.textContaining(text),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('security_center_recommendations')),
+        matching: find.textContaining(text),
+      ),
+      findsOneWidget,
+    );
+    expect(find.textContaining(text), findsNWidgets(2));
+  }
+
   Finder shownBadge() => find.byWidgetPredicate(
         (Widget w) => w is DsDotBadge && w.show,
       );
@@ -456,8 +476,7 @@ void main() {
 
       // Delayed recovery lost, early path kept: attention, not offline.
       expect(inHealth(HealthPresentation.attentionTitle), findsOneWidget);
-      expect(
-          find.textContaining('Usage Access was turned off'), findsOneWidget);
+      expectIssueNamed('Usage Access was turned off');
       // Usage Access is recommended, not required: no attention dot
       // (Phase 4F badge rule, unchanged).
       expect(shownBadge(), findsNothing);
@@ -485,10 +504,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(inHealth(HealthPresentation.attentionTitle), findsOneWidget);
-      expect(
-        find.textContaining('Accessibility service was turned off'),
-        findsOneWidget,
-      );
+      expectIssueNamed('Accessibility service was turned off');
       expect(shownBadge(), findsOneWidget);
       expectSecurityLabel(tester, 'Accessibility service', 'Required');
       expectSecurityLabel(tester, 'Usage access', 'Enabled');
@@ -512,10 +528,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(inHealth(HealthPresentation.offlineTitle), findsOneWidget);
-      expect(
-        find.textContaining('Display over other apps was turned off'),
-        findsOneWidget,
-      );
+      expectIssueNamed('Display over other apps was turned off');
       expect(shownBadge(), findsOneWidget);
       expectSecurityLabel(tester, 'Background lock shield', 'Required');
       expectSecurityLabel(tester, 'Accessibility service', 'Enabled');
@@ -619,10 +632,7 @@ void main() {
       await resume(tester);
 
       expect(inHealth(HealthPresentation.offlineTitle), findsOneWidget);
-      expect(
-        find.textContaining('Display over other apps was turned off'),
-        findsOneWidget,
-      );
+      expectIssueNamed('Display over other apps was turned off');
       expectSecurityLabel(tester, 'Background lock shield', 'Required');
 
       await container.capabilityMonitor.dispose();

@@ -30,7 +30,12 @@ enum AppsFilter {
 /// (Phase 3A): the discovery repository for the catalog and the
 /// protected-apps repository for the status.
 class AppsScreen extends StatefulWidget {
-  const AppsScreen({super.key});
+  const AppsScreen({super.key, this.isActive = true});
+
+  /// Whether the Apps tab is the visible tab (the shell keeps every tab
+  /// alive). Phase 9 / M3: a level suggestion can also be dismissed in the
+  /// Security Center, so the dismissed set is re-read on tab return.
+  final bool isActive;
 
   /// Shown as the screen subtitle (also asserted by the navigation tests).
   static const String description =
@@ -190,10 +195,69 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
   }
 
   @override
+  void didUpdateWidget(covariant AppsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isActive && !oldWidget.isActive) {
+      _refreshDismissedSuggestions();
+    }
+  }
+
+  @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _searchController.dispose();
     super.dispose();
+  }
+
+  /// "Don't suggest again" (Phase 8 / M2). Phase 9 / M3: the hint is hidden
+  /// only after the dismissal is saved, so it stays hidden after a restart
+  /// and matches the Security Center. On a failed save the hint stays and a
+  /// message offers Try again. Never changes a level.
+  Future<void> _dismissSuggestion(SecurityRecommendation suggestion) async {
+    final container = AppScope.read(context);
+    if (container == null) return;
+    try {
+      await container.preferences
+          .dismissSecurityRecommendation(suggestion.dismissalKey);
+    } on Object {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: const Text(SecurityRecommendations.dismissNotSavedMessage),
+            action: SnackBarAction(
+              label: SecurityRecommendations.dismissRetryLabel,
+              onPressed: () {
+                if (mounted) _dismissSuggestion(suggestion);
+              },
+            ),
+          ),
+        );
+      return;
+    }
+    if (!mounted) return;
+    setState(() => _dismissedSuggestions = <String>{
+          ..._dismissedSuggestions,
+          suggestion.dismissalKey,
+        });
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(content: Text(AppsScreen.suggestionDismissedMessage)),
+      );
+  }
+
+  /// Phase 9 / M3: picks up suggestions dismissed elsewhere (Security
+  /// Center). Additive only, so a failed read never brings a hint back.
+  /// Advisory state only: no level, protection or policy is touched.
+  Future<void> _refreshDismissedSuggestions() async {
+    final Set<String> dismissed = await _readDismissedSuggestions();
+    if (!mounted || dismissed.every(_dismissedSuggestions.contains)) return;
+    setState(() => _dismissedSuggestions = <String>{
+          ..._dismissedSuggestions,
+          ...dismissed,
+        });
   }
 
   /// Phase 3F: when the app resumes (after suspension, backgrounding, or a
@@ -312,20 +376,7 @@ class _AppsScreenState extends State<AppsScreen> with WidgetsBindingObserver {
     }
     if (picked.dismissRecommendation) {
       if (suggestion == null) return;
-      try {
-        await container.preferences
-            .dismissSecurityRecommendation(suggestion.dismissalKey);
-      } on Object {
-        // Advisory only: the hint is hidden for this session regardless.
-      }
-      if (!mounted) return;
-      setState(() => _dismissedSuggestions = <String>{
-            ..._dismissedSuggestions,
-            suggestion.dismissalKey,
-          });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text(AppsScreen.suggestionDismissedMessage)),
-      );
+      await _dismissSuggestion(suggestion);
       return;
     }
     final AppSecurityLevel chosen = picked.level!;

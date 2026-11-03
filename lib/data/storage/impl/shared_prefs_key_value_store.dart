@@ -30,9 +30,14 @@ class SharedPreferencesKeyValueStore implements KeyValueStore {
     await _prefs.setInt(key, value);
   }
 
+  /// Throws when the platform reports that the value was not stored
+  /// (`false`), so callers never treat an unsaved value as saved. Phase 9 /
+  /// M3: "Don't suggest again" is confirmed only after a real save.
   @override
   Future<void> setString(String key, String value) async {
-    await _prefs.setString(key, value);
+    if (!await _prefs.setString(key, value)) {
+      throw StateError('Preference "$key" was not saved.');
+    }
   }
 
   @override

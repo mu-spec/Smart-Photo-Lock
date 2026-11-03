@@ -245,6 +245,8 @@ class AppContainer {
     // the Android Keystore survive in production.
     LocalDatabase? database,
     SecretStore? secretStore,
+    // Phase 9 / M3: share (or fail) the preferences tier the same way.
+    KeyValueStore? keyValueStore,
   }) {
     final InstalledAppsService installedAppsService =
         StaticInstalledAppsService(
@@ -259,10 +261,10 @@ class AppContainer {
     final OverlayLockService overlayService = StaticOverlayLockService(
       overlayGranted: overlayGranted,
     );
-    final KeyValueStore keyValueStore = InMemoryKeyValueStore();
-    final PreferencesStore preferences = PreferencesStoreImpl(keyValueStore);
+    final KeyValueStore kv = keyValueStore ?? InMemoryKeyValueStore();
+    final PreferencesStore preferences = PreferencesStoreImpl(kv);
     return AppContainer._(
-      keyValueStore: keyValueStore,
+      keyValueStore: kv,
       database: database ?? InMemoryLocalDatabase(),
       secretStore: secretStore ?? InMemorySecretStore(),
       installedAppsService: installedAppsService,

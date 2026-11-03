@@ -56,6 +56,14 @@ class SecurityRecommendation {
 /// produce an advisory hint the user can dismiss; it can never change how
 /// an app is locked.
 abstract final class SecurityRecommendations {
+  /// Phase 9 / M3: shown (Security Center and Apps tab) when "Don't suggest
+  /// again" could not be saved. The suggestion stays visible; nothing else
+  /// changed.
+  static const String dismissNotSavedMessage =
+      "Couldn't save your choice, so the suggestion is still shown. Nothing "
+      'was changed.';
+  static const String dismissRetryLabel = 'Try again';
+
   /// Reviewed exact package names (2026-11). Unknown apps get no hint.
   static const Map<String, SensitiveAppCategory> catalog =
       <String, SensitiveAppCategory>{

@@ -39,6 +39,13 @@ speed after leaving apps; no number while protection is offline, unknown,
 stale, unreadable or not set up; provisional while it needs attention;
 read-only) is implemented and simulated-tested; device QA joins the same
 combined round (`docs/regression.md`, Phase 9 / M2; not device verified,
+not release ready). Phase 9 / Milestone 3 (Recommended improvements: a
+Security Center card listing Phase 7 health problems first, then setup
+steps, then optional stricter levels for exact catalog apps and a shorter
+re-lock grace; advisory and read-only, nothing is applied automatically,
+dismissals never change the score and hide a suggestion only once saved;
+plus a score integrity review with no defect found) is implemented and simulated-tested; device QA joins the same
+combined round (`docs/regression.md`, Phase 9 / M3; not device verified,
 not release ready) — production scaffold, architecture, navigation, design
 system, persistence, secure storage, full authentication with settings,
 installed-apps management, the complete capability/permission layer,

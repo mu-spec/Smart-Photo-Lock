@@ -358,3 +358,31 @@ displays what already exists:
   again.
 - **Device behaviour is unverified** until the combined Phase 6–10 round
   (`docs/regression.md`, Phase 9 / M2).
+
+## Recommendation limits (Phase 9 / M3)
+
+- **Advisory only.** "Recommended improvements" lists what Smart App Lock
+  can observe or has saved: Phase 7 health problems, unfinished setup,
+  stricter levels for apps on the Phase 8 reviewed catalog, and a shorter
+  re-lock grace. Nothing is applied automatically; every change is made by
+  the user through the existing screens (lowering a level still asks for
+  the credential, CR-2).
+- **Only exact catalog packages.** Level suggestions come from the Phase 8
+  exact-package list (26 entries, some package names unverified). A wrong
+  entry can only produce a hint, never a change. Unprotected apps are never
+  suggested.
+- **No invented fixes.** Health items reuse the Phase 7 explanations and
+  repair paths. OEM battery managers and other controls Android does not
+  report stay unobservable; the calm state says so.
+- **Not a guarantee.** A shorter grace "would" reduce how long an app can
+  stay open after you leave it; the wording never promises protection.
+  Biometric and Battery Saver are never suggested.
+- **Dismissals** are local and bound to the suggestion (`package@level`,
+  re-lock value); they never change the score, a level or a setting. A
+  suggestion is hidden only after the dismissal is saved; if the save
+  fails, it stays visible with "Couldn't save your choice, so the
+  suggestion is still shown. Nothing was changed." and Try again (both the
+  Security Center and the Apps tab). If the saved dismissals cannot be
+  read, optional suggestions are withheld rather than repeated.
+- **Device behaviour is unverified** until the combined Phase 6–10 round
+  (`docs/regression.md`, Phase 9 / M3).

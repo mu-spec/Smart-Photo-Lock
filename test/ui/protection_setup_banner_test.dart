@@ -93,6 +93,26 @@ void main() {
         matching: find.text(text),
       );
 
+  /// Phase 9 / M3: an issue is named once in the Protection Health card and
+  /// once, as a recommendation, in Recommended improvements (exactly twice).
+  void expectIssueNamed(String text) {
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('security_center_health')),
+        matching: find.textContaining(text),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('security_center_recommendations')),
+        matching: find.textContaining(text),
+      ),
+      findsOneWidget,
+    );
+    expect(find.textContaining(text), findsNWidgets(2));
+  }
+
   Finder status(String title, String status) => find.descendant(
         of: find.ancestor(
           of: find.text(title),
@@ -235,7 +255,7 @@ void main() {
     await resumeFromSettings(tester);
 
     expect(inHealth(HealthPresentation.attentionTitle), findsOneWidget);
-    expect(find.text('Usage Access was turned off'), findsOneWidget);
+    expectIssueNamed('Usage Access was turned off');
     expect(status('Usage access', 'Recommended'), findsOneWidget);
     expectNoLegacyBanners();
   });
@@ -289,10 +309,7 @@ void main() {
     await resumeFromSettings(tester);
 
     expect(inHealth(HealthPresentation.offlineTitle), findsOneWidget);
-    expect(
-      find.textContaining('Display over other apps was turned off'),
-      findsOneWidget,
-    );
+    expectIssueNamed('Display over other apps was turned off');
     expect(inHealth(setupMessage), findsNothing);
     expect(status('Background lock shield', 'Required'), findsOneWidget);
     expectNoLegacyBanners();

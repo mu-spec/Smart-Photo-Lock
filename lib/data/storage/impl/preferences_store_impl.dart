@@ -63,15 +63,34 @@ class PreferencesStoreImpl implements PreferencesStore {
     return raw.split('\n').where((String k) => k.isNotEmpty).toSet();
   }
 
+  /// Completes only once the dismissal is saved; throws otherwise.
+  ///
+  /// Phase 9 / M3: on a failed save the previous value is written back
+  /// (best effort). Both `shared_preferences` and Android keep a value in
+  /// memory even when its disk write fails; without this, the unsaved
+  /// dismissal would still be read back in this process (or flushed by a
+  /// later write) and then reappear, or not, after a restart.
   @override
   Future<void> dismissSecurityRecommendation(String key) async {
     if (key.isEmpty || key.contains('\n')) return;
+    const String prefKey = AppPrefKeys.dismissedSecurityRecommendations;
+    final String? previous = await _store.getString(prefKey);
     final Set<String> keys = await getDismissedSecurityRecommendations();
     if (!keys.add(key)) return;
-    await _store.setString(
-      AppPrefKeys.dismissedSecurityRecommendations,
-      (keys.toList()..sort()).join('\n'),
-    );
+    try {
+      await _store.setString(prefKey, (keys.toList()..sort()).join('\n'));
+    } catch (_) {
+      try {
+        if (previous == null) {
+          await _store.remove(prefKey);
+        } else {
+          await _store.setString(prefKey, previous);
+        }
+      } catch (_) {
+        // The original failure is what the caller must see.
+      }
+      rethrow;
+    }
   }
 
   @override

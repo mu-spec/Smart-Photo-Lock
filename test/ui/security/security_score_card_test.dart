@@ -536,11 +536,16 @@ void main() {
         _inKey('sc_factor_health', find.text(_C.healthProblem)),
         findsOneWidget,
       );
-      // The problem is named once, in the Protection Health card.
+      // The problem is named in the Protection Health card and (Phase 9 /
+      // M3) once as a recommendation; never in the score card.
       expect(find.byKey(const Key('sc_top_issue')), findsOneWidget);
       final String issueTitle =
           tester.widget<Text>(find.byKey(const Key('sc_top_issue'))).data!;
-      expect(find.text(issueTitle), findsOneWidget);
+      expect(_inKey('security_center_health', find.text(issueTitle)),
+          findsOneWidget);
+      expect(_inKey('security_center_recommendations', find.text(issueTitle)),
+          findsOneWidget);
+      expect(find.text(issueTitle), findsNWidgets(2));
       expect(_inScore(find.textContaining(issueTitle)), findsNothing);
       expect(_inScore(find.text(_C.lowersHealth(60))), findsOneWidget);
       _expectHonestWording(tester);

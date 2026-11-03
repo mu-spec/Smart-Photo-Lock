@@ -7,6 +7,7 @@ import '../../../app/app_scope.dart';
 import '../../../app/router.dart';
 import '../../../data/models/app_security_level.dart';
 import '../../../data/models/protected_app.dart';
+import '../../../data/models/security_recommendation.dart';
 import '../../../design_system/design_system.dart';
 import '../../../protection/health/protection_health_engine.dart';
 import '../../../protection/health/protection_health_monitor.dart';
@@ -15,7 +16,9 @@ import '../../../utilities/result.dart';
 import '../health/health_presentation.dart';
 import '../health/health_resume_trigger.dart';
 import '../health/protection_health_controller.dart';
+import 'security_center_recommendations.dart';
 import 'security_center_summary.dart';
+import 'security_recommendations_card.dart';
 import 'security_score.dart';
 import 'security_score_card.dart';
 
@@ -40,6 +43,12 @@ import 'security_score_card.dart';
 ///    and the re-lock grace (`LockSettingsRepository.getGracePeriod`, read
 ///    together with the apps). It is recomputed on every build, so it can
 ///    never disagree with the cards. A failed read clears its inputs.
+///  * **Recommended improvements (Phase 9 / M3):**
+///    [SecurityCenterRecommendations.assess] over the SAME score inputs plus
+///    the dismissed-suggestion set (read in the same guarded load). Its
+///    buttons open existing screens (Health Details, Apps) or ask the
+///    Security tab to show an existing control ([onShowSetting]); "Don't
+///    suggest again" writes only the existing dismissal preference.
 ///
 /// Refresh is event driven only (no polling): when the Security tab first
 /// becomes visible, when it becomes visible again, when the app returns to
@@ -59,6 +68,7 @@ class SecurityCenterSection extends StatefulWidget {
     this.onNavigate,
     this.healthMonitor,
     this.settingsRevision = 0,
+    this.onShowSetting,
   });
 
   /// Whether the Security tab is the visible tab.
@@ -76,6 +86,10 @@ class SecurityCenterSection extends StatefulWidget {
   /// so the score's settings input is read again (event driven, no
   /// polling).
   final int settingsRevision;
+
+  /// Phase 9 / M3: asks the Security tab to scroll to one of its existing
+  /// controls (nothing is changed).
+  final ValueChanged<SecurityCenterTarget>? onShowSetting;
 
   static const String title = 'Security Center';
   static const String intro =
@@ -165,6 +179,15 @@ class _SecurityCenterSectionState extends State<SecurityCenterSection>
       const <String, AppSecurityLevel>{};
   _AppsLoad _graceLoad = _AppsLoad.loading;
   Duration? _grace;
+
+  /// Phase 9 / M3: dismissed suggestions (null = unreadable), plus the ones
+  /// whose dismissal was SAVED here this session (so an older read that
+  /// completes later cannot bring them back). Unsaved ones are never added.
+  Set<String>? _dismissed;
+  final Set<String> _sessionDismissed = <String>{};
+
+  /// Recommendation ids whose dismissal is being saved (no double taps).
+  final Set<String> _dismissing = <String>{};
   int _summaryGeneration = 0;
   bool _wasCurrent = true;
   bool _disposed = false;
@@ -245,6 +268,7 @@ class _SecurityCenterSectionState extends State<SecurityCenterSection>
         _appsLoad = _AppsLoad.failed;
         _grace = null;
         _graceLoad = _AppsLoad.failed;
+        _dismissed = null;
       });
       return;
     }
@@ -255,6 +279,7 @@ class _SecurityCenterSectionState extends State<SecurityCenterSection>
       setState(() => _graceLoad = _AppsLoad.loading);
     }
     final Future<Result<Duration>> graceRead = _readGrace(container);
+    final Future<Set<String>?> dismissedRead = _readDismissed(container);
     Result<List<ProtectedApp>> result;
     try {
       result = await container.protectedApps.getProtectedApps();
@@ -262,6 +287,7 @@ class _SecurityCenterSectionState extends State<SecurityCenterSection>
       result = Result.failure(e);
     }
     final Result<Duration> grace = await graceRead;
+    final Set<String>? dismissed = await dismissedRead;
     if (_disposed || generation != _summaryGeneration) return;
     final List<ProtectedApp>? apps = result.valueOrNull;
     setState(() {
@@ -287,6 +313,7 @@ class _SecurityCenterSectionState extends State<SecurityCenterSection>
         _grace = period;
         _graceLoad = _AppsLoad.loaded;
       }
+      _dismissed = dismissed;
     });
   }
 
@@ -313,6 +340,16 @@ class _SecurityCenterSectionState extends State<SecurityCenterSection>
     }
   }
 
+  /// Phase 9 / M3: the existing Phase 8 dismissal preference (advisory
+  /// state only); null when it cannot be read.
+  static Future<Set<String>?> _readDismissed(AppContainer container) async {
+    try {
+      return await container.preferences.getDismissedSecurityRecommendations();
+    } catch (_) {
+      return null;
+    }
+  }
+
   static ScoreSourceState _source(_AppsLoad load) => switch (load) {
         _AppsLoad.loading => ScoreSourceState.loading,
         _AppsLoad.loaded => ScoreSourceState.loaded,
@@ -321,17 +358,33 @@ class _SecurityCenterSectionState extends State<SecurityCenterSection>
 
   /// The Phase 9 / M2 assessment of the inputs shown right now.
   SecurityScoreAssessment _assessment(ProtectionHealthController? health) =>
-      SecurityScore.assess(
-        SecurityScoreInputs(
-          appsState: _source(_appsLoad),
-          apps: _apps,
-          nativeLevelFor: (String pkg) => _nativeLevels[pkg],
-          graceState: _source(_graceLoad),
-          grace: _grace,
-          health: health?.report,
-          healthChecking: health?.checking ?? false,
-          healthFailed: health?.failed ?? false,
-        ),
+      SecurityScore.assess(_scoreInputs(health));
+
+  /// Phase 9 / M3: recommendations over exactly the score's inputs.
+  RecommendationsAssessment _recommendations(
+    ProtectionHealthController? health,
+  ) {
+    final Set<String>? dismissed = _dismissed;
+    return SecurityCenterRecommendations.assess(
+      RecommendationInputs(
+        base: _scoreInputs(health),
+        dismissed: dismissed == null
+            ? null
+            : <String>{...dismissed, ..._sessionDismissed},
+      ),
+    );
+  }
+
+  SecurityScoreInputs _scoreInputs(ProtectionHealthController? health) =>
+      SecurityScoreInputs(
+        appsState: _source(_appsLoad),
+        apps: _apps,
+        nativeLevelFor: (String pkg) => _nativeLevels[pkg],
+        graceState: _source(_graceLoad),
+        grace: _grace,
+        health: health?.report,
+        healthChecking: health?.checking ?? false,
+        healthFailed: health?.failed ?? false,
       );
 
   void _onHealthChanged() {
@@ -348,6 +401,71 @@ class _SecurityCenterSectionState extends State<SecurityCenterSection>
   }
 
   void _openApps() => widget.onNavigate?.call(HealthPresentation.appsTab);
+
+  /// Phase 9 / M3: a recommendation's button. Navigation, a health refresh
+  /// or scrolling only; nothing is changed here.
+  void _onRecommendation(SecurityCenterRecommendation r) {
+    switch (r.action) {
+      case RecommendationAction.openHealthDetails:
+        unawaited(_openDetails());
+      case RecommendationAction.checkAgain:
+        unawaited(_health?.refresh(afterChange: true));
+      case RecommendationAction.openApps:
+        _openApps();
+      case RecommendationAction.showAuthentication:
+        widget.onShowSetting?.call(SecurityCenterTarget.authentication);
+      case RecommendationAction.showRelock:
+        widget.onShowSetting?.call(SecurityCenterTarget.relock);
+    }
+  }
+
+  /// Phase 9 / M3: "Don't suggest again" (optional items only), through the
+  /// existing advisory preference shared with the Apps tab.
+  ///
+  /// Not optimistic: a suggestion is hidden only after its key is saved, so
+  /// what is hidden stays hidden after a restart. If a save fails, the
+  /// suggestion stays visible (keys saved before the failure stay hidden)
+  /// and a message says so, with Try again. Dismissals are not a score
+  /// input and never touch a level, a setting or native enforcement.
+  Future<void> _dismissRecommendation(SecurityCenterRecommendation r) async {
+    if (_disposed || !r.dismissible || !_dismissing.add(r.id)) return;
+    final AppContainer? container = AppScope.read(context);
+    final ScaffoldMessengerState? messenger =
+        ScaffoldMessenger.maybeOf(context);
+    final List<String> saved = <String>[];
+    bool failed = container == null;
+    if (container != null) {
+      for (final String key in r.dismissalKeys) {
+        try {
+          await container.preferences.dismissSecurityRecommendation(key);
+          saved.add(key);
+        } catch (_) {
+          failed = true;
+          break;
+        }
+      }
+    }
+    _dismissing.remove(r.id);
+    if (_disposed) return;
+    if (saved.isNotEmpty) setState(() => _sessionDismissed.addAll(saved));
+    messenger
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(
+        failed
+            ? SnackBar(
+                content: const Text(
+                  SecurityRecommendations.dismissNotSavedMessage,
+                ),
+                action: SnackBarAction(
+                  label: SecurityRecommendations.dismissRetryLabel,
+                  onPressed: () => unawaited(_dismissRecommendation(r)),
+                ),
+              )
+            : const SnackBar(
+                content: Text(SecurityRecommendationsCard.dismissedMessage),
+              ),
+      );
+  }
 
   @override
   void dispose() {
@@ -419,10 +537,24 @@ class _SecurityCenterSectionState extends State<SecurityCenterSection>
             onOpenDetails: (health?.available ?? false) ? _openDetails : null,
           ),
         ],
+        const SizedBox(height: DsSpacing.lg),
+        SecurityRecommendationsCard(
+          assessment: _recommendations(health),
+          onAction: _onRecommendation,
+          onDismiss: (SecurityCenterRecommendation r) =>
+              unawaited(_dismissRecommendation(r)),
+          onRetry: () => unawaited(_loadSummary()),
+          onCheckAgain: (health?.available ?? false)
+              ? () => unawaited(health!.refresh(afterChange: true))
+              : null,
+        ),
       ],
     );
   }
 }
+
+/// Phase 9 / M3: existing Security tab controls a recommendation can show.
+enum SecurityCenterTarget { authentication, relock }
 
 /// Phase 7 status banner, the same rules as Home's PROTECTION STATUS card.
 class _HealthCard extends StatelessWidget {

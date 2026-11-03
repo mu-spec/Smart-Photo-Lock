@@ -66,6 +66,26 @@ void main() {
         matching: find.text(text),
       );
 
+  /// Phase 9 / M3: an issue is named once in the Protection Health card and
+  /// once, as a recommendation, in Recommended improvements (exactly twice).
+  void expectIssueNamed(String text) {
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('security_center_health')),
+        matching: find.textContaining(text),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('security_center_recommendations')),
+        matching: find.textContaining(text),
+      ),
+      findsOneWidget,
+    );
+    expect(find.textContaining(text), findsNWidgets(2));
+  }
+
   Finder permissionsBadge() => find.byWidgetPredicate(
         (Widget w) => w is DsDotBadge && w.show,
       );
@@ -103,7 +123,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(inHealth(HealthPresentation.offlineTitle), findsOneWidget);
-    expect(find.textContaining(overlayTurnedOff), findsOneWidget);
+    expectIssueNamed(overlayTurnedOff);
     expect(
       find.descendant(
         of: find.byKey(const Key('security_center_health')),
@@ -160,7 +180,7 @@ void main() {
 
     await openSecurity(tester);
     expect(inHealth(HealthPresentation.offlineTitle), findsOneWidget);
-    expect(find.textContaining(overlayTurnedOff), findsOneWidget);
+    expectIssueNamed(overlayTurnedOff);
     expect(permissionsBadge(), findsOneWidget);
 
     await container.capabilityMonitor.dispose();

@@ -33,12 +33,12 @@ class _MainShellState extends State<MainShell> {
     'Settings',
   ];
 
-  // Rebuilt with the shell so Home (Phase 7 / M2) and the Security Center
-  // (Phase 9 / M1) learn when their tab becomes visible. Same types and
-  // order keep every tab's state.
+  // Rebuilt with the shell so Home (Phase 7 / M2), the Security Center
+  // (Phase 9 / M1) and Apps (Phase 9 / M3: dismissed suggestions) learn when
+  // their tab becomes visible. Same types and order keep every tab's state.
   List<Widget> get _screens => <Widget>[
         HomeScreen(onNavigate: _selectTab, isActive: _selectedIndex == 0),
-        const AppsScreen(),
+        AppsScreen(isActive: _selectedIndex == 1),
         const SmartScreen(),
         SecurityScreen(onNavigate: _selectTab, isActive: _selectedIndex == 3),
         const SettingsScreen(),
