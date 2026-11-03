@@ -3017,3 +3017,171 @@ Recommendations are advisory. Nothing in M3 authorizes, unlocks, creates or
 extends grace, clears a challenge or ticket, resets lockout, changes a
 level, protects an app or runs the CR-2 sync. Phase 5 H-2, Phase 6, Phase 7
 classification and Phase 8 enforcement are unchanged.
+
+## Phase 10 / M1 — Smart Rules: rule model, evaluation engine & conditions
+
+PRD 10A–10E. **Configuration only.** M1 adds a rule model, one pure
+evaluator and configuration storage. There is no rule UI, and nothing in
+the app reads, evaluates or applies saved rules: no consumer exists until
+the M2 security-level action is separately designed and approved. The
+saved baseline policy (protected set, Phase 8 levels, grace) stays the only
+thing that decides protection.
+
+### Existing scaffolding (kept, not reused)
+
+Phase 1 left `lib/rules/lock_rule.dart` and `rule_engine.dart`, the
+`lock_rules` SQLite table and `LockSettingsRepository.get/saveRules`.
+No production path uses them (only Phase 1 tests). `LockRule` targets one
+package and treats `packageName == null` as **every app**, and `RuleEngine`
+reads `DateTime.now()` itself. Both contradict 10E and 10B, so the new
+model is separate and never reads or writes them. They are left unchanged
+(no unrelated refactor); whether to remove them is a review question.
+
+### Model (`lib/rules/smart_rule.dart`)
+
+| Field | Rule |
+| --- | --- |
+| `id` | 1–64 of `A-Z a-z 0-9 _ -`, starting with a letter or digit; stable; unique in the set (the repository upserts by id; a stored duplicate is corrupt) |
+| `name` | trimmed at input; not blank; ≤ 80 characters; no control characters |
+| `enabled` | explicit; disabling keeps the rule (never a deletion) |
+| `targetPackages` | ≥ 1; each an Android package name (two or more dot-separated segments, each a letter then letters, digits or `_`; ≤ 255); exact and case-sensitive, never trimmed, lower-cased or rewritten, so distinct ids are never merged; duplicates removed; sorted. **Empty is rejected and never means all apps** |
+| `days` | ≥ 1 of 1..7 with Monday = 1 … Sunday = 7 (`DateTime.weekday`; no locale "first day of week"); duplicates removed; sorted |
+| `time` | `SmartRuleTime.allDay()` or `SmartRuleTime.window(startMinute, endMinute)`, minutes 0..1439, `start != end` |
+
+`SmartRule` is immutable (unmodifiable lists, private constructor), and
+`copyWith` re-validates and never changes the id. Equality covers every
+field, and equal rules serialize identically. No timestamps: nothing in M1
+needs them, and reading a clock would make the model non-deterministic.
+There is no action field: M2 adds one with a schema bump rather than an
+invented placeholder now. Invalid input throws `SmartRuleFormatException`
+naming the field.
+
+### Time and day semantics (10C, 10D)
+
+- **Boundaries:** start inclusive, end exclusive, on whole local minutes.
+  For 09:00–17:00: 09:00:00.000 matches, 16:59:59.999 matches, 17:00 does
+  not. Seconds and milliseconds are truncated.
+- **Zero length** (`start == end`) is rejected at construction, so it can
+  never become "all day" or "always". All day is its own explicit value
+  (00:00 up to the next 00:00 of a selected day).
+- **Cross midnight** (`start > end`, e.g. 22:00–06:00): the part after
+  midnight belongs to the day the window **started** (the owner day). A
+  Monday-only 22:00–06:00 rule matches Monday 23:00 and Tuesday 02:00 (owner
+  Monday), not Tuesday 06:00, and not Tuesday 23:00 unless Tuesday is
+  selected. Monday 02:00 belongs to Sunday's window. The previous day of
+  Monday is Sunday (week rollover), and month and year boundaries need
+  nothing special.
+
+### Evaluator (`lib/rules/smart_rule_evaluator.dart`, 10B)
+
+`SmartRuleEvaluator().evaluate(rule, appPackage, localDateTime)` returns an
+immutable `SmartRuleEvaluation`:
+
+| Outcome | Reasons |
+| --- | --- |
+| `match` | `matched`: enabled AND exact target AND inside the window AND owner day selected |
+| `noMatch` | the first failing check, in order: `ruleDisabled`, `appNotTargeted`, `outsideTimeWindow`, `dayNotSelected` |
+| `invalidInput` | `invalidAppPackage` (blank or malformed), `nonLocalTime` (a UTC `DateTime`) |
+
+Callers must treat `invalidInput` like `noMatch`: invalid input never makes
+a rule apply and never allows access. The record also carries the weekday,
+minute of day, time segment (`allDay`, `sameDay`, `overnightBeforeMidnight`,
+`overnightAfterMidnight`, `none`), owner day and each condition flag (`null`
+when not evaluated). That is enough for M3 diagnostics; there is no
+diagnostics screen.
+
+**Time-zone policy:** the caller passes a LOCAL `DateTime` (the device wall
+clock at the call site). Its weekday, hour and minute are read as-is and
+nothing is converted. UTC is rejected rather than shifted. Travel or a
+time-zone change follows the device's current wall clock. On a DST change
+the skipped hour never occurs and a repeated hour is evaluated by its wall
+time (Pakistan has no DST; recorded for completeness).
+
+The evaluator does no I/O, reads no clock, keeps no state and starts no
+timer. It never changes a level, grants authorization, or touches a
+challenge, ticket, grace session or lockout. It is not an authorization
+engine: `DefaultAccessController` and the native policy are unchanged.
+
+### Storage (`SmartRuleRepository`, `SmartRuleDocument`)
+
+**Choice:** the existing `LocalDatabase` `security_settings` key-value
+table, one row with key `smart_rules` holding one JSON document. No SQLite
+migration (schema stays v2), no new dependency, no preferences tier (whose
+cache semantics caused the Phase 9 / M3 defect). Each change rewrites the
+document in one single-row `INSERT OR REPLACE`, which is atomic, so a rule
+set is never half-written. The value is plain JSON, like `protected_apps`:
+rules hold no secret.
+
+**Format (schema v1):** `{"schema":"smart_rules","version":1,"rules":[…]}`;
+each rule `{"id","name","enabled","targets":[…],"days":[…],"time":{"type":"allDay"}}`
+or `"time":{"type":"window","start":540,"end":1020}`. The key order is
+fixed and lists are sorted, so encoding is deterministic.
+
+**Decoding is strict and all-or-nothing.** Any invalid JSON, wrong schema
+name, unknown or missing field, wrong type, invalid rule, non-canonical
+value (untrimmed name, unsorted or duplicated packages or days) or
+duplicate id makes the whole document **corrupt**. There is no partial list
+and no repaired rule, and a corrupt document is never replaced by "no
+rules". A version above 1 is **unsupportedVersion** (written by a newer
+build). A version below 1, or a missing version, is corrupt.
+
+**Migration expectations:** a future schema bumps `currentVersion` and adds
+an explicit vN → vN+1 decode path. An older build meeting a newer document
+reports `unsupportedVersion`, keeps it and refuses every write.
+
+**Repository** (`SmartRuleRepositoryImpl`, wired as `AppContainer.smartRules`;
+constructed only, never read or written at startup):
+
+- `getRules`, `saveRule` (upsert by id; new rules appended, replaced rules
+  keep their position; an identical save writes nothing), `deleteRule`,
+  `setRuleEnabled`. These are configuration writes, not rule actions.
+- Errors are `Result.failure(SmartRuleStoreException(kind))` with kind
+  `storageUnavailable`, `corrupt`, `unsupportedVersion`, `writeFailed` or
+  `notFound`.
+- **No cache:** every operation reads the stored document first, so no
+  unsaved state is ever held in memory.
+- **Writes** are refused while the document is corrupt, unsupported or
+  unreadable. Each write is confirmed by reading it back. On any failure
+  the previous value is restored (or the key removed when there was none)
+  as a best effort, and `writeFailed` is returned with the original error.
+  This reuses the Phase 9 / M3 dismissal rollback, because a store may keep
+  a failed value. A failed write is never reported as saved.
+- Operations on one instance run one at a time (no lost update).
+- Only the `smart_rules` key is touched. No protected-app, level, grace,
+  authorization, watcher or native call is reachable.
+- Recovering from a corrupt document (for example an explicit "reset rules"
+  with confirmation) is left to M2. M1 only refuses to overwrite it.
+
+### Boundary
+
+No Smart tab change: it is still the Phase 1 placeholder and never shows a
+rule or an "active" state. No schedules, timers, alarms, services,
+Accessibility hooks, polling, native writes, manifest, permission or SDK
+changes. Phase 5 H-2, Phase 6 bypass protections, Phase 7 health, Phase 8
+levels and enforcement, and the Phase 9 Security Center, score and
+recommendations are unchanged and do not read rules. M3 precedence
+(Critical > Sensitive > Standard > Unlocked) is not implemented.
+
+### Review decisions (M1 approval)
+
+- The legacy Phase 1 `LockRule` / `RuleEngine` code stays unchanged for now.
+  It is not wired into production and is not reused by Smart Rules.
+- Storage stays as one versioned JSON document in `security_settings`, with no
+  database migration.
+- The explicit local wall-clock evaluation contract stays as described above.
+- **Known limitation, kept for future review:** target package names must have
+  two or more dot-separated segments. Single-segment names, most notably the
+  system framework package `android`, are rejected and cannot be targeted.
+  Normal installable apps use dotted package names. This was not changed in M1.
+- None of these points widens the M1 scope.
+
+### Mandatory prerequisites for M2 (rule actions)
+
+- Rule actions must not silently weaken saved protection.
+- CR-2 authorization and the integrity of persisted rules must be designed
+  explicitly. The rule document is plaintext at rest, so stored data on its
+  own must never be able to relax protection.
+- Handling of clock and timezone manipulation must be defined before any live
+  enforcement is enabled.
+- Critical and Sensitive guarantees and the existing native authorization
+  rules must be preserved.

@@ -7,10 +7,12 @@ import '../data/repositories/impl/installed_apps_repository_impl.dart';
 import '../data/repositories/impl/lock_settings_repository_impl.dart';
 import '../data/repositories/impl/protected_apps_repository_impl.dart';
 import '../data/repositories/impl/security_settings_repository_impl.dart';
+import '../data/repositories/impl/smart_rule_repository_impl.dart';
 import '../data/repositories/installed_apps_repository.dart';
 import '../data/repositories/lock_settings_repository.dart';
 import '../data/repositories/protected_apps_repository.dart';
 import '../data/repositories/security_settings_repository.dart';
+import '../data/repositories/smart_rule_repository.dart';
 import '../data/storage/impl/in_memory_key_value_store.dart';
 import '../data/storage/impl/in_memory_local_database.dart';
 import '../data/storage/impl/preferences_store_impl.dart';
@@ -95,6 +97,9 @@ class AppContainer {
       cipher: settingsCipher,
     );
     lockSettings = LockSettingsRepositoryImpl(_database);
+    // Phase 10 / M1: Smart Rules configuration storage only. Constructed,
+    // never read or written at startup; nothing evaluates or applies rules.
+    smartRules = SmartRuleRepositoryImpl(_database);
     // Installed-apps discovery (Phase 3A): repository over the platform
     // service. The service instance is shared — no screen ever creates
     // its own.
@@ -310,6 +315,9 @@ class AppContainer {
 
   /// Lock profiles and rules.
   late final LockSettingsRepository lockSettings;
+
+  /// Phase 10 / M1: Smart Rules (configuration only; no rule actions).
+  late final SmartRuleRepository smartRules;
 
   /// Credential lifecycle (Phase 2A): enroll / status / authenticate /
   /// clear for PIN, pattern and biometric.

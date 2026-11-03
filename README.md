@@ -46,7 +46,16 @@ re-lock grace; advisory and read-only, nothing is applied automatically,
 dismissals never change the score and hide a suggestion only once saved;
 plus a score integrity review with no defect found) is implemented and simulated-tested; device QA joins the same
 combined round (`docs/regression.md`, Phase 9 / M3; not device verified,
-not release ready) — production scaffold, architecture, navigation, design
+not release ready). Phase 10 / Milestone 1 (Smart Rules foundation: an
+immutable rule model with a name, enabled state, exact target apps,
+selected weekdays and a local time window or explicit all day; one pure
+evaluator returning match / no match / invalid input with a reason; and
+versioned configuration storage that never reports a failed write as
+saved) is implemented and simulated-tested. It is **configuration only**:
+there is no rule UI and nothing reads or applies rules yet (actions are
+M2), so protection is unchanged; device QA joins the same combined round
+(`docs/regression.md`, Phase 10 / M1; not device verified, not release
+ready) — production scaffold, architecture, navigation, design
 system, persistence, secure storage, full authentication with settings,
 installed-apps management, the complete capability/permission layer,
 and the **core lock engine**: foreground detection (usage-stats +
@@ -533,8 +542,11 @@ lib/
 │   ├── access_controller.dart# AccessDecision: allow / challenge / deny
 │   └── lock_session.dart     # temporary unlock window model (working)
 ├── rules/                    # lock rule model + evaluation (working)
-│   ├── lock_rule.dart        # always / timeWindow / launchLimit
-│   └── rule_engine.dart      # pure shouldLock(...) decision logic
+│   ├── lock_rule.dart        # Phase 1 scaffold (unused by production)
+│   ├── rule_engine.dart      # Phase 1 scaffold (unused by production)
+│   ├── smart_rule.dart       # Phase 10 / M1 Smart Rule model (10A, 10C–10E)
+│   ├── smart_rule_document.dart  # versioned JSON document (schema v1)
+│   └── smart_rule_evaluator.dart # pure evaluator + reasons (10B)
 ├── profiles/                 # lock profiles
 │   ├── lock_profile.dart     # named package sets ("Kids mode", ...)
 │   └── profile_manager.dart  # CRUD + activation contract

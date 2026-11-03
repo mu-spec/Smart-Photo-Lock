@@ -386,3 +386,23 @@ displays what already exists:
   read, optional suggestions are withheld rather than repeated.
 - **Device behaviour is unverified** until the combined Phase 6–10 round
   (`docs/regression.md`, Phase 9 / M3).
+
+## Smart Rules limits (Phase 10 / M1)
+
+- **Nothing is enforced yet.** M1 stores and evaluates rules, but no part of
+  the app reads or applies them: protection is decided only by the saved
+  protected apps, their levels and the grace period. The Smart tab is
+  still a placeholder. Rule actions arrive in M2.
+- **Local wall-clock time.** Rules follow the device's current local time
+  and weekday (Monday = 1). Changing the device clock or time zone changes
+  what a rule would match; in M1 that has no effect on protection.
+- **Exact apps only.** A rule names exact package names. An empty selection
+  is invalid (never "all apps"), and there is no category or name matching.
+  Unprotecting or uninstalling an app neither changes a rule nor
+  protects the app.
+- **Fails closed.** Invalid input never matches. Unreadable or corrupt
+  saved rules are reported as unreadable (never as "no rules"), kept as-is
+  and never overwritten; a failed save is never reported as saved.
+- **Device behaviour is unverified** until the combined Phase 6–10 round.
+  Rule persistence, clock boundaries and corrupt-data handling on a device
+  need a harness or the M2 UI (`docs/regression.md`, Phase 10 / M1).

@@ -2690,3 +2690,82 @@ installed catalog app) and RC10 are recorded. The full plan copy is
 **Status:** implemented and simulated-tested. It is **not device verified**
 (the combined Phase 6–10 round is deferred, not waived) and **not release
 ready** until that round passes, including E13, F3 and biometric.
+
+# Phase 10 / M1 — Smart Rules: rule model, evaluation engine & conditions
+
+## Automated evidence (Phase 10 / M1)
+
+All results are **SIMULATED**: production model, codec, evaluator and
+repository code; storage faults injected at the `LocalDatabase` boundary;
+the app suites run over the container's in-memory stores and static
+platform services. No device, real SQLite file, native watcher or OEM
+behaviour is observed.
+
+| Suite | Tests | Covers (brief items) |
+| --- | --- | --- |
+| `test/rules/smart_rule_model_test.dart` (new) | 26 | 1 valid construction (fields, default enabled, unmodifiable lists, trimmed name, id grammar, equality/hashCode on every field, copyWith keeps the id and re-validates); 2 invalid names (blank, whitespace, > 80, control characters; Unicode allowed); 3 empty target set rejected (never "all apps"), 15 malformed package forms rejected and never rewritten; 4 exact de-duplication, sorting, case-distinct ids never merged; 5 invalid weekdays and the Monday = 1 … Sunday = 7 mapping (`previous(1) == 7`); 6 empty days rejected, duplicates normalized; 7 minutes outside 0..1439 and zero-length windows rejected, all day explicit; 8 deterministic rule and document round trips, exact v1 document text, duplicate ids refused; 9 newer version → unsupported (version kept), never-written versions → corrupt; 10 broken JSON and wrong shapes, 23 invalid or non-canonical rules each making the whole document corrupt, duplicate stored ids |
+| `test/rules/smart_rule_evaluator_test.dart` (new) | 33 | 11 match with full diagnostics; 12 disabled never matches and is reported first; 13 non-target, no substring/prefix/suffix/case matching, multiple targets; 14 malformed package and UTC instant → invalidInput with no condition evaluated, distinct from noMatch; 15–17 09:00–17:00 boundaries to the millisecond, midnight, windows at 00:00 and 23:59; 18–19 22:00–06:00 both sides of midnight, the PRD Monday example (Tue 02:00 owner Monday; Tue 06:00 and Tue 23:00 no match; Mon 02:00 owner Sunday); 20 Sunday → Monday rollover, month/year boundary; 21 weekdays, weekend, non-contiguous days, Friday-night carry into Saturday; 22 explicit all day; 23 zero-length windows impossible, a one-minute window; 24 repeated evaluation equal, plus an exhaustive 7 × 1440-minute sweep of three rules against an independent reference implementation; 25 inputs unchanged, no clock read (1999/2099 dates) |
+| `test/data/smart_rule_repository_test.dart` (new) | 21 | Settings stored in a real temp file, so a restart is a new database plus a new repository. 26 save/read in order, v1 document under one key; 27 upsert in place, identical save writes nothing, concurrent operations serialized; 28 delete, unknown id → notFound with no write; 29 enabled state survives restart, re-enable; 30 failure before storing, a write that lands then fails (rolled back), first-ever write rolled back by removing the key, success reported but not stored (read-back catches it), failing rollback still surfaces the original error, recovery on the next write; 31 storage unavailable: reads fail, every write refused with no write; 32 broken JSON, one invalid rule among valid ones, newer version: read fails (never an empty list), every write refused, bytes unchanged, also from a fresh instance; 33 every operation visible after restart; 34 through `AppContainer`: only the `smart_rules` key is written, watcher counters, policies and authorizations unchanged, level, grace and legacy rules unchanged |
+| `test/regression/smart_rules_m1_regression_test.dart` (new) | 4 | 35 five-tab navigation, the Smart tab still the placeholder, a saved rule never shown, zero reads of the rule key at startup and on every tab; 36 Standard/Sensitive/Critical stored and simulated-native levels, watcher counters and a full re-sync unchanged by a saved, matching, enabled rule; 37 Phase 9 score and recommendation keys identical with saved rules, before and after a restart; 38 a pending PIN challenge stays on top through rule saves, disable, delete and evaluation; a wrong PIN is refused and only the exact PIN grants |
+| Existing suites (P1–P9) | unchanged, all pass | including the Phase 1 `LockRule`/`RuleEngine` tests (scaffolding untouched) |
+
+**Totals:**
+- **Full Flutter:** **+1543, all passed**, EXIT 0, no skips or reruns
+  (1459 Phase 9 / M3 baseline + 84 new: 26 + 33 + 21 + 4).
+- **New suites, first run:** **+84, all passed**. The only earlier failure
+  was a compile error caught by `flutter analyze` before any test ran (a
+  test helper typed `Matcher` instead of `TypeMatcher`, so `.having` was
+  undefined), fixed in the test.
+- **Static checks:** `flutter analyze` clean; scoped `dart format` on the
+  10 new or changed Dart files (4 reformatted before the full run, then 0
+  changed); `git diff --check` clean.
+- **Native:** nothing under `android/`, `ios/` or `pubspec*` changed, so
+  Kotlin JVM and typecheck were not rerun (P8 M3 baseline: 306, exit 0).
+
+**Targeted mutation checks: 30/30 killed** (`Phase10_M1/run_m1_mutations.py`,
+outside the repo; each mutant is run against the M1 suites only; compile
+errors are reported separately (none); restoration verified byte-identical):
+- **off-by-one boundaries (7/7):** same-day start exclusive or end
+  inclusive; overnight start exclusive or end inclusive; zero-length window
+  allowed; seconds rounded up; minute 1440 accepted;
+- **overnight owner day (2/2):** after-midnight part owned by the current
+  day; day condition ignored;
+- **weekday mapping (3/3):** Monday's previous day 0; day 0 accepted;
+  Sunday = 0 convention;
+- **exact targets (5/5):** prefix match; case-insensitive match; empty
+  target set accepted; malformed evaluated package not rejected; package
+  ids trimmed;
+- **disabled bypass (2/2):** disabled rule matches; enabled state not
+  persisted;
+- **failed write rollback (4/4):** no rollback; failure reported as
+  success; no read-back confirmation; operations not serialized;
+- **corrupt serialization (6/6):** corrupt read as empty; invalid rules
+  skipped; newer version reported as corrupt; non-canonical days accepted;
+  unknown fields accepted; duplicate ids accepted;
+- **time-zone policy (1/1):** UTC accepted.
+
+Not covered automatically: the real SQLite file and plugin (the repository
+test uses a file-backed fake of the `LocalDatabase` boundary), a real
+process death, device clock and time-zone changes, and every device or OEM
+behaviour.
+
+## Phase 10 / M1 device QA (adds to the consolidated plan; not executed)
+
+Session 1h of the consolidated round (Oppo A9, after Session 1g), updating
+the Session 1g build in place (`adb install -r`). M1 has no rule UI, so on a
+device it must be invisible:
+
+| Step | Check | Expected |
+| --- | --- | --- |
+| RS1 In-place update | Note levels, score, recommendations, grace; update; reopen. | Everything identical (score **90**, A/B/C levels, grace 30 s, dismissals); no crash; schema unchanged. |
+| RS2 Smart tab | Visit every tab, then Smart again. | Same placeholder; no rule, toggle, "active" or "enforcing" wording. |
+| RS3 No enforcement change | A, B, C leave/return as in Session 1c. | A within 30 s no challenge; B after 15 s; C every return. |
+| RS4 No challenge interruption | C challenge → Home → Smart tab → C. | Challenge re-presents; only the exact PIN opens C, once. |
+| RS5–RS9 | Saved rule across a real restart; Wed 08:59/09:00/16:59/17:00; Sun 22:00–06:00 at Sun 23:00, Mon 01:00, Mon 06:00, Mon 23:00; target vs look-alike; rejected and corrupt rules. | **HARNESS: DEFERRED, not waived** until the M2 UI or an approved debug harness exists. Expected values are in the consolidated plan. |
+
+Release blockers: RS1, RS3, RS4. RS5–RS9 must pass before Phase 10 is
+called complete. F3, biometric, E13, Q6 and the combined Phase 6–10 round
+remain open.
+
+**Status:** implemented and simulated-tested. It is **not device verified**
+and **not release ready**.
