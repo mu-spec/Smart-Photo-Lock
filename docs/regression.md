@@ -2275,3 +2275,111 @@ Minimum acceptance: E1, E2, E4–E7, E9–E12,
 E14, E15 on the Oppo. Release blockers: E4, E6, E7, E10, E11, E12. Record
 E3, E8, E13 and E17; run E16 with the Phase 7 set. F3 and biometric remain
 UNVERIFIED; H-2 is not reopened.
+
+
+# Phase 8 / M3 — Security Level QA & Regression
+
+PRD v2.1, Phase 8 / Milestone 3 (8G). The user's brief cites "v2.0 / 8G";
+the uploaded file is v2.1, and its M3 text is the reference. Baseline:
+`75040cb` (Phase 8 M1 + M2). M3 adds **tests and documentation only**. No
+production code changed and no defect was found. Every result below is
+automated and **SIMULATED**: production Dart and Kotlin logic driven by a
+controllable clock, in-memory stores, the static native fake and a fake
+`SharedPreferences` with AOSP commit semantics. None of it is device
+evidence.
+
+## 8G coverage matrix (G = 30 s configured grace, W = 2 min requested window)
+
+| Scenario | Standard | Sensitive | Critical | Automated evidence | Device step |
+| --- | --- | --- | --- | --- | --- |
+| Initial access | challenge | challenge | challenge | K1, D1 | E1, E2, E4 |
+| Same foreground, observed every 20 s for 5 min | usable, no loop | usable, no loop | usable, no loop | K1, D1 | E5, E3 |
+| Leave → return at 1 / 10 / 20 / 31 s | allow / allow / allow / challenge | allow / allow / challenge / challenge | challenge every time | K1, D1 | E1, E2, E4, Q1, Q4 |
+| Recents / System UI / own UI / another protected app | as leaving | as leaving | challenge | K1, D1 (System UI) | E4, E6, Q4 |
+| Screen off/on | challenge | challenge | challenge | K1 (the screen-off revoke-all), D1 | E7, S9.1, Q4 |
+| Window expiry (W − 1 ms / W) | allow / challenge (2 min) | allow / challenge (1 min) | allow / challenge (1 min) | K1, D1 | E3 |
+| Watcher interruption / restart | challenge | challenge | challenge | K1 (`WatcherTeardownPolicy`), D1 (new engine) | step 8, Q5 |
+| Process death | challenge; level kept | challenge; level kept | challenge; level kept | K2, D1 (new container, same database) | E12 |
+| Missing / unknown foreground or level | no re-admission, authorization not kept; unreadable level → Critical | same | same | K1, K3, M2 Dart suite | E17 (record) |
+
+K = `SecurityLevelQaMatrixTest.kt`, D = Dart M3 tests (table below).
+Critical keeps the current interaction usable. It never re-shows the
+challenge over an authenticated session.
+
+## Automated evidence (Phase 8 / M3)
+
+| Suite | Tests | Evidence level | Covers |
+| --- | --- | --- | --- |
+| K: `android/.../SecurityLevelQaMatrixTest.kt` (new, JVM) | 10 | production Kotlin (`ProtectionAccessState`, `SecurityLevelPolicy`, `PolicySnapshotResolver`, `SecurityLevelStoreCodec`, `SnapshotOrderGate`, `ProtectionStateStore`, `WatcherTeardownPolicy`) over a fake `Context` / `SharedPreferences`; `WatcherService.authorizePackage` order pinned by a source contract | K1: level × scenario matrix. K2: process death → fail-closed, each persisted level kept. K3: damaged or unknown level state → Critical. All six transitions: upgrades apply at once; downgrades are held without acknowledgement. Reordered, replayed or new-session snapshots cannot weaken or authorize, and never clear a protected ticket. Unlock-level binding: stricter of store and floor; a missing field cannot grant; malformed → Critical; the floor is used only after the exact-ticket gate. Store integrity table: legacy → Standard; versionless map, missing entry or unknown version → Critical. Failed upgrade + process death: last durable (weaker) level, no surviving authorization; a fresh unlock that carries the Dart level gets no grace and a 1-minute window; the next sync makes the upgrade durable |
+| D1: `test/protection/security_level_qa_matrix_test.dart` (new) | 36 (12 per level) | production controller, matcher, policy, repository and bootstrap over an in-memory database, simulated native and a controllable clock | the matrix rows above per level; a still-held stricter native level stays effective after a lower save without confirmation; a credential lockout denies at every level |
+| D2: `test/ui/security_level_qa_m3_test.dart` (new) | 13 | widgets + production Apps screen, level sheet, CR-2 gate, credential manager (real attempts and lockout), repository and bootstrap over simulated services | all six transitions. Upgrades: no PIN, old grace and session end, nothing acknowledged. Downgrades: the PIN screen titled "Confirm to lower the security level", acknowledged only for that app. In every transition: the pending ticket and generation are kept, no native authorization or grace change, and Dart's re-lock level equals native's. Each downgrade cancelled: nothing written or sent. Lockout during a downgrade: unchanged, and the lockout is shared (evaluate denies). Proof: single-use across lowering and unprotecting, package-scoped, a backwards clock refused. Recommendations: no hint at or above the suggestion, for unlisted apps or for unprotected listed apps; no network path (self-contained catalog, exact dependency set, no INTERNET permission, no HTTP/socket client in `lib/`) |
+| Existing suites (P5 PIN/pattern/lockout/H-2, P6 entry/recents/recovery, P7 health/dashboard/refresh, P8 M1/M2) | unchanged, all pass | as before | cross-phase regression (8G §5) |
+
+**Totals:**
+- Kotlin JVM: 306 (296 + 10).
+- Full Flutter: +1312 (1263 + 36 + 13), passed with no reruns.
+- Typecheck of the native sources: exit 0 (79 classes).
+- `flutter analyze`: clean.
+
+**Targeted mutation checks: 10/10 killed** (`Phase8_M3/run_m3_mutations.py`,
+outside the repo; each mutant run against the new M3 tests only):
+- Critical keeps grace;
+- Sensitive grace not capped;
+- strict window not capped;
+- native floor ignored by the controller;
+- lowering or unprotecting does not consume the proof (the unprotect mutant
+  first survived because a repository check masked it; the test now asserts
+  refusal by the proof itself);
+- downgrade skips the PIN;
+- a non-stricter suggestion is shown;
+- the native unlock floor is ignored;
+- a malformed unlock level is permissive.
+
+**Observational limits (documented, not regressions):**
+- Levels act only on transitions Android reports.
+- Native authorizations are revoked on screen off, watcher teardown, stop
+  and emergency exit. The Accessibility service's unbind does **not**
+  revoke, so transitions while Accessibility is disconnected are not
+  observed (Q6 records it).
+- Window expiry stays event-driven (H-2).
+- After a failed upgrade write plus process death, native reads the last
+  durable (weaker) level until the next successful sync. No authorization
+  survives, and every unlock from this build sends the level Dart enforces
+  (pinned by `host_auth_binding_test`). E13 stays a release gate.
+
+Not covered automatically: real `SharedPreferences` durability, OEM
+foreground events, real Accessibility / Usage Access delivery, the real
+`WatcherService` and `AccessibilityLockService` (not JVM-compilable;
+source-contract and typecheck only).
+
+## Phase 8 / M3 device QA (adds to the consolidated plan; not executed)
+
+Session 1d of the consolidated round (Oppo A9, after Session 1c). Same setup
+as Session 1c: PIN credential, grace 30 s, Accessibility on, A = Standard,
+B = Sensitive, C = Critical. Session 1c's FAIL rules apply, plus:
+- a level lowers without the PIN or pattern in that attempt;
+- an interrupted confirmation leaves the lower level saved;
+- the row's level differs from the observed re-lock behaviour.
+
+No fingerprint enrolment is needed (do not re-enrol on the Oppo).
+
+| Step | Closes | Actions | Expected |
+| --- | --- | --- | --- |
+| Q1 Remaining transitions | 8G §2 (E9/E10 cover Standard ↔ Critical) | A: Standard → Sensitive, Sensitive → Critical, Critical → Sensitive, Sensitive → Standard; after each change, unlock, Home and reopen (at ~20 s, at once, at ~10 s then ~20 s, and at ~20 s). | Upgrades need no PIN and challenge on reopen. Downgrades show "Confirm to lower the security level" and apply only after the PIN. Re-lock follows the new level. |
+| Q2 Rapid changes | 8G §2 | Choose and back out quickly, repeat with the PIN, change B and C back to back. | The final row matches the last confirmed change; nothing lowers without a PIN; nothing is stuck. |
+| Q3 Interrupted downgrade | 8G §2, S7.1, S9.1 | C Critical → Standard; on the confirm screen: Home, screen off/on, rotate, incoming notification/call (record). | Stays Critical unless the PIN was entered in that attempt; counters kept; nothing unlocks. |
+| Q4 Sensitive departures | 8G §1 | B via Recents at ~5 s and ~20 s; screen off/on; Smart App Lock → B at ~5 s. | Opens at 5 s; challenge at 20 s and after screen off. |
+| Q5 Critical after watcher interruption | 8G §1, S10.1 | After step 8: open C, unlock, Home, reopen. | Challenge on first access and on return. |
+| Q6 Accessibility disconnect (record) | observational limit | Unlock C, leave, Accessibility off, reopen C, Accessibility on, return to C. | Record; C never more permissive than A in the same sequence. |
+| Q7 Suggestion → downgrade gate | 8G §4 | Listed app at Standard: "Use Sensitive", then choose Standard; repeat in airplane mode. | Accepting needs no PIN; going back needs the PIN; Critical apps show no suggestion; works offline. |
+| Q8 Cross-phase rerun with C | 8G §5 | Rerun Session 1 steps 9, 11, 12, 13 and 1 with C as the protected app. | As written; C challenges on every return; health unchanged. |
+
+Minimum acceptance: Q1–Q5, Q7 and Q8 on the Oppo. Release blockers:
+Q1 (downgrades), Q2, Q3, Q7. Record Q6. F3 and biometric remain UNVERIFIED.
+
+**Status:**
+- Implementation is complete and simulated-tested.
+- It is **not device verified**: the combined Phase 6–10 round is deferred,
+  not waived.
+- It is **not release ready** until that round passes, including E13, F3 and
+  biometric.

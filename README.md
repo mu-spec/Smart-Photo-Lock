@@ -23,8 +23,11 @@ Milestone 2 (level enforcement: Standard keeps the configured re-lock,
 Sensitive re-locks within 15 s and after 1 minute idle, Critical asks on
 every return to the app; lowering a level needs the PIN or pattern;
 advisory, local-only level suggestions) are implemented and
-simulated-tested; device QA joins the combined Phase 6–10 round
-(`docs/regression.md`, Phase 8 / M1 and M2) — production scaffold, architecture, navigation, design
+simulated-tested. Milestone 3 (security level QA and regression) adds a
+level × scenario matrix, transition, downgrade and persistence-failure
+regression tests (tests and docs only, no defect found). Device QA joins the
+combined Phase 6–10 round (`docs/regression.md`, Phase 8 / M1, M2 and M3;
+not device verified, not release ready) — production scaffold, architecture, navigation, design
 system, persistence, secure storage, full authentication with settings,
 installed-apps management, the complete capability/permission layer,
 and the **core lock engine**: foreground detection (usage-stats +

@@ -2603,3 +2603,42 @@ different package (strict by design; device QA M2-C5 records how often).
 Expiry of W is still event-driven (H-2, accepted). The Usage Access fallback
 is coarser than Accessibility (U1-R unchanged). F3 and biometric remain
 UNVERIFIED on device.
+
+
+## Phase 8 / M3 — Security level QA & regression (no design change)
+
+PRD v2.1 8G. Baseline `75040cb`. M3 changes no production code. It pins the
+M1 + M2 design with regression tests (`docs/regression.md`, Phase 8 / M3).
+
+- **Downgrade proof binding.** CR-2's `UnprotectAuthorization` holds a
+  single `_consumed` set, shared by `removeProtectionWith` and
+  `lowerSecurityLevelWith`. Each consumes it **before** its write. One
+  confirmation therefore authorizes at most one sensitive action per app: a
+  lowering, or an unprotect, never both. It expires after 60 s, and a
+  backwards clock is invalid.
+- **`_changeLevel` ordering.**
+  1. Decides `lowering` against the **enforced** level (stored, or a held
+     stricter native level).
+  2. Re-checks that the app is still protected after the PIN.
+  3. Writes the level.
+  4. Calls `revokeImmediately`.
+  5. Syncs with `authorizedDowngrades` = {that app} only.
+- **Failed upgrade + process death (§3D).** `ProtectionStateStore.configure`
+  keeps the stricter level in memory when `commit()` fails, but the disk
+  still holds the previous (weaker) value. After process death native reads
+  that value. Safety relies on two existing properties:
+  - authorizations are process-local (none survive);
+  - the Dart host sends `securityLevel` with every `authorizePackage`, which
+    native applies as a floor (stricter of store and floor).
+
+  The next successful sync makes the upgrade durable and revokes. An unlock
+  without the field would get the stored level's grace; this build never
+  sends one (`host_auth_binding_test`).
+- **Observational limit.** The native revoke points are `ACTION_SCREEN_OFF`,
+  `WatcherTeardownPolicy`, `stop()` and emergency exit.
+  `AccessibilityLockService` unbind does not revoke (unchanged, Phase 6
+  semantics). Transitions during an Accessibility disconnect are unobserved.
+- **Known asymmetry (unchanged).** Dart's `revokeAccess` arms grace for any
+  session still in its map, even an expired one that hasn't been pruned.
+  Native arms grace only for authorizations still valid at departure.
+  Native is the final gate.

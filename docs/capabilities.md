@@ -291,3 +291,24 @@ what is promised:
   only show a dismissible hint.
 - **Device behaviour is unverified** until the combined Phase 6–10 device
   round (`docs/regression.md`, Phase 8 / M2).
+
+
+## Security level QA limits (Phase 8 / M3)
+
+M3 adds regression tests only. Behaviour and permissions are unchanged. The
+QA pass confirmed these bounds:
+
+- **Unobserved transitions.** Native unlocks end on screen off, watcher
+  teardown, stop and emergency exit. When the Accessibility service is
+  disconnected (turned off, killed or force-stopped), switching apps is not
+  reported, so a level cannot act on it. The Usage Access fallback stays
+  coarser (U1-R). Smart App Lock does not claim to detect these transitions.
+- **Failed upgrade, then process death.** If saving a stricter level fails
+  on the native side and the process then dies, native reads the last saved
+  (weaker) level until Smart App Lock's next start. No unlock survives the
+  process death. Each new unlock carries the level the app shows, so
+  re-locking stays strict.
+- **Recommendations stay local.** The catalog file imports nothing else.
+  The app has no network dependency and no INTERNET permission.
+- **Device behaviour is unverified** until the combined Phase 6–10 round
+  (`docs/regression.md`, Phase 8 / M3).
