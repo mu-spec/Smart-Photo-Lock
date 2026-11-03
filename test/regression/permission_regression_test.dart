@@ -3,15 +3,17 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:smart_app_lock/app/app.dart';
 import 'package:smart_app_lock/app/app_container.dart';
+import 'package:smart_app_lock/data/models/protected_app.dart';
 import 'package:smart_app_lock/design_system/design_system.dart';
 import 'package:smart_app_lock/services/impl/static_accessibility_lock_service.dart';
 import 'package:smart_app_lock/services/impl/static_installed_apps_service.dart';
 import 'package:smart_app_lock/services/impl/static_overlay_lock_service.dart';
+import 'package:smart_app_lock/services/impl/static_watcher_service.dart';
+import 'package:smart_app_lock/ui/screens/health/health_presentation.dart';
 import 'package:smart_app_lock/ui/screens/permissions/accessibility_setup_screen.dart';
 import 'package:smart_app_lock/ui/screens/permissions/overlay_setup_screen.dart';
 import 'package:smart_app_lock/ui/screens/permissions/permission_setup_screen.dart';
 import 'package:smart_app_lock/ui/screens/permissions/usage_access_screen.dart';
-import 'package:smart_app_lock/ui/screens/security/security_screen.dart';
 
 /// Phase 4G regression: the full permission lifecycle — grant, deny and
 /// revoke — exercised end-to-end through the production app wiring
@@ -21,12 +23,21 @@ import 'package:smart_app_lock/ui/screens/security/security_screen.dart';
 /// services: flipping a flag is the moment the user toggles the
 /// capability in Android settings; an `inactive → resumed` lifecycle
 /// transition is the moment they come back to the app.
+///
+/// Phase 9 / M1 (intentionally updated): the Phase 4 "A permission was
+/// revoked" banner was replaced by the Security Center's Phase 7 Protection
+/// Health status. Deny/grant paths (no credential yet) now assert that no
+/// revocation alert appears; revoke paths run on a configured, simulated-
+/// healthy device and assert the Phase 7 status (Usage or Accessibility
+/// turned off: ATTENTION REQUIRED; the required shield turned off:
+/// PROTECTION OFFLINE). Rows, badge and setup screens are unchanged.
 void main() {
   Future<AppContainer> pumpApp(
     WidgetTester tester, {
     bool usageAccessGranted = false,
     bool accessibilityEnabled = false,
     bool overlayGranted = false,
+    bool configured = false,
   }) async {
     tester.view.physicalSize = const Size(800, 1600);
     tester.view.devicePixelRatio = 1.0;
@@ -36,6 +47,27 @@ void main() {
       accessibilityEnabled: accessibilityEnabled,
       overlayGranted: overlayGranted,
     );
+    if (configured) {
+      // PIN + one protected app + a running simulated native engine.
+      await container.auth.enrollPin('1234');
+      await container.protectedApps.add(
+        ProtectedApp(
+          packageName: 'com.example.protected',
+          label: 'Protected',
+          addedAt: DateTime(2026, 9, 6),
+        ),
+      );
+      (container.watcher as StaticWatcherService)
+        ..protectionConfigured = true
+        ..running = true
+        ..accessibilityServiceConnected = true
+        ..shieldArmed = true
+        ..challengePending = false
+        ..backgroundRestricted = false
+        ..powerSaveMode = false
+        ..ignoringBatteryOptimizations = false
+        ..sdkInt = 34;
+    }
     await tester.pumpWidget(SmartAppLockApp(container: container));
     await tester.pumpAndSettle();
     return container;
@@ -56,8 +88,7 @@ void main() {
   /// Security tab → "Set up" action on the App lock permissions section.
   Future<void> openPermissionSetup(WidgetTester tester) async {
     await openSecurity(tester);
-    // The setup banner also carries a "Set up" action, so scope to the
-    // section title row.
+    // Scope to the section title row (other cards carry actions too).
     final Finder setUp = find.descendant(
       of: find.byType(DsSectionTitle),
       matching: find.text('Set up'),
@@ -82,6 +113,26 @@ void main() {
     );
   }
 
+  Finder inHealth(String text) => find.descendant(
+        of: find.byKey(const Key('sc_health_banner')),
+        matching: find.text(text),
+      );
+
+  Finder shownBadge() => find.byWidgetPredicate(
+        (Widget w) => w is DsDotBadge && w.show,
+      );
+
+  /// No revocation is reported: no failure wording, nothing "turned off",
+  /// no attention dot on the permissions section.
+  void expectNoRevocationAlert() {
+    expect(
+      find.textContaining('Protection is not working right now.'),
+      findsNothing,
+    );
+    expect(find.textContaining('was turned off'), findsNothing);
+    expect(shownBadge(), findsNothing);
+  }
+
   void expectPermRowLabel(WidgetTester tester, String rowKey, String label) {
     expect(
       find.descendant(
@@ -102,7 +153,7 @@ void main() {
       expectSecurityLabel(tester, 'Usage access', 'Recommended');
       expectSecurityLabel(tester, 'Accessibility service', 'Required');
       expectSecurityLabel(tester, 'Background lock shield', 'Required');
-      expect(find.text(SecurityScreen.revokedTitle), findsNothing);
+      expectNoRevocationAlert();
 
       await container.capabilityMonitor.dispose();
     });
@@ -266,7 +317,7 @@ void main() {
       expectSecurityLabel(tester, 'Usage access', 'Enabled');
       expectSecurityLabel(tester, 'Accessibility service', 'Enabled');
       expectSecurityLabel(tester, 'Background lock shield', 'Enabled');
-      expect(find.text(SecurityScreen.revokedTitle), findsNothing);
+      expectNoRevocationAlert();
 
       await container.capabilityMonitor.dispose();
     });
@@ -292,7 +343,7 @@ void main() {
       expectSecurityLabel(tester, 'Usage access', 'Enabled');
       expectSecurityLabel(tester, 'Accessibility service', 'Enabled');
       expectSecurityLabel(tester, 'Background lock shield', 'Enabled');
-      expect(find.text(SecurityScreen.revokedTitle), findsNothing);
+      expectNoRevocationAlert();
 
       await container.capabilityMonitor.dispose();
     });
@@ -390,18 +441,24 @@ void main() {
         usageAccessGranted: true,
         accessibilityEnabled: true,
         overlayGranted: true,
+        configured: true,
       );
       await openSecurity(tester);
       expectSecurityLabel(tester, 'Usage access', 'Enabled');
-      expect(find.text(SecurityScreen.revokedTitle), findsNothing);
+      expect(inHealth(HealthPresentation.secureTitle), findsOneWidget);
 
       (container.installedAppsService as StaticInstalledAppsService)
           .usageAccessGranted = false;
       await container.capabilityMonitor.probe();
       await tester.pumpAndSettle();
 
-      expect(find.text(SecurityScreen.revokedTitle), findsNothing);
-      expect(find.byType(DsDotBadge), findsWidgets);
+      // Delayed recovery lost, early path kept: attention, not offline.
+      expect(inHealth(HealthPresentation.attentionTitle), findsOneWidget);
+      expect(
+          find.textContaining('Usage Access was turned off'), findsOneWidget);
+      // Usage Access is recommended, not required: no attention dot
+      // (Phase 4F badge rule, unchanged).
+      expect(shownBadge(), findsNothing);
       expectSecurityLabel(tester, 'Usage access', 'Recommended');
       expectSecurityLabel(tester, 'Accessibility service', 'Enabled');
       expectSecurityLabel(tester, 'Background lock shield', 'Enabled');
@@ -416,6 +473,7 @@ void main() {
         usageAccessGranted: true,
         accessibilityEnabled: true,
         overlayGranted: true,
+        configured: true,
       );
       await openSecurity(tester);
 
@@ -424,7 +482,12 @@ void main() {
       await container.capabilityMonitor.probe();
       await tester.pumpAndSettle();
 
-      expect(find.text(SecurityScreen.revokedTitle), findsOneWidget);
+      expect(inHealth(HealthPresentation.attentionTitle), findsOneWidget);
+      expect(
+        find.textContaining('Accessibility service was turned off'),
+        findsOneWidget,
+      );
+      expect(shownBadge(), findsOneWidget);
       expectSecurityLabel(tester, 'Accessibility service', 'Required');
       expectSecurityLabel(tester, 'Usage access', 'Enabled');
 
@@ -438,6 +501,7 @@ void main() {
         usageAccessGranted: true,
         accessibilityEnabled: true,
         overlayGranted: true,
+        configured: true,
       );
       await openSecurity(tester);
 
@@ -445,7 +509,12 @@ void main() {
       await container.capabilityMonitor.probe();
       await tester.pumpAndSettle();
 
-      expect(find.text(SecurityScreen.revokedTitle), findsOneWidget);
+      expect(inHealth(HealthPresentation.offlineTitle), findsOneWidget);
+      expect(
+        find.textContaining('Display over other apps was turned off'),
+        findsOneWidget,
+      );
+      expect(shownBadge(), findsOneWidget);
       expectSecurityLabel(tester, 'Background lock shield', 'Required');
       expectSecurityLabel(tester, 'Accessibility service', 'Enabled');
 
@@ -460,6 +529,7 @@ void main() {
         usageAccessGranted: true,
         accessibilityEnabled: true,
         overlayGranted: true,
+        configured: true,
       );
       await openSecurity(tester);
 
@@ -494,6 +564,7 @@ void main() {
         usageAccessGranted: true,
         accessibilityEnabled: true,
         overlayGranted: true,
+        configured: true,
       );
       await openSecurity(tester);
 
@@ -501,13 +572,15 @@ void main() {
           false;
       await container.capabilityMonitor.probe();
       await tester.pumpAndSettle();
-      expect(find.text(SecurityScreen.revokedTitle), findsOneWidget);
+      expect(inHealth(HealthPresentation.attentionTitle), findsOneWidget);
 
       // The user re-enables the required service and returns from Settings.
       (container.accessibility as StaticAccessibilityLockService).enabled =
           true;
       await resume(tester);
-      expect(find.text(SecurityScreen.revokedTitle), findsNothing);
+      expect(inHealth(HealthPresentation.secureTitle), findsOneWidget);
+      expect(inHealth(HealthPresentation.attentionTitle), findsNothing);
+      expect(shownBadge(), findsNothing);
 
       // The setup screen proves the recovered state.
       final Finder setUp = find.descendant(
@@ -533,16 +606,21 @@ void main() {
         usageAccessGranted: true,
         accessibilityEnabled: true,
         overlayGranted: true,
+        configured: true,
       );
       await openSecurity(tester);
-      expect(find.text(SecurityScreen.revokedTitle), findsNothing);
+      expect(inHealth(HealthPresentation.secureTitle), findsOneWidget);
 
       // The user revokes overlay in system settings while the app is
       // backgrounded; the guard's resume probe must catch it.
       (container.overlay as StaticOverlayLockService).overlayGranted = false;
       await resume(tester);
 
-      expect(find.text(SecurityScreen.revokedTitle), findsOneWidget);
+      expect(inHealth(HealthPresentation.offlineTitle), findsOneWidget);
+      expect(
+        find.textContaining('Display over other apps was turned off'),
+        findsOneWidget,
+      );
       expectSecurityLabel(tester, 'Background lock shield', 'Required');
 
       await container.capabilityMonitor.dispose();

@@ -5,26 +5,120 @@ import 'package:smart_app_lock/app/app.dart';
 import 'package:smart_app_lock/app/app_container.dart';
 import 'package:smart_app_lock/app/app_scope.dart';
 import 'package:smart_app_lock/app/capability_watch_guard.dart';
+import 'package:smart_app_lock/data/models/protected_app.dart';
 import 'package:smart_app_lock/design_system/design_system.dart';
 import 'package:smart_app_lock/services/impl/static_accessibility_lock_service.dart';
 import 'package:smart_app_lock/services/impl/static_installed_apps_service.dart';
 import 'package:smart_app_lock/services/impl/static_overlay_lock_service.dart';
-import 'package:smart_app_lock/ui/screens/security/security_screen.dart';
+import 'package:smart_app_lock/services/impl/static_watcher_service.dart';
+import 'package:smart_app_lock/ui/screens/health/health_presentation.dart';
+import 'package:smart_app_lock/ui/screens/security/security_center_section.dart';
 
 /// Phase 4F: a revoked capability is detected and surfaced on the
 /// Security tab.
+///
+/// Phase 9 / M1 (intentionally updated): the Phase 4 "A permission was
+/// revoked" banner was replaced by the Security Center, which shows the
+/// Phase 7 Protection Health status (one source of truth). The same
+/// detection scenarios now assert that status, the unchanged permissions
+/// badge and the revocation re-check. SIMULATED: static services.
 void main() {
   /// The Security tab is a lazy ListView: at the default 800x600 test
   /// viewport the App lock permissions section (with its DsDotBadge) is
-  /// never mounted. Tests that assert on those rows need the tall
-  /// surface used across the security suites.
+  /// never mounted. Tests that assert on those rows need a tall surface.
   void useTallViewport(WidgetTester tester) {
-    tester.view.physicalSize = const Size(800, 1600);
+    tester.view.physicalSize = const Size(800, 2400);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
   }
 
-  testWidgets('revoking a granted capability shows the alert banner and badge',
+  /// A configured, simulated-healthy device (PIN, one protected app,
+  /// running native engine), as in the Phase 7 dashboard tests.
+  Future<AppContainer> configuredContainer() async {
+    final AppContainer container = AppContainer.inMemory(
+      usageAccessGranted: true,
+      accessibilityEnabled: true,
+      overlayGranted: true,
+    );
+    await container.auth.enrollPin('1234');
+    await container.protectedApps.add(
+      ProtectedApp(
+        packageName: 'com.example.protected',
+        label: 'Protected',
+        addedAt: DateTime(2026, 9, 6),
+      ),
+    );
+    (container.watcher as StaticWatcherService)
+      ..protectionConfigured = true
+      ..running = true
+      ..accessibilityServiceConnected = true
+      ..shieldArmed = true
+      ..challengePending = false
+      ..backgroundRestricted = false
+      ..powerSaveMode = false
+      ..ignoringBatteryOptimizations = false
+      ..sdkInt = 34;
+    return container;
+  }
+
+  Finder inHealth(String text) => find.descendant(
+        of: find.byKey(const Key('sc_health_banner')),
+        matching: find.text(text),
+      );
+
+  Finder permissionsBadge() => find.byWidgetPredicate(
+        (Widget w) => w is DsDotBadge && w.show,
+      );
+
+  const String overlayTurnedOff = 'Display over other apps was turned off';
+
+  /// The user returns from the Android settings screen.
+  Future<void> resumeFromSettings(WidgetTester tester) async {
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+  }
+
+  Future<void> openSecurity(WidgetTester tester) async {
+    await tester.tap(find.byKey(const Key('nav_security')));
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets(
+      'revoking a granted capability is re-checked at once: PROTECTION '
+      'OFFLINE, Fix protection and the permissions badge',
+      (WidgetTester tester) async {
+    useTallViewport(tester);
+    final AppContainer container = await configuredContainer();
+    await tester.pumpWidget(SmartAppLockApp(container: container));
+    await tester.pumpAndSettle();
+    await openSecurity(tester);
+    expect(inHealth(HealthPresentation.secureTitle), findsOneWidget);
+    expect(permissionsBadge(), findsNothing);
+
+    // Overlay is required: the capability monitor's revocation event alone
+    // (no resume) refreshes the status.
+    (container.overlay as StaticOverlayLockService).overlayGranted = false;
+    await container.capabilityMonitor.probe();
+    await tester.pumpAndSettle();
+
+    expect(inHealth(HealthPresentation.offlineTitle), findsOneWidget);
+    expect(find.textContaining(overlayTurnedOff), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('security_center_health')),
+        matching: find.text(SecurityCenterSection.fixProtectionLabel),
+      ),
+      findsOneWidget,
+    );
+    expect(permissionsBadge(), findsOneWidget);
+
+    await container.capabilityMonitor.dispose();
+  });
+
+  testWidgets(
+      'before setup, a revocation marks the permissions badge while health '
+      'stays worded as setup (never a failure, never SECURE)',
       (WidgetTester tester) async {
     useTallViewport(tester);
     final AppContainer container = AppContainer.inMemory(
@@ -34,52 +128,40 @@ void main() {
     );
     await tester.pumpWidget(SmartAppLockApp(container: container));
     await tester.pumpAndSettle();
+    await openSecurity(tester);
 
-    // Navigate to the Security tab for the alert assertions.
-    await tester.tap(find.byKey(const Key('nav_security')));
-    await tester.pumpAndSettle();
-    expect(find.text(SecurityScreen.revokedTitle), findsNothing);
-
-    // Overlay is a required capability, so revoking it raises the warning.
-    final StaticOverlayLockService overlay =
-        container.overlay as StaticOverlayLockService;
-    overlay.overlayGranted = false;
+    (container.overlay as StaticOverlayLockService).overlayGranted = false;
     await container.capabilityMonitor.probe();
     await tester.pumpAndSettle();
 
-    expect(find.text(SecurityScreen.revokedTitle), findsOneWidget);
-    expect(find.text(SecurityScreen.revokedMessage), findsOneWidget);
-    expect(find.text('Review permissions'), findsOneWidget);
+    expect(permissionsBadge(), findsOneWidget);
+    expect(inHealth(HealthPresentation.secureTitle), findsNothing);
+    expect(
+      find.textContaining('Setup is not finished yet.'),
+      findsOneWidget,
+    );
 
-    // The permissions section header shows the attention dot.
-    expect(find.byType(DsDotBadge), findsWidgets);
-
-    // Tear down the monitor so the timer does not leak.
     await container.capabilityMonitor.dispose();
   });
 
-  testWidgets('the guard starts the monitor and probes on resume',
-      (WidgetTester tester) async {
+  testWidgets(
+      'the guard probes on resume; opening the Security tab re-checks '
+      'health', (WidgetTester tester) async {
     useTallViewport(tester);
-    final AppContainer container = AppContainer.inMemory(
-      usageAccessGranted: true,
-      accessibilityEnabled: true,
-      overlayGranted: true,
-    );
+    final AppContainer container = await configuredContainer();
     await tester.pumpWidget(SmartAppLockApp(container: container));
     await tester.pumpAndSettle();
 
     // Revoke overlay; the resume probe must detect it.
-    final StaticOverlayLockService overlay =
-        container.overlay as StaticOverlayLockService;
-    overlay.overlayGranted = false;
+    (container.overlay as StaticOverlayLockService).overlayGranted = false;
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const Key('nav_security')));
-    await tester.pumpAndSettle();
-    expect(find.text(SecurityScreen.revokedTitle), findsOneWidget);
+    await openSecurity(tester);
+    expect(inHealth(HealthPresentation.offlineTitle), findsOneWidget);
+    expect(find.textContaining(overlayTurnedOff), findsOneWidget);
+    expect(permissionsBadge(), findsOneWidget);
 
     await container.capabilityMonitor.dispose();
   });
@@ -103,94 +185,85 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
-  /// The user returns from the Android settings screen: the resume
-  /// observer on the Security tab re-checks the LIVE capability state.
-  Future<void> resumeFromSettings(WidgetTester tester) async {
-    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
-    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
-    await tester.pumpAndSettle();
-  }
-
   testWidgets(
-      'restoring ALL revoked capabilities clears the warning without a '
+      'restoring ALL revoked capabilities returns to SECURE without a '
       'restart', (WidgetTester tester) async {
     useTallViewport(tester);
-    final AppContainer container = AppContainer.inMemory(
-      usageAccessGranted: true,
-      accessibilityEnabled: true,
-      overlayGranted: true,
-    );
+    final AppContainer container = await configuredContainer();
+    final StaticWatcherService watcher =
+        container.watcher as StaticWatcherService;
     await tester.pumpWidget(SmartAppLockApp(container: container));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('nav_security')));
-    await tester.pumpAndSettle();
-    expect(find.text(SecurityScreen.revokedTitle), findsNothing);
+    await openSecurity(tester);
+    expect(inHealth(HealthPresentation.secureTitle), findsOneWidget);
 
     // All three revoked in the system settings.
     (container.installedAppsService as StaticInstalledAppsService)
         .usageAccessGranted = false;
     (container.accessibility as StaticAccessibilityLockService).enabled = false;
+    watcher.accessibilityServiceConnected = false;
     (container.overlay as StaticOverlayLockService).overlayGranted = false;
     await container.capabilityMonitor.probe();
     await tester.pumpAndSettle();
-    expect(find.text(SecurityScreen.revokedTitle), findsOneWidget);
+    expect(inHealth(HealthPresentation.offlineTitle), findsOneWidget);
 
     // The user restores ALL three and returns to the app.
     (container.installedAppsService as StaticInstalledAppsService)
         .usageAccessGranted = true;
     (container.accessibility as StaticAccessibilityLockService).enabled = true;
+    watcher.accessibilityServiceConnected = true;
     (container.overlay as StaticOverlayLockService).overlayGranted = true;
     await resumeFromSettings(tester);
 
-    expect(find.text(SecurityScreen.revokedTitle), findsNothing);
+    expect(inHealth(HealthPresentation.secureTitle), findsOneWidget);
+    expect(permissionsBadge(), findsNothing);
 
     // And a NEW required-capability revocation after recovery is detected.
     (container.overlay as StaticOverlayLockService).overlayGranted = false;
     await container.capabilityMonitor.probe();
     await tester.pumpAndSettle();
-    expect(find.text(SecurityScreen.revokedTitle), findsOneWidget);
+    expect(inHealth(HealthPresentation.offlineTitle), findsOneWidget);
 
     await container.capabilityMonitor.dispose();
   });
 
   testWidgets(
-      'restoring only the shield keeps the warning until a detector returns',
-      (WidgetTester tester) async {
+      'restoring only the shield is not SECURE until the early detector '
+      'returns', (WidgetTester tester) async {
     useTallViewport(tester);
-    final AppContainer container = AppContainer.inMemory(
-      usageAccessGranted: true,
-      accessibilityEnabled: true,
-      overlayGranted: true,
-    );
+    final AppContainer container = await configuredContainer();
+    final StaticWatcherService watcher =
+        container.watcher as StaticWatcherService;
     await tester.pumpWidget(SmartAppLockApp(container: container));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('nav_security')));
-    await tester.pumpAndSettle();
+    await openSecurity(tester);
 
     // Revoke both detectors AND the required overlay.
     (container.installedAppsService as StaticInstalledAppsService)
         .usageAccessGranted = false;
     (container.accessibility as StaticAccessibilityLockService).enabled = false;
+    watcher.accessibilityServiceConnected = false;
     (container.overlay as StaticOverlayLockService).overlayGranted = false;
     await container.capabilityMonitor.probe();
     await tester.pumpAndSettle();
-    expect(find.text(SecurityScreen.revokedTitle), findsOneWidget);
+    expect(inHealth(HealthPresentation.offlineTitle), findsOneWidget);
 
-    // Restore ONLY overlay: detection is still unavailable.
+    // Restore ONLY overlay: detection is still offline.
     (container.overlay as StaticOverlayLockService).overlayGranted = true;
     await resumeFromSettings(tester);
-    expect(find.text(SecurityScreen.revokedTitle), findsOneWidget);
+    expect(inHealth(HealthPresentation.offlineTitle), findsOneWidget);
 
-    // Restoring Usage Access alone is still delayed protection; the required
-    // early Accessibility detector must return before the warning clears.
+    // Usage Access alone is delayed detection: attention, never SECURE.
     (container.installedAppsService as StaticInstalledAppsService)
         .usageAccessGranted = true;
     await resumeFromSettings(tester);
-    expect(find.text(SecurityScreen.revokedTitle), findsOneWidget);
+    expect(inHealth(HealthPresentation.attentionTitle), findsOneWidget);
+    expect(inHealth(HealthPresentation.secureTitle), findsNothing);
 
     (container.accessibility as StaticAccessibilityLockService).enabled = true;
+    watcher.accessibilityServiceConnected = true;
     await resumeFromSettings(tester);
-    expect(find.text(SecurityScreen.revokedTitle), findsNothing);
+    expect(inHealth(HealthPresentation.secureTitle), findsOneWidget);
 
     await container.capabilityMonitor.dispose();
   });

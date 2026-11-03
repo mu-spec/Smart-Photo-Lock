@@ -96,8 +96,8 @@ void main() {
   testWidgets('PIN row reads Set up PIN when nothing is enrolled',
       (WidgetTester tester) async {
     await pumpWithScope(tester);
-    // Scoped to the row: the banner's action button also reads
-    // 'Set up PIN', so unscoped text finders are ambiguous.
+    // Scoped to the row (the Phase 4 status banner that also read
+    // 'Set up PIN' was replaced by the Security Center in Phase 9 / M1).
     final Finder row = find.widgetWithText(
       SecurityStatusItem,
       SecurityScreen.setPinTitle,
@@ -313,6 +313,14 @@ void main() {
     );
     final state = (await container.auth.status()).valueOrNull!;
     expect(state.hasEnrolled(AuthType.biometric), isFalse);
+
+    // Phase 9 / M1 (intentionally updated): the Security tab's Security
+    // Center now checks Protection Health. With biometric unlock enabled the
+    // Phase 7 monitor probes the platform biometric service, which never
+    // answers in the test VM; let its two bounded probes (3 s timeout each:
+    // hardware, then enrolled kinds) elapse so no timer is left pending at
+    // teardown.
+    await tester.pump(const Duration(seconds: 7));
   });
 
   testWidgets('biometric row reports unsupported hardware without a platform',

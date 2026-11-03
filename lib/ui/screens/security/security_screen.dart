@@ -8,7 +8,6 @@ import '../../../app/router.dart';
 import '../../../data/repositories/lock_settings_repository.dart';
 import '../../../data/storage/preferences_store.dart';
 import '../../../design_system/design_system.dart';
-import '../../../protection/protection_health.dart';
 import '../../../security/credentials/auth_type.dart';
 import '../../../security/credentials/biometric_options.dart';
 import '../../../security/credentials/credential_manager.dart';
@@ -17,9 +16,9 @@ import '../../../services/accessibility_lock_service.dart';
 import '../../../services/capability_monitor.dart';
 import '../../../services/installed_apps_service.dart';
 import '../../../services/overlay_lock_service.dart';
-import '../../../services/watcher_service.dart';
 import '../../../utilities/result.dart';
 import 'app_credential_verification.dart';
+import 'security_center_section.dart';
 
 /// Security tab — the authentication settings surface (Phase 2K).
 ///
@@ -32,28 +31,26 @@ import 'app_credential_verification.dart';
 ///
 /// The remaining rows (intruder selfie, ...) stay static until their
 /// feature phases.
+///
+/// Phase 9 / M1: the tab opens with the [SecurityCenterSection] (Protection
+/// Health, protected-app counts, Critical apps). It replaces the earlier
+/// Phase 4 "Security status" banners, which classified health separately
+/// from the Phase 7 Protection Health engine; the tab now shows one status
+/// source only. The setup rows below (permissions, PIN, pattern) are
+/// unchanged.
 class SecurityScreen extends StatefulWidget {
-  const SecurityScreen({super.key});
+  const SecurityScreen({super.key, this.isActive = true, this.onNavigate});
+
+  /// Whether the Security tab is the visible tab (the shell keeps every tab
+  /// alive). Drives the Security Center's refresh on tab return.
+  final bool isActive;
+
+  /// Main-shell tab switch, used by the Security Center's "Manage apps".
+  final ValueChanged<int>? onNavigate;
 
   static const String description =
-      'Your PIN, intruder protection and advanced security controls.';
-
-  static const String revokedTitle = 'A permission was revoked';
-  static const String revokedMessage =
-      'A capability Smart App Lock needs was turned off in system '
-      'settings. Re-enable it to keep protection working.';
-
-  /// Phase 4 UX: first-install / never-granted state banner.
-  static const String setupRequiredTitle = 'Protection setup required';
-  static const String setupRequiredMessage =
-      'Smart App Lock needs a few Android permissions before app '
-      'protection can work correctly.';
-  static String readyCount(int n) => '$n of 3 ready';
-
-  /// Phase 4 UX: healthy state banner (all three capabilities granted).
-  static const String protectionReadyTitle = 'Protection ready';
-  static const String protectionReadyMessage =
-      'All required app-lock permissions are granted.';
+      'An overview of your protection, plus your unlock and protection '
+      'settings.';
 
   /// H-3: shown when biometric hardware exists but no usable biometric is
   /// enrolled. A secure device lock alone never enables biometric unlock.
@@ -112,9 +109,6 @@ class _SecurityScreenState extends State<SecurityScreen>
   /// Phase 4D: overlay (draw-over-apps) capability state (false until
   /// loaded).
   bool _overlayGranted = false;
-  ProtectionEngineHealth _engineHealth =
-      const ProtectionEngineHealth.inactive();
-  bool _bootstrapFailed = false;
 
   /// Phase 4 UX: persisted grant history per capability (false until the
   /// capability has been observed granted at least once). Combined with
@@ -154,22 +148,6 @@ class _SecurityScreenState extends State<SecurityScreen>
       (!_overlayGranted && _overlayEverGranted) ||
       (!_accessibilityEnabled && _accessibilityEverGranted);
 
-  /// At least one capability has NEVER been granted (fresh install or
-  /// incomplete first-time setup).
-  bool get _setupIncomplete => !_overlayGranted || !_accessibilityEnabled;
-
-  /// The required shield and at least one detector are currently available.
-  bool get _protectionReady => _accessibilityEnabled && _overlayGranted;
-
-  ProtectionCapabilityEvaluation get _protectionEvaluation =>
-      ProtectionCapabilityEvaluation.evaluate(
-        protectionConfigured: _engineHealth.protectionConfigured,
-        usageAccess: _usageAccessGranted,
-        accessibility: _accessibilityEnabled,
-        overlay: _overlayGranted,
-        engine: _engineHealth,
-      );
-
   @override
   void initState() {
     super.initState();
@@ -183,8 +161,8 @@ class _SecurityScreenState extends State<SecurityScreen>
         if (!mounted || change.state != CapabilityState.revoked) {
           return;
         }
-        // Re-classify from the live snapshot: the derived banner state
-        // (setup vs revoked vs ready) is recomputed on every load.
+        // Reload the live snapshot (permission rows and badge); the
+        // Security Center re-checks Protection Health itself.
         _loadStatus();
       },
     );
@@ -273,16 +251,10 @@ class _SecurityScreenState extends State<SecurityScreen>
       graceSeconds = period.isNegative ? 0 : period.inSeconds;
     }
 
-    final bootstrap = await container.protectionBootstrap.synchronize();
-    final ProtectionEngineHealth engineHealth = bootstrap.isSuccess
-        ? bootstrap.valueOrNull!.health
-        : ProtectionEngineHealth(
-            protectionConfigured: true,
-            serviceRunning: false,
-            engineState: ProtectionEngineState.unavailable,
-            notificationPermissionGranted: false,
-            lastError: bootstrap.errorOrNull.toString(),
-          );
+    // Phase 4G: re-send the protection state to native on every load
+    // (unchanged). Its health result is no longer shown here: the Security
+    // Center displays the Phase 7 Protection Health report instead.
+    await container.protectionBootstrap.synchronize();
 
     if (!mounted) {
       return;
@@ -298,8 +270,6 @@ class _SecurityScreenState extends State<SecurityScreen>
       _overlayGranted = overlayGranted;
       _accessibilityEverGranted = accessibilityEver;
       _overlayEverGranted = overlayEver;
-      _engineHealth = engineHealth;
-      _bootstrapFailed = bootstrap.isFailure;
       if (graceSeconds != null) {
         _graceSeconds = graceSeconds;
       }
@@ -678,125 +648,18 @@ class _SecurityScreenState extends State<SecurityScreen>
       child: ListView(
         padding: DsInsets.screen,
         children: <Widget>[
-          const DsSectionTitle('Security status'),
-          const SizedBox(height: DsSpacing.md),
-          if (_bootstrapFailed ||
-              _protectionEvaluation.status ==
-                  ProtectionHealthStatus.unavailable) ...<Widget>[
-            SecurityStatusBanner(
-              level: SecurityLevel.vulnerable,
-              title: 'Protection engine unavailable',
-              message: _engineHealth.lastError ??
-                  'Smart App Lock cannot currently guarantee enforcement.',
-              actionLabel: 'Review permissions',
-              onAction: _onPermissionSetupTap,
+          Text(
+            SecurityScreen.description,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: palette.textSecondary,
             ),
-            const SizedBox(height: DsSpacing.md),
-          ],
-          if (!_bootstrapFailed &&
-              _protectionEvaluation.status ==
-                  ProtectionHealthStatus.recovering) ...<Widget>[
-            const SecurityStatusBanner(
-              level: SecurityLevel.atRisk,
-              title: 'Protection engine recovering',
-              message: 'Native detection is active while the secure unlock '
-                  'engine is being restored.',
-            ),
-            const SizedBox(height: DsSpacing.md),
-          ],
-          if (!_engineHealth.protectionConfigured &&
-              _hasRevokedCapability) ...<Widget>[
-            SecurityStatusBanner(
-              level: SecurityLevel.vulnerable,
-              title: SecurityScreen.revokedTitle,
-              message: SecurityScreen.revokedMessage,
-              actionLabel: 'Review permissions',
-              onAction: _onPermissionSetupTap,
-            ),
-            const SizedBox(height: DsSpacing.md),
-          ],
-          // Phase 4 UX: first-install / incomplete setup — capabilities
-          // that have NEVER been granted. Distinct from the revocation
-          // banner above (previously granted, now missing).
-          if (!_engineHealth.protectionConfigured &&
-              !_hasRevokedCapability &&
-              _setupIncomplete) ...<Widget>[
-            SecurityStatusBanner(
-              level: SecurityLevel.atRisk,
-              title: SecurityScreen.setupRequiredTitle,
-              message: SecurityScreen.setupRequiredMessage,
-              actionLabel: 'Set up',
-              onAction: _onPermissionSetupTap,
-              footer: Text(
-                '${_accessibilityEnabled ? 'Early detection ready' : 'Accessibility required'} · '
-                '${_overlayGranted ? 'Shield ready' : 'Shield required'}',
-                style: theme.textTheme.labelLarge?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
-            const SizedBox(height: DsSpacing.md),
-          ],
-          // Capability setup is complete, but protection is not active until
-          // a credential and at least one protected app are configured.
-          if (!_engineHealth.protectionConfigured &&
-              !_hasRevokedCapability &&
-              _protectionReady) ...<Widget>[
-            SecurityStatusBanner(
-              level: SecurityLevel.secured,
-              title: 'Capability setup ready',
-              message: 'Required presentation and detection capabilities '
-                  'are available. Protection activates after a credential '
-                  'and at least one app are configured.',
-            ),
-            const SizedBox(height: DsSpacing.md),
-          ],
-          if (_engineHealth.protectionConfigured &&
-              (_protectionEvaluation.status == ProtectionHealthStatus.healthy ||
-                  _protectionEvaluation.status ==
-                      ProtectionHealthStatus.degraded)) ...<Widget>[
-            SecurityStatusBanner(
-              level:
-                  _protectionEvaluation.status == ProtectionHealthStatus.healthy
-                      ? SecurityLevel.secured
-                      : SecurityLevel.atRisk,
-              title:
-                  _protectionEvaluation.status == ProtectionHealthStatus.healthy
-                      ? 'Protection engine active'
-                      : _accessibilityEnabled
-                          ? 'Protection active with reduced resilience'
-                          : 'Protection limited by delayed detection',
-              message: _protectionEvaluation.status ==
-                      ProtectionHealthStatus.healthy
-                  ? 'Native recovery and both detection paths are available.'
-                  : !_accessibilityEnabled
-                      ? 'Usage access polls after foreground transitions and '
-                          'cannot guarantee flash-free presentation. Enable '
-                          'Accessibility for the earliest native shield.'
-                      : 'Early enforcement is active, but usage fallback or '
-                          'notification visibility is unavailable.',
-              actionLabel: _protectionEvaluation.status ==
-                      ProtectionHealthStatus.degraded
-                  ? 'Review'
-                  : null,
-              onAction: _protectionEvaluation.status ==
-                      ProtectionHealthStatus.degraded
-                  ? _onPermissionSetupTap
-                  : null,
-            ),
-            const SizedBox(height: DsSpacing.md),
-          ],
-          if (!_hasPin && !_hasPattern) ...<Widget>[
-            SecurityStatusBanner(
-              level: SecurityLevel.atRisk,
-              title: 'Protection is not fully set up',
-              message: SecurityScreen.description,
-              actionLabel: 'Set up PIN',
-              onAction: () =>
-                  Navigator.of(context).pushNamed(RouteNames.pinSetup),
-            ),
-            const SizedBox(height: DsSpacing.xl),
-          ],
+          ),
+          const SizedBox(height: DsSpacing.lg),
+          SecurityCenterSection(
+            isActive: widget.isActive,
+            onNavigate: widget.onNavigate,
+          ),
+          const SizedBox(height: DsSpacing.xl),
           const DsSectionTitle('Authentication'),
           const SizedBox(height: DsSpacing.md),
           DsCard(

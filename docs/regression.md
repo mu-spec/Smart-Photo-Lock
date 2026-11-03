@@ -2383,3 +2383,72 @@ Q1 (downgrades), Q2, Q3, Q7. Record Q6. F3 and biometric remain UNVERIFIED.
   not waived.
 - It is **not release ready** until that round passes, including E13, F3 and
   biometric.
+
+## Automated evidence (Phase 9 / M1)
+
+Security Center (PRD v2.1 Phase 9 / M1, 9A–9D). All results are
+**SIMULATED**: production widgets, `MainShell`, router, the Phase 7 engine,
+monitor and controller, and the real protected-app repository over an
+in-memory database with static platform services. No device, Settings
+screen, OEM behaviour or native enforcement is observed.
+
+| Suite | Tests | Covers |
+| --- | --- | --- |
+| `test/ui/security/security_center_test.dart` (new) | 25 | 9A: light/dark at 320 dp with 2× text, no overflow, semantic labels. Brief items 1–20: real values per level; empty state with an Apps link; one app; mixed levels; no duplicates and no unprotected installed apps; protect/unprotect and level changes reflected on return; Critical with SECURE / ATTENTION / OFFLINE; stale → ATTENTION (no new probe); checking hides an old SECURE; read failure → "unavailable" (never 0, earlier counts dropped) and Try again; loading state; native health unreadable → ATTENTION; health refresh failure or no source → "Status unavailable" / "Not confirmed"; Manage apps → Apps; View details → Health Details with exactly one re-check on return and no polling; repair → Apps tab; Settings and resume refresh; tab switches keep `SecurityScreen` / section State and a challenge stays on top (exact PIN only); disposal with a pending probe and read; no record or level write, authorization, grace, challenge, watcher start/stop or policy sync; a held stricter native level shown, never pushed (CR-2) |
+| `test/ui/security/security_center_summary_test.dart` (new) | 15 | counting rules (first record wins, blank packages ignored, label fallback, held-stricter only when native is stricter, input not mutated); Critical status mapping over real engine reports (none, unconfirmed, SECURE, ATTENTION, OFFLINE, stale, future-dated, unknown native) |
+| Legacy banner suites, **intentionally rewritten** for Phase 7 states (option A_replace): `protection_setup_banner_test` (9), `revocation_detection_test` (5 → 6), `permission_regression_test` (16) | 31 | same scenarios. Fresh install, one or both detectors, all granted without a credential: setup wording, never SECURE, never a failure. Configured: SECURE; Accessibility off or Usage Access off → ATTENTION; overlay off or both detectors off → OFFLINE "turned off". Restoring returns SECURE only after the refresh. Revocation dot rule unchanged (required capabilities only). New: a revocation before setup marks the dot while health stays setup |
+| Other intentional updates | — | `phase1_regression_test`: PIN setup now via the Authentication row (CR-3 change flow), not the removed banner action. `protection_health_dashboard_test`: opening the Security tab is one extra probe (Home still never probes while hidden). `security_screen_test`: waits out the bounded biometric probe timeouts (6 s) so no timer is left pending |
+| Existing suites (P5–P8) | unchanged, all pass | cross-phase regression |
+
+**Totals:**
+- Full Flutter: run 1 (before the last fix) +1352 −1. The failure was the
+  pending biometric probe timer in `security_screen_test`, fixed as above.
+  Run 2 (final tree): **+1353, all passed**, no reruns (1312 + 41 new).
+- `flutter analyze`: clean.
+- Native: no file under `android/` changed (`git diff HEAD -- android`
+  empty), so Kotlin JVM and typecheck were not rerun (P8 M3 baseline: 306
+  and exit 0).
+
+**Targeted mutation checks: 12/12 killed** (`Phase9_M1/run_m1_mutations.py`,
+outside the repo; each mutant run against the Phase 9 / M1 tests only):
+- summary accuracy: duplicates counted, blank packages counted, Critical
+  counted as Sensitive, held-stricter ignored;
+- offline/unknown health: no report, OFFLINE, or ATTENTION/stale treated as
+  "Checks passed";
+- read failure: shown as zero/empty, or earlier counts kept;
+- refresh: no refresh on tab activation, on return to the top route, or on
+  a revocation event.
+
+Not covered automatically: real devices and OEM skins, real Settings round
+trips, TalkBack, real font scaling and display sizes, and the native
+watcher and Accessibility service.
+
+## Phase 9 / M1 device QA (adds to the consolidated plan; not executed)
+
+Session 1e of the consolidated round (Oppo A9, after Session 1d). Same
+setup: PIN, grace 30 s, Accessibility on, A = Standard, B = Sensitive,
+C = Critical. Fail rules:
+- a count differs from the Apps rows, or an unprotected app is counted;
+- an unreadable list shows a number (including 0);
+- SECURE or "Checks passed" is shown while a step 2–4 fault is present;
+- absolute wording appears;
+- the Security Center changes a level, unlocks an app, or clears a
+  challenge.
+
+| Step | Actions | Expected |
+| --- | --- | --- |
+| SC1 Counts | Security tab vs Apps tab. | Total 3: Standard 1, Sensitive 1, Critical 1; C named. |
+| SC2 Changes + return | Manage apps: protect D, A → Critical, C → Standard (PIN), unprotect B (PIN); back to Security. | Counts and the Critical count match the Apps rows with no restart; nothing unlocks. |
+| SC3 Empty (record) | Unprotect all at the end of the session. | "No apps are protected yet"; Choose apps opens the Apps tab. |
+| SC4 No false SECURE | With C Critical, rerun step 2(a), then step 4, then restore. | OFFLINE + "Not working"; ATTENTION + "Needs attention"; SECURE + "Checks passed" only after the return refresh. |
+| SC5 Return refresh | Details → Back; Settings tab + overlay revoke → Security; Home + Usage revoke → reopen; idle 60 s. | Updates without Check again; no loop or repeated checking. |
+| SC6 Challenge on top | Step 9 with C and the Security tab. | C's challenge re-presents; only the exact PIN opens C. |
+| SC7 Display (record) | Dark mode and the largest font. | Readable; nothing clipped. |
+
+Minimum acceptance: SC1, SC2, SC4, SC5 and SC6 on the Oppo (release
+blockers: SC2, SC4, SC6). SC3 and SC7 are recorded. The full plan copy is
+`Phase9_M1/P6_P9_CONSOLIDATED_QA_PLAN.md` (outside the repo).
+
+**Status:** implemented and simulated-tested. It is **not device verified**
+(the combined Phase 6–10 round is deferred, not waived) and **not release
+ready** until that round passes, including E13, F3 and biometric.

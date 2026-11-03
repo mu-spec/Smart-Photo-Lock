@@ -2642,3 +2642,87 @@ M1 + M2 design with regression tests (`docs/regression.md`, Phase 8 / M3).
   session still in its map, even an expired one that hasn't been pruned.
   Native arms grace only for authorizations still valid at departure.
   Native is the final gate.
+
+## Phase 9 / M1 — Security Center (dashboard & protection summaries)
+
+PRD v2.1 Phase 9 / M1 (9A–9D). Baseline `463f1f5`. Read-only overview at
+the top of the existing **Security** tab; there is no new tab or route.
+
+- **Structure.** `SecurityScreen` (tab 3 of `MainShell`) now takes
+  `isActive` and `onNavigate` and renders `SecurityCenterSection`
+  (`lib/ui/screens/security/security_center_section.dart`) above the
+  unchanged Authentication, App lock permissions, Re-lock and Advanced
+  rows. Cards, in order:
+  1. Protection Health;
+  2. Protected apps;
+  3. Critical apps (only once the app list has loaded).
+- **Legacy banners replaced (decision A_replace).** The Phase 4 "Security
+  status" banners (setup required / permission revoked / capability setup
+  ready / engine active / delayed detection / not fully set up) classified
+  health separately from Phase 7. They are removed, so the tab shows one
+  status: the Phase 7 report. `_hasRevokedCapability` still drives the
+  permissions-header dot. The tab still calls
+  `protectionBootstrap.synchronize()` and `markCapabilityEverGranted` on
+  load. Its now-unused engine-health fields were deleted.
+  `ProtectionCapabilityEvaluation` stays, since the permission setup screen
+  uses it.
+- **Count derivation (9B).** `ProtectedAppsSummary.fromApps`
+  (`security_center_summary.dart`, pure) reads
+  `ProtectedAppsRepository.getProtectedApps()`, the list the matcher uses.
+  - Only saved records are counted, so unprotected installed apps never
+    are.
+  - Each package is counted once (trimmed), with the **first** record
+    winning, as in the matcher. Blank package names are ignored.
+  - Counts use the **saved** level. `heldStricter` separately counts apps
+    whose last native-confirmed level (`nativeLevelFor`) is stricter: a
+    downgrade not acknowledged yet, under the CR-2 path.
+  - Reads use a generation counter, so only the newest read is shown. A
+    failed read discards earlier counts and shows "Protected apps
+    unavailable" (never 0). Loading and empty states are explicit.
+- **Critical vs health (9C).** `CriticalProtectionStatus.of(count,
+  report)` maps only the Phase 7 `report.state`:
+  - SECURE → "Checks passed";
+  - ATTENTION REQUIRED → "Needs attention";
+  - PROTECTION OFFLINE → "Not working";
+  - no report (checking, failed or never checked) → "Not confirmed".
+
+  It is not a second classifier, and no per-app enforcement signal exists
+  or is invented. The assigned level and "Working now" are separate rows,
+  with the note that the assignment only takes effect while protection is
+  working.
+- **Health (9D).** A `ProtectionHealthController` over the shared
+  `AppContainer.protectionHealth` monitor, with wording from
+  `HealthPresentation`. Staleness is re-applied on every read (via
+  `monitor.latest()`), with a one-shot stale re-render. A failed refresh
+  shows "Status unavailable", and an after-change check hides an old
+  SECURE. View details / Fix protection reuse `/protection/health`; a
+  repair that returns a tab index continues there through `onNavigate`.
+- **Refresh (event driven, no polling or keep-alive):**
+  - first visible build;
+  - the tab becoming active (`didUpdateWidget`);
+  - the tab's route becoming current again after Health Details, setup,
+    PIN or a challenge (`ModalRoute.isCurrentOf` flip);
+  - app resume while visible (`HealthResumeTrigger`);
+  - a Phase 4F capability **revocation** event while visible;
+  - "Check again" and "Try again".
+
+  Concurrent requests share one probe in the monitor. Opening the Security
+  tab is now a refresh point: one probe per activation, and none from
+  other tabs or re-selection.
+- **Security boundary.** The section never:
+  - writes a record or level;
+  - authorizes or creates grace;
+  - touches a challenge or ticket;
+  - resets lockout;
+  - sends a policy;
+  - starts or stops the watcher.
+
+  Configuration changes go only through the Apps tab and the existing
+  repair and setup screens. `LockChallengeHost`, `ExternalRouteGuard` and
+  the challenge routes are unchanged. Tab state is kept by the
+  `IndexedStack` plus `AutomaticKeepAliveClientMixin`.
+- **Presentation (9A).** Design-system cards, light/dark, semantics
+  (header, merged count rows, banner label). The health actions and the
+  Critical status tag wrap under large text. The shared
+  `SecurityStatusBanner` action button and `DsStatusPill` do not wrap,
+  which is a pre-existing design-system limit noted under risks.

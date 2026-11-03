@@ -3,7 +3,6 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:smart_app_lock/app/app.dart';
 import 'package:smart_app_lock/app/app_container.dart';
-import 'package:smart_app_lock/app/router.dart';
 import 'package:smart_app_lock/app/theme/app_colors.dart';
 import 'package:smart_app_lock/app/theme/app_theme.dart';
 import 'package:smart_app_lock/data/models/protected_app.dart';
@@ -305,28 +304,30 @@ void main() {
 
     testWidgets('security screen actions navigate to PIN setup without crashing',
         (tester) async {
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: AppTheme.dark,
-          initialRoute: '/security-test',
-          routes: <String, WidgetBuilder>{
-            '/security-test': (_) => const Scaffold(body: SecurityScreen()),
-            RouteNames.pinSetup: (_) => const PinSetupScreen(),
-          },
-        ),
-      );
+      // Phase 9 / M1 (intentionally updated): the legacy "not fully set
+      // up" banner, whose 'Set up PIN' action pushed the setup route
+      // directly, was replaced by the Security Center. The Authentication
+      // row is the PIN entry; with no credential its CR-3 change flow falls
+      // through to setup, so the real app wiring is exercised here.
+      tester.view.physicalSize = const Size(800, 1600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      final AppContainer container = AppContainer.inMemory();
+      await tester.pumpWidget(SmartAppLockApp(container: container));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('nav_security')));
+      await tester.pumpAndSettle();
 
-      // Tap the banner's action (scoped: the PIN row also reads
-      // 'Set up PIN', so an unscoped text finder is ambiguous).
-      await tester.tap(
-        find.descendant(
-          of: find.byType(SecurityStatusBanner),
-          matching: find.text('Set up PIN'),
-        ),
+      final Finder setPin = find.descendant(
+        of: find.byType(SecurityStatusItem),
+        matching: find.text(SecurityScreen.setPinTitle),
       );
+      await tester.scrollUntilVisible(setPin, 200);
+      await tester.tap(setPin);
       await tester.pumpAndSettle();
       expect(find.text(PinSetupScreen.chooseLengthTitle), findsOneWidget);
       expect(tester.takeException(), isNull);
+      await container.capabilityMonitor.dispose();
     });
 
     testWidgets('design-system components render under both themes',

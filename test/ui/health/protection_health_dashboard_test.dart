@@ -382,15 +382,19 @@ void main() {
         await tester.tap(find.byKey(Key(tab)));
         await tester.pumpAndSettle();
       }
-      expect(fx.watcher.getHealthCalls, probes,
-          reason: 'no probe while Home is hidden, none from shell rebuilds');
+      // Phase 9 / M1 (intentionally updated): opening the Security tab is
+      // now its own refresh point (the Security Center checks health once
+      // per activation). Home still never probes while hidden, and no
+      // other tab, re-selection or shell rebuild probes.
+      expect(fx.watcher.getHealthCalls, probes + 1,
+          reason: 'one probe from the Security tab activation only');
 
       await tester.tap(find.byKey(const Key('nav_home')));
       await tester.pumpAndSettle();
-      expect(fx.watcher.getHealthCalls, probes + 1);
+      expect(fx.watcher.getHealthCalls, probes + 2);
       await tester.tap(find.byKey(const Key('nav_home')));
       await tester.pumpAndSettle();
-      expect(fx.watcher.getHealthCalls, probes + 1);
+      expect(fx.watcher.getHealthCalls, probes + 2);
 
       expect(identical(stateOf(HomeScreen), home), isTrue);
       expect(identical(stateOf(AppsScreen), apps), isTrue);

@@ -312,3 +312,22 @@ QA pass confirmed these bounds:
   The app has no network dependency and no INTERNET permission.
 - **Device behaviour is unverified** until the combined Phase 6–10 round
   (`docs/regression.md`, Phase 8 / M3).
+
+## Security Center limits (Phase 9 / M1)
+
+The Security Center adds no permission, dependency or native code. It only
+displays what already exists:
+
+- **Counts are saved settings.** They come from the protected-apps
+  database. An app counted as Critical is *assigned* Critical; that does
+  not prove it is locked right now. The "Working now" status is the overall
+  Phase 7 health result, not a per-app measurement. Smart App Lock has no
+  per-app enforcement signal.
+- **No absolute claims.** The status never says "100% protected",
+  "guaranteed" or "impossible to bypass". SECURE means the last fresh
+  check passed; a stale, unknown or failed check is never shown as SECURE.
+- **Same health limits as Phase 7.** OEM background controls stay
+  unobservable, and transitions during an Accessibility disconnect are not
+  reported (Q6).
+- **Device behaviour is unverified** until the combined Phase 6–10 round
+  (`docs/regression.md`, Phase 9 / M1).

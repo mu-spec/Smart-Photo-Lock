@@ -27,7 +27,12 @@ simulated-tested. Milestone 3 (security level QA and regression) adds a
 level × scenario matrix, transition, downgrade and persistence-failure
 regression tests (tests and docs only, no defect found). Device QA joins the
 combined Phase 6–10 round (`docs/regression.md`, Phase 8 / M1, M2 and M3;
-not device verified, not release ready) — production scaffold, architecture, navigation, design
+not device verified, not release ready). Phase 9 / Milestone 1 (Security
+Center: the Security tab opens with Protection Health, protected-app counts
+per level and a Critical apps summary; read-only, and it replaces the
+Phase 4 "Security status" banners) is implemented and simulated-tested;
+device QA joins the same combined round (`docs/regression.md`, Phase 9 /
+M1; not device verified, not release ready) — production scaffold, architecture, navigation, design
 system, persistence, secure storage, full authentication with settings,
 installed-apps management, the complete capability/permission layer,
 and the **core lock engine**: foreground detection (usage-stats +
