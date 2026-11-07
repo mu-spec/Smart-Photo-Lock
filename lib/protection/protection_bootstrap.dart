@@ -91,6 +91,12 @@ class ProtectionBootstrap {
   /// The last applied native acknowledgement (null until one succeeds).
   ProtectionPolicyAck? get lastPolicyAck => _lastAck;
 
+  /// Phase 10 / M3 (10K): the latest native exchange about Smart Rules in
+  /// this process (null before the first `configureProtection` call).
+  /// Diagnostics only; never used for an access decision.
+  SmartRuleNativeRecord? get lastRuleExchange => _lastRuleExchange;
+  SmartRuleNativeRecord? _lastRuleExchange;
+
   /// Phase 8 / M2: the level native last confirmed it enforces for
   /// [packageName], or null when unknown. Used as a floor: the effective
   /// Dart level is never weaker than this.
@@ -169,9 +175,18 @@ class ProtectionBootstrap {
       ),
     );
     if (configuredResult.isFailure) {
+      _lastRuleExchange = SmartRuleNativeRecord(
+        status: SmartRuleSyncStatus.unknown,
+        sentRules: rules,
+        failed: true,
+      );
       return Result.failure(configuredResult.errorOrNull!);
     }
     final ProtectionPolicyAck ack = configuredResult.valueOrNull!;
+    _lastRuleExchange = SmartRuleNativeRecord(
+      status: ack.ruleStatus,
+      sentRules: rules,
+    );
     if (ack.status != ProtectionPolicyStatus.unknown) _lastAck = ack;
     final running = await _watcher.isRunning();
     if (running.isFailure) {

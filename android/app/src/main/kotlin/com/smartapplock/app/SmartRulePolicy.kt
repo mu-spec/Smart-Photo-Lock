@@ -13,8 +13,16 @@ package com.smartapplock.app
  *
  * Only raising actions reach native (Sensitive, Critical). The effective
  * level is `stricter(baseline, rule level)`, so a rule can never lower a
- * saved level, remove protection, create grace or authorize access. Several
- * matching rules → the strictest (Phase 10 / M3 owns conflict diagnostics).
+ * saved level, remove protection, create grace or authorize access.
+ *
+ * Phase 10 / M3 (PRD 10J): several matching rules → the strictest, in the
+ * locked priority Critical > Sensitive > Standard > Unlocked (Standard and
+ * the reserved Unlocked are never sent here, so only Critical and Sensitive
+ * compete). The result never depends on rule order; equal levels tie with
+ * no effect on the level (rule ids, used by Dart diagnostics, are not part
+ * of the transport). Parity with Dart `SmartRuleConflictPolicy` is checked
+ * by executing the same language-neutral vectors in both test suites
+ * (`test/fixtures/smart_rules/conflict_vectors.json`).
  */
 data class SmartRuleSpec(
     val level: SecurityLevel,

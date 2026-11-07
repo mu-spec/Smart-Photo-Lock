@@ -5,9 +5,11 @@ import '../../../data/models/protected_app.dart';
 import '../../../data/repositories/smart_rule_repository.dart';
 import '../../../design_system/design_system.dart';
 import '../../../rules/smart_rule.dart';
+import '../../../rules/smart_rule_diagnostics.dart';
 import '../../../services/watcher_service.dart';
 import '../../../utilities/result.dart';
 import 'smart_rule_change.dart';
+import 'smart_rule_details.dart';
 import 'smart_rule_editor_screen.dart';
 import 'smart_rule_presentation.dart';
 import 'smart_wide_button.dart';
@@ -25,6 +27,11 @@ import 'smart_wide_button.dart';
 /// failed save leaves the switch where it was. Nothing here claims that a
 /// rule is active right now; the only enforcement statements are native
 /// acknowledgements.
+///
+/// Phase 10 / M3 (PRD 10K): a collapsed, read-only "Rule details" section
+/// under the list ([SmartRuleDetails]) explains which rules apply now, which
+/// one decides each app's calculated level, and separately whether
+/// protection confirmed the saved rules.
 class SmartScreen extends StatefulWidget {
   const SmartScreen({
     super.key,
@@ -263,6 +270,11 @@ class _SmartScreenState extends State<SmartScreen> {
                   SmartRuleText.unsupported,
                 _ => SmartRuleText.loadFailed,
               }),
+              if (_engineNoteWithoutRules() case final String note)
+                Padding(
+                  padding: const EdgeInsets.only(top: DsSpacing.xs),
+                  child: Text(note, key: const Key('smart_rules_engine_note')),
+                ),
               const SizedBox(height: DsSpacing.sm),
               TextButton(
                 key: const Key('smart_rules_retry'),
@@ -292,12 +304,39 @@ class _SmartScreenState extends State<SmartScreen> {
         ),
       ];
     }
+    final container = AppScope.read(context);
     return <Widget>[
       for (final SmartRule rule in rules) ...<Widget>[
         _ruleCard(context, rule),
         const SizedBox(height: DsSpacing.md),
       ],
+      if (container != null)
+        SmartRuleDetails(
+          rules: rules,
+          apps: _apps,
+          clock: widget.clock,
+          engineState: SmartRuleDiagnostics.engineStateFor(
+            container.protectionBootstrap.ruleCache,
+            rules,
+          ),
+          nativeState: SmartRuleDiagnostics.nativeStateFor(
+            rules,
+            container.protectionBootstrap.lastRuleExchange,
+          ),
+        ),
     ];
+  }
+
+  /// Phase 10 / M3: the engine note shown with a read error (only when the
+  /// Dart engine is itself without current rules).
+  String? _engineNoteWithoutRules() {
+    final container = AppScope.read(context);
+    if (container == null) return null;
+    return SmartRuleDetailsText.engine(
+      SmartRuleDiagnostics.engineStateWithoutSaved(
+        container.protectionBootstrap.ruleCache,
+      ),
+    );
   }
 
   Widget _heldNotice(BuildContext context) => DsCard(

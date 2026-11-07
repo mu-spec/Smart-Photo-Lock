@@ -10,12 +10,14 @@
 ///  * it is never below the baseline: Standard and the reserved Unlocked
 ///    action never take part, and no rule can lower a level, remove
 ///    protection, create grace or authorize access;
-///  * several matching rules → the strictest raising action (M2 interim;
-///    Phase 10 / M3 owns conflict diagnostics and arbitration).
+///  * several matching rules → the strictest raising action, resolved by
+///    the one Phase 10 / M3 conflict policy ([SmartRuleConflictPolicy],
+///    PRD 10J: Critical > Sensitive > Standard > Unlocked, order-independent).
 library;
 
 import '../data/models/app_security_level.dart';
 import 'smart_rule.dart';
+import 'smart_rule_conflict.dart';
 import 'smart_rule_evaluator.dart';
 
 abstract final class SmartRulePolicy {
@@ -31,18 +33,21 @@ abstract final class SmartRulePolicy {
     Iterable<SmartRule> rules,
     String appPackage,
     DateTime localDateTime,
-  ) {
-    AppSecurityLevel? best;
-    for (final SmartRule rule in rules) {
-      final AppSecurityLevel? level = rule.action.raisesTo;
-      if (level == null) continue;
-      if (best != null && !level.isStricterThan(best)) continue;
-      if (_evaluator.evaluate(rule, appPackage, localDateTime).isMatch) {
-        best = level;
-      }
-    }
-    return best;
-  }
+  ) =>
+      resolutionFor(rules, appPackage, localDateTime).ruleLevel;
+
+  /// Phase 10 / M3 (10J): the full conflict resolution behind
+  /// [ruleLevelFor] (strongest action, tied and matching rule ids).
+  static SmartRuleResolution resolutionFor(
+    Iterable<SmartRule> rules,
+    String appPackage,
+    DateTime localDateTime,
+  ) =>
+      SmartRuleConflictPolicy.resolve(
+        rules,
+        (SmartRule rule) =>
+            _evaluator.evaluate(rule, appPackage, localDateTime).isMatch,
+      );
 
   /// Baseline floor: the stricter of [baseline] and [ruleLevel]. Never
   /// below [baseline].
@@ -60,19 +65,16 @@ abstract final class SmartRulePolicy {
     String appPackage,
     int weekday,
     int minuteOfDay,
-  ) {
-    AppSecurityLevel? best;
-    for (final SmartRule rule in rules) {
-      final AppSecurityLevel? level = rule.action.raisesTo;
-      if (level == null) continue;
-      if (best != null && !level.isStricterThan(best)) continue;
-      if (SmartRuleEvaluator.matchesAt(
-          rule, appPackage, weekday, minuteOfDay)) {
-        best = level;
-      }
-    }
-    return best;
-  }
+  ) =>
+      SmartRuleConflictPolicy.resolve(
+        rules,
+        (SmartRule rule) => SmartRuleEvaluator.matchesAt(
+          rule,
+          appPackage,
+          weekday,
+          minuteOfDay,
+        ),
+      ).ruleLevel;
 
   /// Packages for which [after] gives LESS rule strictness than [before] at
   /// some (weekday, minute) of the week: a disabled, deleted, narrowed or

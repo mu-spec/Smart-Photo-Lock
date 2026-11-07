@@ -2888,3 +2888,109 @@ F3, biometric, E13, Q6 and the combined Phase 6–10 round remain open.
 
 **Status:** implemented and simulated-tested. It is **not device verified**
 and **not release ready**.
+
+## Automated evidence (Phase 10 / M3)
+
+All results are **SIMULATED**:
+- Dart: production conflict policy, diagnostics, bootstrap, access
+  controller and Smart UI over `AppContainer.inMemory`, with the static
+  watcher standing in for native.
+- Kotlin: production `SmartRuleTransport`, `SmartRulePolicy` and
+  `ProtectionStateStore` on the JVM, with a stub Android `Context`.
+
+No device, real watcher, real clock or time-zone change, TalkBack or OEM
+behaviour is observed.
+
+| Suite | Tests | Covers |
+| --- | --- | --- |
+| `test/rules/smart_rule_conflict_m3_test.dart` (new) | 26 | **Priority:** the locked Critical > Sensitive > Standard > Unlocked list, and every action pair in both orders. **PRD 10J examples:** Std+Sens+Crit, Sens+Std+Crit, Crit+Sens → Critical; Std+Std → Standard; Crit+Unlocked → Critical; none → baseline; disabled ignored. **Overlap 1–10, K:** two and three-plus rules; same-level tie (first sorted id); insertion order never changes the level or the deciding rule; disabled or non-matching higher-priority rules never count; overnight owner day; Sunday → Monday; all-day vs timed; removing the winner falls back to the next strongest; no leakage across apps. **CR-2 interplay:** deleting, disabling or lowering the winner is a reduction; deleting a fully outranked rule, adding a weaker rule or reordering is not |
+| `test/rules/smart_rule_diagnostics_m3_test.dart` (new) | 13 | **16–18:** PRD example (Standard app with Work Hours + Banking Protection); ties; saved level decides; a Sensitive rule covered by the saved level; an unprotected app; overnight day mismatch names the owner day; invalid input. **19–20:** confirmed only for an `applied` ack of exactly these rules; a calculated Critical is never a confirmation; engine states; bootstrap record applied / held / failed / failed read. **21–22:** no secret or authorization state in any diagnosis; diagnosing performs no write, sync or native call |
+| `test/rules/smart_rule_parity_vectors_m3_test.dart` (new) | 70 | **Shared vectors** (`test/fixtures/smart_rules/conflict_vectors.json`, also run by Kotlin). Per set (11): Dart sends exactly the fixture transport; hand-written cases; dense boundary grid; every permutation gives the same result. DST/time-zone instants; 21 reduction pairs (CR-2 / held boundary, order-independent); invalid stored rules rejected; invalid queries never match |
+| `test/ui/smart_rules_diagnostics_m3_test.dart` (new) | 14 | Collapsed by default. Multiple matching rules: deciding / outranked / covered by the saved level / not protected. Refresh re-evaluates at the clock (nothing refreshes by itself) and falls back to the next strongest rule. Native status: confirmed only after `applied`; "not checked yet" before any exchange (with the R-A note); unsynced save → not confirmed + behind saved; held → held; failed write → never confirmed. Read failure → R-A note in the error card. No writes, configures or authorizations when opening or refreshing; saved levels unchanged. 320 dp at 2× text in light and dark; toggle semantics (button, expanded state, tap action) with the body read separately |
+| `test/regression/smart_rules_m3_regression_test.dart` (new) | 16 | **Controller:** E/F/G strictest at each decision, with Dart = native fake and saved levels unchanged; A/D restart; L a stricter overlap ends a weaker session; M winner ending → no grace, then the Sensitive cap (not Standard); 8 no grace inheritance; N delete winner with CR-2 → fallback in Dart and native; I without CR-2 → held, covered rule deletion applies; P R-A before the first read; Q failed read then recovery; J lockout survives rule changes. **Smart UI:** deleting the winner needs the PIN (cancel keeps both, PIN → fallback); deleting a covered rule needs no PIN; switching off the winner needs the PIN. **Real app + lock host:** one PIN unlock under two overlapping rules sends exactly one native authorization, at the strictest level (Critical); a wrong PIN sends none. **Static:** the legacy LockRule/RuleEngine is not a second engine; diagnostics code reaches no credentials, sessions, secrets, writes, native authorization or timers |
+| `NativeDurabilityRegressionTest.kt` (new, JVM) | 16 | The Phase 10 / M2 native persistence gate, now permanent. Production `ProtectionStateStore` with a scripted `SharedPreferences` (OK / FAIL_BEFORE_DISK / FAIL_AFTER_DISK; a restart loads only the disk copy). **S1:** an authorized relaxation is durable and acked; an unauthorized one is held durably. **S2/S3/S5a:** a failed relaxation or raise, before or after disk, with or without a successful rollback, is never weaker in memory or after a restart. **S5:** every failure combination is never weaker; memory is never weaker than disk. **S5b:** records the original ambiguous-write defect without Option A, and native restored at the first Dart sync with it. **G1–G5:** native-only cold-start gap challenged; PIN grant with the Dart floor loaded or under R-A gets no weaker grace (records that native alone relies on that floor); the gap closes at the Dart sync even if the write fails again; a weaker grant is revoked at the next decision |
+| `SmartRuleParityVectorsTest.kt` (new, JVM) | 9 | The same fixture: shape; hand-written cases through pure `SmartRulePolicy` and through `ProtectionStateStore.configure` + `effectiveLevel` with a restart; dense grid (pure and store, at :00 and :59 s); transport order; DST/TZ instants via `TimeZone.setDefault`; invalid transports rejected with the previous rules kept; invalid queries; **21 reduction pairs:** `relaxes` = Dart, and the store HOLDS the stricter union without the CR-2 flag (checked across the week and after a restart), APPLIES with it |
+
+**Totals (final code):**
+- **Full Flutter:** **+1760, all passed**, EXIT 0, no skips or reruns
+  (1621 + 139 new: 26 + 13 + 70 + 14 + 16).
+- **Kotlin JVM:** **OK (355)** = 330 + 9 parity + 16 durability.
+  **Typecheck:** exit 0, 87 classes.
+- **Static checks:** `flutter analyze` no issues; `dart format
+  --language-version=3.5` 0 changed on the 12 new or changed Dart files;
+  `git diff --check` clean.
+- Initial failures, all fixed:
+  - 5 in the new UI suite (first run): 3 test-harness issues (a wrong
+    error-card key, an order-dependent set, and a lazily built off-screen
+    toggle) and **2 real accessibility defects** in the new details toggle.
+    `excludeSemantics` had dropped the tap action, and the missing
+    `container: true` merged the whole body into one button. Both were
+    fixed in production. A follow-up assertion that matched the body's
+    exact semantics label was changed to a pattern match plus a "not a
+    button" check, because the body is read as one card node.
+  - No other new suite failed on its first run.
+- After the first full run, `dart format` rewrapped 7 new files (layout
+  only). The full Flutter suite and all 19 mutants were then re-run on the
+  formatted code with the same results. One mutant anchor (T2) was updated
+  to the rewrapped line. The native-authorization regression test was added
+  afterwards, so the full suite was run a third time (the totals above), and
+  D1/D2 were run against it.
+
+**Dart ↔ native parity:** no mismatch found, so no native code change. Two
+native-only mutants (X1, X2) are caught by the shared vectors.
+
+**Targeted mutation checks: 21/21 killed, 0 invalid**
+(`Phase10_M3/run_m3_mutations.py`, outside the repo; one production spot
+per mutant; Dart mutants run the 5 M3 suites; Kotlin mutants run
+`SmartRuleParityVectorsTest`; restoration verified byte-identical):
+- **priority reversal (3/3):** Dart; native; Unlocked outranking Critical;
+- **tie instability (2/2):** unsorted ids; last id decides;
+- **second overlapping rule ignored (1/1);**
+- **winner removal without fallback (2/2):** Dart cache cleared on a
+  removal; native authorized reduction applying no rules;
+- **parity mismatch, native only (2/2):** inclusive end; reduction check
+  ignoring window ends;
+- **half-open boundary, Dart (1/1);**
+- **false confirmed status (3/3):** no transport comparison; no record;
+  failed exchange;
+- **startup floor removal (1/1);**
+- **CR-2 bypass (2/2):** gate skipped; a lowering under an overlap not
+  seen as a reduction;
+- **grace inheritance (2/2):** leave grace from the current level; a
+  stricter level not ending a weaker session or grace;
+- **native authorization (2/2):** one unlock authorizing twice; the
+  authorization sent without the strictest level floor.
+
+Not covered automatically:
+- the real watcher on a device;
+- real clock, time-zone or DST changes;
+- process death during a commit;
+- TalkBack output;
+- OEM behaviour.
+
+## Phase 10 / M3 device QA (adds to the consolidated plan; not executed)
+
+Session 1j (RM1–RM14) of the consolidated plan
+(`Phase10_M3/P6_P10_CONSOLIDATED_QA_PLAN.md`):
+- update in place;
+- two and three overlapping rules;
+- equal levels;
+- removing or turning off the winner (PIN, fallback to the next strongest);
+- deleting a covered rule (no PIN);
+- overnight overlap;
+- a stricter rule starting during a weaker unlock;
+- confirmation only with an ack;
+- accessibility;
+- the details never changing anything;
+- restart;
+- clock moves never going below saved levels.
+
+Release blockers:
+- RM1, RM2, RM5–RM9;
+- RM10 (a) and (b);
+- RM12, RM13 (a), RM14.
+
+F3, biometric, E13, Q6 and the combined Phase 6–10 round remain open.
+
+**Status:** implemented and simulated-tested. It is **not device verified**
+and **not release ready**.

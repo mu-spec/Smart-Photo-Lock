@@ -197,6 +197,37 @@ enum SmartRuleSyncStatus {
   unknown,
 }
 
+/// Phase 10 / M3 (PRD 10K): read-only record of the LATEST native exchange
+/// about Smart Rules in this process, used only by diagnostics to tell a
+/// calculated level from a native confirmation.
+///
+/// [sentRules] is the exact rule transport of that exchange (null = no
+/// rules were sent because the rule read failed). [failed] = the
+/// `configureProtection` call itself failed (bridge error or a
+/// `persisted=false` reply), so native's state is not known from it.
+/// Nothing reads this record to make an access decision.
+final class SmartRuleNativeRecord {
+  const SmartRuleNativeRecord({
+    required this.status,
+    required this.sentRules,
+    this.failed = false,
+  });
+
+  /// Native's treatment of the rules ([SmartRuleSyncStatus.unknown] for a
+  /// failed call).
+  final SmartRuleSyncStatus status;
+
+  /// The rule transport sent (`SmartRulePolicy.nativeTransport`), or null.
+  final List<Map<String, Object?>>? sentRules;
+
+  final bool failed;
+
+  @override
+  String toString() => 'SmartRuleNativeRecord(${status.name}, '
+      'sent=${sentRules == null ? 'none' : sentRules!.length}, '
+      'failed=$failed)';
+}
+
 /// How native treated the level part of a snapshot.
 enum ProtectionPolicyStatus {
   /// Valid snapshot applied (possibly with held downgrades).
