@@ -211,20 +211,28 @@ final class SmartRuleNativeRecord {
     required this.status,
     required this.sentRules,
     this.failed = false,
+    this.sentProfileOverlay,
   });
 
   /// Native's treatment of the rules ([SmartRuleSyncStatus.unknown] for a
   /// failed call).
   final SmartRuleSyncStatus status;
 
-  /// The rule transport sent (`SmartRulePolicy.nativeTransport`), or null.
+  /// The Smart Rules part of the transport sent
+  /// (`SmartRulePolicy.nativeTransport` of the saved rules), or null.
   final List<Map<String, Object?>>? sentRules;
 
   final bool failed;
 
+  /// Phase 11 / M1: the active-profile overlay part sent in the SAME
+  /// transport (`SecurityProfilePolicy.overlayRules`, canonical form); empty
+  /// for Normal, null when no transport was sent. Diagnostics only.
+  final List<Map<String, Object?>>? sentProfileOverlay;
+
   @override
   String toString() => 'SmartRuleNativeRecord(${status.name}, '
       'sent=${sentRules == null ? 'none' : sentRules!.length}, '
+      'profile=${sentProfileOverlay == null ? 'none' : sentProfileOverlay!.length}, '
       'failed=$failed)';
 }
 

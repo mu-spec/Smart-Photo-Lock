@@ -2994,3 +2994,85 @@ F3, biometric, E13, Q6 and the combined Phase 6–10 round remain open.
 
 **Status:** implemented and simulated-tested. It is **not device verified**
 and **not release ready**.
+
+# Phase 11 / M1 — Security Profiles: profile architecture & presets
+
+## Automated evidence (Phase 11 / M1)
+
+All results are **SIMULATED**:
+- Dart: production profile model, document, repository, policy, bootstrap
+  and access controller over `AppContainer.inMemory`, with the static
+  watcher standing in for native.
+- Kotlin: production `SmartRuleTransport`, `SmartRulePolicy` and
+  `ProtectionStateStore` on the JVM, with a stub Android `Context` and
+  in-memory `SharedPreferences` (AOSP failed-commit semantics).
+
+Non-Normal profiles are activated **only by the test harnesses**; no user
+can activate one in M1. No device, real watcher, TalkBack or OEM behaviour
+is observed.
+
+| Suite | Tests | Covers |
+| --- | --- | --- |
+| `test/profiles/security_profile_model_test.dart` (new) | 16 | **Presets:** five, canonical order, Normal active; only Guest adds protection; no Settings / Play Store / any app enrolled (D3); Work is an in-app profile (D2). **Raise-only (D1):** Standard rejected for "all" and per-app; Sensitive/Critical accepted; Normal adds nothing; Guest is exactly all Critical; invalid package, own package and more than 512 apps rejected. **Exactly one active:** unknown or empty id rejected; every preset can be the single active one; duplicates and missing presets rejected; input order irrelevant; unmodifiable. **Document:** round trip; not JSON / not an object → corrupt (never defaults); legacy `isActive` flag rejected |
+| `test/profiles/security_profile_policy_test.dart` (new) | 16 | **Compilation:** Guest → one all-day, every-day Critical entry over the protected apps; no protected apps → no entry (empty targets never mean all); per-app entries grouped by level; Normal → transport identical to rules-only. **`transportLevelFor`:** "all protected apps" never reaches an unprotected app. **Raise-only:** effective ≥ baseline, ≥ rule and ≥ overlay over every level, day and boundary; the overlay is time-independent; stricter rule vs weaker overlay and vice versa. **D6:** leaving Guest relaxes all protected apps; entering or staying relaxes nothing; editing down or removing an app relaxes it. **Cache (R-A):** not current until read; a failed read keeps the last good profile (never Normal) and is not current; `normalOnly` |
+| `test/profiles/security_profile_parity_vectors_test.dart` (new) | 58 | **Shared vectors** (`test/fixtures/security_profiles/profile_vectors.json`, also run by Kotlin). Presets equal the fixture; per scenario (7): Dart compiles exactly the overlay transport and sends exactly the combined transport (Normal: byte-identical to rules-only); 23 hand-written cases (rule, overlay, extra, effective, floor); dense grid (effective and engine level, plus the Dart floor's `transportLevelFor` view incl. unprotected targets). 11 switches/edits: transports and `relaxedPackages` match the brute-force oracle. 17 invalid documents rejected with the expected problem |
+| `test/data/security_profile_repository_test.dart` (new) | 13 | Nothing saved → defaults, no write; save confirmed by read-back; **CAS** stale `expected` → conflict, no write; identical save → no write; corrupt / newer version → read error, write refused, value untouched; storage read error → `storageUnavailable` (never defaults); failed write → `writeFailed` with the key removed or the previous value restored; unconfirmed (dropped) write never reported as saved; a failing restore still reports the write failure; serialized concurrent saves; only its own key touched (legacy `profiles` table untouched) |
+| `test/regression/security_profiles_m1_regression_test.dart` (new) | 14 | **Normal:** transport exactly rules-only, no profile document written, levels unchanged; empty transport with no rules. **Guest (harness):** R-A Critical before the first read; combined transport sent and applied; Dart grants Critical; unprotected app untouched; saved levels, protected set and native levels unchanged; engine stand-in Critical. **Kids (harness):** per-app Sensitive raises only that app; an unprotected app in the profile is never protected or challenged. **D6:** leaving Guest without authorization → HELD (stricter union kept), with the flag → APPLIED; nothing authorized. **R-A:** profile read failure → no transport (KEPT), Critical floor, recovery; corrupt document never replaced or overwritten; failed read after Guest keeps Guest; rule read failure → no transport. **Static:** no legacy LockProfile use; no timers / polling / isolates; no `saveProfiles` caller outside the repository; Health/Score code never reads profiles; no Settings / Play Store package |
+| `SecurityProfileParityVectorsTest.kt` (new, JVM) | 6 | The same fixture through UNCHANGED native code: shape; Normal transport = rules transport; 23 cases via pure `SmartRulePolicy` and `ProtectionStateStore.configure` → `effectiveLevel` with a restart (saved level never rewritten; unprotected apps not protected); dense grid (pure and store, at :00 and :59 s); 11 switches: `relaxes` = Dart, unauthorized relaxation HELD as the stricter union (also after restart), authorized APPLIED; a failed durable write of a relaxing switch (even authorized) is never reported as persisted and never weaker live or after restart |
+
+**Totals (final, formatted code):**
+- **Full Flutter:** **+1877, all passed**, EXIT 0, no skips
+  (1760 + 117 new: 16 + 16 + 58 + 13 + 14).
+- **Kotlin JVM:** **OK (361)** = 355 + 6 profile parity.
+- **Static checks:** `flutter analyze` no issues; `dart format
+  --language-version=3.5` on the 13 new or changed Dart files;
+  `git diff --check` clean.
+- Initial failures, all fixed:
+  - Kotlin parity, first run: 3 test-harness failures (a fixed snapshot
+    session id reused across JUnit instances, so native correctly rejected
+    the snapshots as stale). Fixed with a unique session per instance.
+  - Regression, first run: **1 real defect** found and fixed in production:
+    with Guest/Kids active, the Dart floor gave an UNPROTECTED app the
+    profile's "all protected apps" level (stricter, never weaker, and the
+    app was never challenged; native was unaffected). The Dart floor now
+    mirrors the compiled overlay (`transportLevelFor`). Also 1 static-test
+    false positive (a doc comment naming the legacy file); the check now
+    ignores comments.
+
+**Dart ↔ native parity:** no mismatch found; **no native code change.**
+
+**Targeted mutation checks: 24/24 killed, 0 invalid**
+(`Phase11/run_p11m1_mutations.py`, outside the repo; one production spot
+per mutant; Dart mutants run the 5 new suites; Kotlin mutants run
+`SecurityProfileParityVectorsTest`; restoration verified byte-identical):
+- **validation (7/7):** Standard overlay accepted; Normal with an overlay;
+  active id naming no profile; duplicate preset; Guest not Critical; own
+  package; newer version accepted;
+- **compilation and combination (6/6):** "all" entry dropped; wrong level;
+  "all" entry with no protected apps; "all" leaking to unprotected apps;
+  D6 relaxation ignoring the overlay; failed read falling back to Normal;
+- **bootstrap / R-A (4/4):** `extraLevelFor` ignoring the profile;
+  `extraLevelsCurrent` ignoring the profile read; rules-only transport;
+  sending a stale profile after a failed read;
+- **repository (4/4):** corrupt read as defaults; read-back mismatch
+  accepted; CAS skipped; failed write not rolled back;
+- **native, unchanged code (3/3):** all-day entries never matching;
+  relaxation checking only packages still targeted; effective level
+  ignoring the rule/overlay level.
+
+Not covered automatically: the real watcher on a device; process death
+during a commit; TalkBack; OEM behaviour.
+
+## Phase 11 / M1 device QA (not executed)
+
+M1 has no user-facing change: every user is on Normal, whose transport is
+byte-identical to Phase 10. A device check is therefore limited to:
+- a Phase 10 rules smoke test (unchanged behaviour);
+- confirming no `security_profiles` setting is written on upgrade.
+
+Profile switching QA belongs to M2.
+
+F3, biometric, E13, Q6 and the detailed Phase 6–10 sessions remain open.
+
+**Status:** implemented and simulated-tested. It is **not device verified**
+and **not release ready**.

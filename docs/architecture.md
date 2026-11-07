@@ -3522,3 +3522,173 @@ Native alone still has the Standard floor at a cold start (R-A is
 Dart-side). Tie identity is a Dart diagnostic only. The details view
 reflects the last exchange in this process; it is not a live native
 query.
+
+## Phase 11 / M1 — Security Profiles: profile architecture & presets
+
+M1 adds a typed, versioned Security Profile model with five presets
+(Normal, Home, Work, Guest, Kids) and enforces the active profile as a
+**raise-only overlay** above the saved baseline (approved decisions D1–D6).
+**Every user stays on Normal in M1.** No screen, tile, widget or
+notification can switch profiles. Non-Normal profiles are activated only by
+test harnesses. The design gate is `Phase11/M1_DESIGN_GATE.md`, outside the
+repo.
+
+### One engine (no second profile engine)
+
+- The active profile compiles into synthetic, enabled, all-day,
+  every-day `SmartRule`s:
+  - `SecurityProfilePolicy.overlayRules(profile, protectedPackages)`
+    produces ids `profile-<id>-all|sensitive|critical`, named
+    "<Label> profile".
+  - They are **never stored** with the Smart Rules and **never shown** in
+    the Smart Rules UI or diagnostics.
+- **Native transport:** one `smartRules` transport (v1, unchanged format)
+  = `SmartRulePolicy.nativeTransport(savedRules + overlayRules)`.
+  - With Normal it is **identical** to the Phase 10 rules-only transport.
+  - Native cannot tell rule entries from profile entries.
+- **No native change.** Native storage, ack, KEPT/HELD/APPLIED resolution,
+  restart and `effectiveLevel` are unchanged.
+- **Legacy scaffold:** `lib/profiles/lock_profile.dart`,
+  `profile_manager.dart`, the SQLite `profiles` table and
+  `pref.profile.last_active_id` stay unchanged and **disconnected**. Their
+  "packages locked while active" meaning could drop protection, and a
+  static test proves the new code never references them.
+
+### Model (`lib/profiles/security_profile.dart`)
+
+- `SecurityProfileKind`: `normal`, `home`, `work`, `guest`, `kids` (stable
+  ids and labels).
+- `SecurityProfile` has an optional `allProtectedLevel` and per-app
+  `appLevels`, validated on construction:
+  - levels are **Sensitive or Critical only**: never Standard or Unlocked,
+    so a profile can never lower anything;
+  - packages must be valid Android names and never Smart App Lock itself;
+  - at most 512 apps;
+  - **Normal** is empty (adds nothing);
+  - **Guest** is exactly "every protected app Critical", with no per-app
+    entries.
+- **Presets:** Normal, Home, Work and Kids are empty; Guest is all
+  Critical. **Nothing is auto-enrolled (D3):** no Settings, Play Store or
+  payment app appears in any preset. Kids uses only apps the user selects
+  (wired in M2).
+- **Work (D2)** is an in-app profile, not an Android managed Work Profile.
+- **`SecurityProfileSet`** holds exactly the five presets once each (any
+  order in, canonical order out), plus `activeProfileId`. It must name
+  exactly one profile (**exactly one active**). There is no per-profile
+  `isActive` flag.
+
+### Storage (`SecurityProfileRepository`, `SecurityProfileDocument`)
+
+- **Key:** `security_profiles` in app settings, v1
+  `{"version":1,"activeProfileId":…,"profiles":[{"id","all","apps"}]}`.
+  Keys must match exactly.
+- **Decoding:** strict. A malformed document → `corrupt`; a newer version
+  → `unsupportedVersion`.
+- **Nothing stored** → defaults (Normal active). **Reading never writes.**
+- **Repository behaviour** (`security_profile_repository_impl.dart`):
+  - operations are serialized;
+  - **compare-and-swap** saves: a stale `expected` value → `conflict`;
+  - an identical save is a no-op;
+  - it refuses to write over a corrupt, unsupported or unreadable value
+    (never silently replaced);
+  - every write is **confirmed by reading it back**. On failure the
+    previous raw value is restored (or the key removed) and `writeFailed`
+    is returned; a failed write is never reported as saved.
+- **No app code calls `saveProfiles` in M1** (static test).
+
+### Combination and precedence
+
+- **effective level** = strictest(saved baseline, Smart Rule level,
+  profile overlay level), using the Phase 10 conflict policy
+  (Critical > Sensitive > Standard > Unlocked).
+- The overlay never changes a saved level.
+- **"All protected apps"** targets exactly the protected set at that sync.
+  With no protected apps there is no entry; empty targets never mean "all".
+- **Per-app entries** are compiled as given. Native ignores unprotected
+  packages, so a profile never protects an app.
+- **Dart floor:** `ProtectionBootstrap.extraLevelFor` (fed to the access
+  controller) = stricter(rule level,
+  `SecurityProfilePolicy.transportLevelFor(active, pkg, lastSentProtectedSet)`).
+  This mirrors the compiled overlay exactly, so "all protected apps" never
+  reaches an unprotected app.
+
+### Start-up and failure safety (R-A extended, Option A unchanged)
+
+- **Both reads must succeed.** `ProtectionBootstrap` reads rules and
+  profiles on every sync. `extraLevelsCurrent` is true only while **both**
+  latest reads succeeded.
+  - Before the first successful read, and after any failed, corrupt or
+    unsupported read, the access controller treats protected apps as
+    **Critical** (R-A).
+  - A failed profile read keeps the last good active profile (never
+    "Normal by default").
+- **If either read fails, no `smartRules` are sent.** Native keeps its
+  persisted combined set (KEPT), so a profile can't be dropped by a read
+  error.
+- **Relaxations (D6):** a profile switch or edit that lowers the combined
+  strictness of any app at any minute (`SecurityProfilePolicy.relaxedPackages`,
+  exact over the combined lists) is a relaxation.
+  - Without `authorizedRuleRelaxation` (the CR-2 PIN/Pattern proof), native
+    HOLDS the stricter union, as for Smart Rules.
+  - **M1 wires no switching UI.** M2 must route every relaxing switch or
+    edit through the PIN/Pattern gate; it is never automatic.
+- **Unchanged:** Option A rollback, the exact failure text, CR-2,
+  `confirmHeld`, rule precedence and native ack safety.
+- `SmartRuleNativeRecord` gains `sentProfileOverlay`.
+  - `sentRules` stays the rules-only part, so Smart Rule diagnostics are
+    unchanged.
+  - The profile contribution is not shown yet (M2/M3).
+
+### Health and Score (D5)
+
+The Phase 7 Health and Phase 9 Score formulas are unchanged, and no Health
+or Score code reads profiles (static test). Any profile contribution is
+advisory only, in a later milestone.
+
+### Dart ↔ native parity (shared vectors)
+
+`test/fixtures/security_profiles/profile_vectors.json` is generated by
+`generate_profile_vectors.py`; do not edit it by hand. The generator has an
+independent reference model with a brute-force relaxation oracle, and
+refuses to write on any disagreement.
+
+The **same file** is executed by:
+- `test/profiles/security_profile_parity_vectors_test.dart` (Dart);
+- `android/.../SecurityProfileParityVectorsTest.kt` (Kotlin, production
+  `SmartRuleTransport`, `SmartRulePolicy` and `ProtectionStateStore`, with a
+  restart).
+
+It contains 5 presets, 7 scenarios (23 hand-written cases, 1,582 grid
+points), 11 switches/edits (5 relaxing) and 17 invalid documents.
+
+### Files
+
+- **New Dart:**
+  - `lib/profiles/security_profile.dart`;
+  - `security_profile_document.dart`;
+  - `security_profile_policy.dart`;
+  - `lib/data/repositories/security_profile_repository.dart`;
+  - `impl/security_profile_repository_impl.dart`.
+- **Changed Dart:**
+  - `protection_bootstrap.dart` (combined transport, profile cache,
+    `extraLevelFor`, `extraLevelsCurrent`);
+  - `app_container.dart` (repository wiring, floor and current callbacks);
+  - `watcher_service.dart` (`sentProfileOverlay`).
+- **Native:** none.
+- **No new permission, service, timer, polling, dependency or SDK
+  change.**
+
+### Limits (M1)
+
+- No user-facing switching, editing or Kids app selection (M2). Profiles
+  are harness-only.
+- Unprotecting an app while Guest is active would be held natively until
+  M2 adds the authorization pass-through.
+- The diagnostics don't show the profile contribution yet.
+- All Phase 10 limits stand:
+  - event-driven checks;
+  - native trusts the Dart relaxation flag;
+  - plaintext storage;
+  - best-effort native rollback;
+  - native alone has the Standard floor at a cold start (R-A is
+    Dart-side).

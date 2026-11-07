@@ -6,11 +6,13 @@ import '../data/models/app_entry.dart';
 import '../data/repositories/impl/installed_apps_repository_impl.dart';
 import '../data/repositories/impl/lock_settings_repository_impl.dart';
 import '../data/repositories/impl/protected_apps_repository_impl.dart';
+import '../data/repositories/impl/security_profile_repository_impl.dart';
 import '../data/repositories/impl/security_settings_repository_impl.dart';
 import '../data/repositories/impl/smart_rule_repository_impl.dart';
 import '../data/repositories/installed_apps_repository.dart';
 import '../data/repositories/lock_settings_repository.dart';
 import '../data/repositories/protected_apps_repository.dart';
+import '../data/repositories/security_profile_repository.dart';
 import '../data/repositories/security_settings_repository.dart';
 import '../data/repositories/smart_rule_repository.dart';
 import '../data/storage/impl/in_memory_key_value_store.dart';
@@ -101,6 +103,9 @@ class AppContainer {
     // protection bootstrap on each sync (raise-only rule actions); written
     // only from the Smart tab.
     smartRules = SmartRuleRepositoryImpl(_database);
+    // Phase 11 / M1: Security Profiles storage, read by the protection
+    // bootstrap on each sync. No production writer in M1 (Normal active).
+    securityProfiles = SecurityProfileRepositoryImpl(_database);
     // Installed-apps discovery (Phase 3A): repository over the platform
     // service. The service instance is shared — no screen ever creates
     // its own.
@@ -159,6 +164,8 @@ class AppContainer {
       watcher: watcherService,
       // Phase 10 / M2: each sync also sends the raise-only Smart Rules.
       smartRules: smartRules,
+      // Phase 11 / M1: and the active profile's raise-only overlay.
+      profiles: securityProfiles,
     );
     // Phase 7 / M1: read-only Protection Health over the SAME shared
     // services. Construction has no side effects; nothing probes until a
@@ -187,9 +194,11 @@ class AppContainer {
       // Phase 8 / M2: never weaker than the level native last confirmed.
       enforcedLevelFloor: protectionBootstrap.nativeLevelFor,
       // Phase 10 / M2: never weaker than the active Smart Rule level.
-      ruleLevelFloor: protectionBootstrap.ruleCache.levelFor,
-      // R-A: Critical until the rules are read (and after a failed read).
-      ruleLevelsCurrent: () => protectionBootstrap.ruleCache.current,
+      // Phase 11 / M1: nor than the active profile's overlay.
+      ruleLevelFloor: protectionBootstrap.extraLevelFor,
+      // R-A: Critical until the rules AND the profiles are read (and after
+      // a failed read of either).
+      ruleLevelsCurrent: () => protectionBootstrap.extraLevelsCurrent,
     );
     lockTrigger = LockTrigger(
       monitor: foregroundMonitor,
@@ -326,6 +335,11 @@ class AppContainer {
   /// Phase 10 / M1: Smart Rules storage. Phase 10 / M2: raise-only rule
   /// actions, enforced through [protectionBootstrap] and native.
   late final SmartRuleRepository smartRules;
+
+  /// Phase 11 / M1: Security Profiles storage (raise-only overlays,
+  /// enforced through [protectionBootstrap] and native). Not the legacy
+  /// [lockSettings] profiles.
+  late final SecurityProfileRepository securityProfiles;
 
   /// Credential lifecycle (Phase 2A): enroll / status / authenticate /
   /// clear for PIN, pattern and biometric.
