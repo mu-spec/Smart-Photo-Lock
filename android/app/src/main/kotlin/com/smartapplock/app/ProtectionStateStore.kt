@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.os.SystemClock
 import android.provider.Settings
+import java.util.Calendar
 
 /** Minimal non-secret state required to recover enforcement without Dart. */
 object ProtectionStateStore {
@@ -35,6 +36,10 @@ object ProtectionStateStore {
     private const val KEY_LEVELS = "security_levels"
     private const val KEY_LEVELS_VERSION = "security_levels_version"
     const val ERROR_LEVELS_INVALID = "security_levels_invalid"
+    // Phase 10 / M2: raise-only Smart Rule specs, written in the SAME edit
+    // as the protected set and levels (see SmartRuleStoreCodec).
+    private const val KEY_RULES = "smart_rules"
+    private const val KEY_RULES_VERSION = "smart_rules_version"
 
     private val snapshotOrder = SnapshotOrderGate()
 
@@ -45,6 +50,12 @@ object ProtectionStateStore {
         val session: String? = null,
         val revision: Long? = null,
         val authorizedDowngrades: Set<String> = emptySet(),
+        /** Phase 10 / M2: whether `smartRules` was sent at all. */
+        val rulesPresent: Boolean = false,
+        val rulesVersion: Any? = null,
+        val rawRules: Any? = null,
+        /** Phase 10 / M2: a rule relaxation confirmed through CR-2 in Dart. */
+        val authorizedRuleRelaxation: Boolean = false,
     )
 
     /** What native applied; returned to Dart for reconciliation. */
@@ -55,6 +66,8 @@ object ProtectionStateStore {
         val heldDowngrades: Set<String>,
         /** False when the durable write failed (reported, never as applied). */
         val persisted: Boolean = true,
+        /** Phase 10 / M2: applied | held | kept | invalid. */
+        val ruleStatus: String = "kept",
     ) {
         fun toMap(): Map<String, Any> = mapOf(
             "applied" to applied,
@@ -62,6 +75,7 @@ object ProtectionStateStore {
             "policyStatus" to status,
             "effectiveLevels" to levels.mapValues { it.value.id },
             "heldDowngrades" to heldDowngrades.toList(),
+            "ruleStatus" to ruleStatus,
         )
     }
 
@@ -111,23 +125,69 @@ object ProtectionStateStore {
             ProtectionAccessState.revokeAll()
         }
         val preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        var ruleStatus = SmartRuleSnapshotResolver.Status.KEPT
         val (persisted, levels) = synchronized(levelsLock) {
             val previous = securityLevelsLocked(preferences)
-            val written = preferences.edit()
+            // Phase 10 / M2: rules resolved and written with the levels.
+            val previousRulesVersion = rulesVersionLocked(preferences)
+            val previousRuleEntries = preferences.getStringSet(KEY_RULES, null)?.toSet()
+            val previousRules = SmartRuleStoreCodec.decode(previousRulesVersion, previousRuleEntries)
+            val rules = SmartRuleSnapshotResolver.resolve(
+                present = policy.rulesPresent,
+                version = policy.rulesVersion,
+                raw = policy.rawRules,
+                previous = previousRules.rules,
+                previousDamaged = previousRules.damaged,
+                authorizedRelaxation = policy.authorizedRuleRelaxation,
+            )
+            ruleStatus = rules.status
+            val edit = preferences.edit()
                 .putBoolean(KEY_ENABLED, enabled && normalized.isNotEmpty())
                 .putStringSet(KEY_PACKAGES, normalized)
                 .putInt(KEY_LEVELS_VERSION, SecurityLevelStoreCodec.VERSION)
                 .putStringSet(KEY_LEVELS, SecurityLevelStoreCodec.encode(resolution.levels))
-                .commit()
+            rules.rules?.let {
+                edit.putInt(KEY_RULES_VERSION, SmartRuleStoreCodec.VERSION)
+                    .putStringSet(KEY_RULES, SmartRuleStoreCodec.encode(it))
+            }
+            val written = edit.commit()
             if (written) {
                 true to resolution.levels
             } else {
                 val safe = PolicySnapshotResolver.unpersisted(resolution.levels, previous)
                 // Restores memory whatever the disk result; best effort on disk.
-                preferences.edit()
+                val restore = preferences.edit()
                     .putInt(KEY_LEVELS_VERSION, SecurityLevelStoreCodec.VERSION)
                     .putStringSet(KEY_LEVELS, SecurityLevelStoreCodec.encode(safe))
-                    .commit()
+                val resolvedRules = rules.rules
+                if (resolvedRules != null) {
+                    if (previousRules.damaged) {
+                        // Keep the damaged marker (Critical) exactly as it was.
+                        if (previousRulesVersion == null) {
+                            restore.remove(KEY_RULES_VERSION)
+                        } else {
+                            restore.putInt(KEY_RULES_VERSION, previousRulesVersion)
+                        }
+                        if (previousRuleEntries == null) {
+                            restore.remove(KEY_RULES)
+                        } else {
+                            restore.putStringSet(KEY_RULES, previousRuleEntries)
+                        }
+                    } else {
+                        // Never weaker than the last confirmed rules.
+                        restore.putInt(KEY_RULES_VERSION, SmartRuleStoreCodec.VERSION)
+                            .putStringSet(
+                                KEY_RULES,
+                                SmartRuleStoreCodec.encode(
+                                    SmartRuleSnapshotResolver.unpersisted(
+                                        resolvedRules,
+                                        previousRules.rules,
+                                    ),
+                                ),
+                            )
+                    }
+                }
+                restore.commit()
                 false to safe
             }
         }
@@ -150,8 +210,50 @@ object ProtectionStateStore {
             heldDowngrades = resolution.heldDowngrades +
                 levels.filter { (pkg, level) -> resolution.levels[pkg] != level }.keys,
             persisted = persisted,
+            ruleStatus = ruleStatus.name.lowercase(),
         )
     }
+
+    /**
+     * Phase 10 / M2: the level native ENFORCES for [packageName] at the
+     * wall-clock instant [nowWallMs] (device default time zone, read at the
+     * call): the stricter of its saved level ([securityLevel]) and the
+     * strictest persisted Smart Rule matching it then. Never below the saved
+     * level. A damaged rule store → Critical. Called at every foreground
+     * decision and at authorization; no timer or alarm is involved, so a
+     * rule start takes effect at the next observed foreground event.
+     */
+    fun effectiveLevel(
+        context: Context,
+        packageName: String,
+        nowWallMs: Long = System.currentTimeMillis(),
+    ): SecurityLevel {
+        val baseline = securityLevel(context, packageName)
+        val preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val decoded = synchronized(levelsLock) {
+            SmartRuleStoreCodec.decode(
+                rulesVersionLocked(preferences),
+                preferences.getStringSet(KEY_RULES, null)?.toSet(),
+            )
+        }
+        if (decoded.damaged) return SecurityLevel.CRITICAL
+        if (decoded.rules.isEmpty()) return baseline
+        val calendar = Calendar.getInstance().apply { timeInMillis = nowWallMs }
+        val ruleLevel = SmartRulePolicy.ruleLevel(
+            decoded.rules,
+            packageName,
+            SmartRulePolicy.isoDayFromCalendar(calendar.get(Calendar.DAY_OF_WEEK)),
+            calendar.get(Calendar.HOUR_OF_DAY) * 60 + calendar.get(Calendar.MINUTE),
+        )
+        return SmartRulePolicy.effectiveLevel(baseline, ruleLevel)
+    }
+
+    private fun rulesVersionLocked(preferences: SharedPreferences): Int? =
+        if (preferences.contains(KEY_RULES_VERSION)) {
+            preferences.getInt(KEY_RULES_VERSION, -1)
+        } else {
+            null
+        }
 
     /**
      * Phase 8 / M2: effective level of every protected package (see

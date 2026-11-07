@@ -4,6 +4,9 @@ import 'dart:math';
 import '../data/models/app_security_level.dart';
 import '../data/models/protected_app.dart';
 import '../data/repositories/protected_apps_repository.dart';
+import '../data/repositories/smart_rule_repository.dart';
+import '../rules/smart_rule.dart';
+import '../rules/smart_rule_policy.dart';
 import '../security/credentials/credential_manager.dart';
 import '../services/watcher_service.dart';
 import '../utilities/result.dart';
@@ -12,10 +15,16 @@ class ProtectionBootstrapResult {
   const ProtectionBootstrapResult({
     required this.configured,
     required this.health,
+    this.policyAck = ProtectionPolicyAck.unknown,
   });
 
   final bool configured;
   final ProtectionEngineHealth health;
+
+  /// Phase 10 / M2: native's acknowledgement of THIS call's snapshot
+  /// ([ProtectionPolicyAck.unknown] when native did not report). Callers
+  /// use it, never an earlier ack, before claiming a change is enforced.
+  final ProtectionPolicyAck policyAck;
 }
 
 /// Synchronizes authoritative Dart persistence into the minimal native
@@ -30,20 +39,40 @@ class ProtectionBootstrapResult {
 /// increasing revision, so native ignores a stale/out-of-order one. Calls
 /// are serialized. The last native acknowledgement is kept so the app can
 /// tell when native enforces a different (stricter) level than persisted.
+///
+/// Phase 10 / M2: the same snapshot carries the raise-only Smart Rules
+/// (`SmartRulePolicy.nativeTransport`), read from [SmartRuleRepository]
+/// inside the serialized call. A failed, corrupt or unsupported rule read
+/// sends NO rules, so native keeps the rules it last persisted (nothing is
+/// relaxed by an unreadable document) and the in-memory
+/// [SmartRuleEnforcementCache] keeps its last good copy.
 class ProtectionBootstrap {
   ProtectionBootstrap({
     required ProtectedAppsRepository protectedApps,
     required CredentialManager credentials,
     required WatcherService watcher,
     String? session,
+    SmartRuleRepository? smartRules,
+    SmartRuleEnforcementCache? ruleCache,
   })  : _protectedApps = protectedApps,
         _credentials = credentials,
         _watcher = watcher,
+        _smartRules = smartRules,
+        ruleCache = ruleCache ?? SmartRuleEnforcementCache(),
         session = session ?? _newSession();
 
   final ProtectedAppsRepository _protectedApps;
   final CredentialManager _credentials;
   final WatcherService _watcher;
+  final SmartRuleRepository? _smartRules;
+
+  /// Phase 10 / M2: last successfully read rules (Dart-side enforcement).
+  final SmartRuleEnforcementCache ruleCache;
+
+  /// Phase 10 / M2: the error of the last rule read, or null when it
+  /// succeeded (or no rule repository is wired).
+  Object? get lastRuleReadError => _lastRuleReadError;
+  Object? _lastRuleReadError;
 
   /// Random per-instance id of the snapshot stream (not a secret).
   final String session;
@@ -71,19 +100,45 @@ class ProtectionBootstrap {
   /// Sends the current persisted state to native. [authorizedDowngrades]
   /// lists packages whose lower level was JUST confirmed through the CR-2
   /// credential gate; native holds any other lower level.
+  ///
+  /// Phase 10 / M2: [authorizedRuleRelaxation] is true only right after a
+  /// rule change that reduces rule strictness was confirmed through the
+  /// CR-2 gate; it applies to this one snapshot only.
   Future<Result<ProtectionBootstrapResult>> synchronize({
     Set<String> authorizedDowngrades = const <String>{},
+    bool authorizedRuleRelaxation = false,
   }) {
     final Future<void> previous = _tail;
     final Completer<void> done = Completer<void>();
     _tail = done.future;
     return previous
-        .then((_) => _synchronize(authorizedDowngrades))
+        .then(
+          (_) => _synchronize(authorizedDowngrades, authorizedRuleRelaxation),
+        )
         .whenComplete(done.complete);
+  }
+
+  /// Phase 10 / M2: the rule transport for this snapshot, or null (= send
+  /// nothing; native keeps its persisted rules) when no repository is wired
+  /// or the read failed.
+  Future<List<Map<String, Object?>>?> _ruleTransport() async {
+    final SmartRuleRepository? repository = _smartRules;
+    if (repository == null) return null;
+    final Result<List<SmartRule>> read = await repository.getRules();
+    final List<SmartRule>? rules = read.valueOrNull;
+    if (read.isFailure || rules == null) {
+      _lastRuleReadError = read.errorOrNull ?? StateError('No rules read.');
+      ruleCache.markReadFailed();
+      return null;
+    }
+    _lastRuleReadError = null;
+    ruleCache.update(rules);
+    return SmartRulePolicy.nativeTransport(rules);
   }
 
   Future<Result<ProtectionBootstrapResult>> _synchronize(
     Set<String> authorizedDowngrades,
+    bool authorizedRuleRelaxation,
   ) async {
     final credentialResult = await _credentials.status();
     if (credentialResult.isFailure) {
@@ -97,6 +152,7 @@ class ProtectionBootstrap {
     final packages = apps.map((app) => app.packageName).toSet();
     final bool configured =
         credentialResult.valueOrNull!.hasAnyCredential && packages.isNotEmpty;
+    final List<Map<String, Object?>>? rules = await _ruleTransport();
     final configuredResult = await _watcher.configureProtection(
       enabled: configured,
       protectedPackages: packages,
@@ -108,6 +164,8 @@ class ProtectionBootstrap {
         session: session,
         revision: ++_revision,
         authorizedDowngrades: authorizedDowngrades.intersection(packages),
+        smartRules: rules,
+        authorizedRuleRelaxation: rules != null && authorizedRuleRelaxation,
       ),
     );
     if (configuredResult.isFailure) {
@@ -145,6 +203,7 @@ class ProtectionBootstrap {
       ProtectionBootstrapResult(
         configured: configured,
         health: health.valueOrNull!,
+        policyAck: ack,
       ),
     );
   }

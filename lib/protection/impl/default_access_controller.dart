@@ -36,30 +36,66 @@ import '../security_level_policy.dart';
 /// the stricter of its stored level and [enforcedLevelFloor] (the level
 /// native still enforces, e.g. a downgrade not yet confirmed natively). An
 /// unknown protection state uses the strictest level.
+///
+/// Phase 10 / M2 (10F): [ruleLevelFloor] adds the raise-only Smart Rule
+/// level for the package at the controller's own clock. The effective level
+/// is the stricter of the saved level, the native floor and the rule level,
+/// so it is never below the saved level. A session remembers the level it
+/// was granted at; when the effective level is now stricter (a rule started
+/// or was enabled), the next evaluation revokes it and challenges. A rule
+/// ending never creates grace or a session.
+///
+/// Phase 10 / M2 (R-A startup safety): while [ruleLevelsCurrent] reports
+/// false (Smart Rules not yet read in this process, or the latest read
+/// failed), every protected (or unknown) package is treated as Critical:
+/// short unlock window, no grace, and the Critical floor is what native
+/// `authorizePackage` receives. Unprotected packages are never affected and
+/// saved levels are never changed.
 class DefaultAccessController implements AccessController {
   DefaultAccessController({
     required ProtectedAppMatcher matcher,
     required CredentialManager auth,
     DateTime Function()? now,
     AppSecurityLevel? Function(String packageName)? enforcedLevelFloor,
+    AppSecurityLevel? Function(String packageName, DateTime now)?
+        ruleLevelFloor,
+    bool Function()? ruleLevelsCurrent,
   })  : _matcher = matcher,
         _auth = auth,
         _now = now ?? DateTime.now,
-        _enforcedLevelFloor = enforcedLevelFloor;
+        _enforcedLevelFloor = enforcedLevelFloor,
+        _ruleLevelFloor = ruleLevelFloor,
+        _ruleLevelsCurrent = ruleLevelsCurrent;
 
   final ProtectedAppMatcher _matcher;
   final CredentialManager _auth;
   final DateTime Function() _now;
   final AppSecurityLevel? Function(String packageName)? _enforcedLevelFloor;
+  final AppSecurityLevel? Function(String packageName, DateTime now)?
+      _ruleLevelFloor;
+  final bool Function()? _ruleLevelsCurrent;
 
   /// Phase 8 / M2: the level that governs [match]'s package.
+  /// Phase 10 / M2: also never weaker than the active Smart Rule level.
+  /// R-A: Critical while the Smart Rules are not currently known.
   AppSecurityLevel _levelOf(ProtectedMatch match) {
+    final bool Function()? rulesCurrent = _ruleLevelsCurrent;
+    if (rulesCurrent != null &&
+        match.decision != ProtectedMatchDecision.notProtected &&
+        !rulesCurrent()) {
+      return AppSecurityLevel.critical;
+    }
     final AppSecurityLevel? floor = _enforcedLevelFloor?.call(
       match.packageName,
     );
-    return floor == null
+    final AppSecurityLevel saved = floor == null
         ? match.securityLevel
         : SecurityLevelPolicy.stricter(match.securityLevel, floor);
+    final AppSecurityLevel? rule = _ruleLevelFloor?.call(
+      match.packageName,
+      _now(),
+    );
+    return rule == null ? saved : SecurityLevelPolicy.stricter(saved, rule);
   }
 
   /// Active unlock windows keyed by package name.
@@ -94,6 +130,15 @@ class DefaultAccessController implements AccessController {
     }
     final LockSession? session = _sessions[packageName];
     final DateTime? graceUntil = _graceUntil[packageName];
+    if (session != null &&
+        _levelOf(match).isStricterThan(session.securityLevel)) {
+      // Phase 10 / M2: the level is now stricter than the one this session
+      // was granted at (a Smart Rule started or was enabled). The older,
+      // more permissive session never outlives the change.
+      _sessions.remove(packageName);
+      _graceUntil.remove(packageName);
+      return AccessDecision.challenge;
+    }
     if (session != null) {
       if (graceUntil != null) {
         if (_now().isBefore(graceUntil)) {
@@ -159,9 +204,16 @@ class DefaultAccessController implements AccessController {
     // immediately (the 5J default).
     // Phase 8 / M2: the grace is the level's (Standard: configured;
     // Sensitive: capped; Critical/unknown: none).
-    if (_gracePeriod > Duration.zero && _sessions.containsKey(packageName)) {
+    final LockSession? open = _sessions[packageName];
+    if (_gracePeriod > Duration.zero && open != null) {
+      // Phase 10 / M2: never laxer than the level the session was granted
+      // at, so a Smart Rule that ENDED while the app was open creates no
+      // grace the original (stricter) unlock did not allow.
       final Duration grace = SecurityLevelPolicy.graceFor(
-        _levelOf(await _matcher.match(packageName)),
+        SecurityLevelPolicy.stricter(
+          _levelOf(await _matcher.match(packageName)),
+          open.securityLevel,
+        ),
         _gracePeriod,
       );
       if (grace > Duration.zero) {

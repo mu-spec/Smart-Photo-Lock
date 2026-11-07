@@ -39,7 +39,7 @@ class _MainShellState extends State<MainShell> {
   List<Widget> get _screens => <Widget>[
         HomeScreen(onNavigate: _selectTab, isActive: _selectedIndex == 0),
         AppsScreen(isActive: _selectedIndex == 1),
-        const SmartScreen(),
+        SmartScreen(isActive: _selectedIndex == 2),
         SecurityScreen(onNavigate: _selectTab, isActive: _selectedIndex == 3),
         const SettingsScreen(),
       ];

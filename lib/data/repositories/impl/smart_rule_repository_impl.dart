@@ -38,10 +38,19 @@ class SmartRuleRepositoryImpl implements SmartRuleRepository {
       _serialized(() async => (await _load()).rules);
 
   @override
-  Future<Result<void>> saveRule(SmartRule rule) => _serialized(() async {
+  Future<Result<void>> saveRule(
+    SmartRule rule, {
+    SmartRule? expected,
+    bool mustBeNew = false,
+  }) =>
+      _serialized(() async {
         final _Stored stored = await _load();
         final List<SmartRule> rules = List<SmartRule>.of(stored.rules);
         final int index = rules.indexWhere((SmartRule r) => r.id == rule.id);
+        if (mustBeNew && index >= 0) {
+          throw _conflict('A rule with id "${rule.id}" already exists.');
+        }
+        if (expected != null) _checkExpected(rules, index, expected);
         if (index >= 0) {
           if (rules[index] == rule) return;
           rules[index] = rule;
@@ -52,28 +61,59 @@ class SmartRuleRepositoryImpl implements SmartRuleRepository {
       });
 
   @override
-  Future<Result<void>> deleteRule(String id) => _serialized(() async {
-        final _Stored stored = await _load();
-        final List<SmartRule> rules = List<SmartRule>.of(stored.rules);
-        final int index = rules.indexWhere((SmartRule r) => r.id == id);
-        if (index < 0) throw _notFound(id);
-        rules.removeAt(index);
-        await _write(stored, rules);
-      });
-
-  @override
-  Future<Result<void>> setRuleEnabled(String id, {required bool enabled}) =>
+  Future<Result<void>> deleteRule(String id, {SmartRule? expected}) =>
       _serialized(() async {
         final _Stored stored = await _load();
         final List<SmartRule> rules = List<SmartRule>.of(stored.rules);
         final int index = rules.indexWhere((SmartRule r) => r.id == id);
         if (index < 0) throw _notFound(id);
+        if (expected != null) _checkExpected(rules, index, expected);
+        rules.removeAt(index);
+        await _write(stored, rules);
+      });
+
+  @override
+  Future<Result<void>> setRuleEnabled(
+    String id, {
+    required bool enabled,
+    SmartRule? expected,
+  }) =>
+      _serialized(() async {
+        final _Stored stored = await _load();
+        final List<SmartRule> rules = List<SmartRule>.of(stored.rules);
+        final int index = rules.indexWhere((SmartRule r) => r.id == id);
+        if (index < 0) throw _notFound(id);
+        if (expected != null) _checkExpected(rules, index, expected);
         if (rules[index].enabled == enabled) return;
         rules[index] = rules[index].copyWith(enabled: enabled);
         await _write(stored, rules);
       });
 
+  @override
+  Future<Result<void>> replaceRules(
+    List<SmartRule> rules, {
+    required List<SmartRule> expected,
+  }) =>
+      _serialized(() async {
+        final _Stored stored = await _load();
+        if (!_sameList(stored.rules, expected)) {
+          throw _conflict(
+            'The rules changed since they were read. Reload and try again.',
+          );
+        }
+        if (_sameList(stored.rules, rules)) return;
+        await _write(stored, List<SmartRule>.of(rules));
+      });
+
   // -- internals -------------------------------------------------------------
+
+  static bool _sameList(List<SmartRule> a, List<SmartRule> b) {
+    if (a.length != b.length) return false;
+    for (int i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
 
   Future<Result<T>> _serialized<T>(Future<T> Function() action) {
     final Future<Result<T>> result = _tail.then((_) async {
@@ -149,6 +189,22 @@ class SmartRuleRepositoryImpl implements SmartRuleRepository {
       failure,
     );
   }
+
+  /// Phase 10 / M2: compare-and-swap check against the stored rule.
+  static void _checkExpected(
+    List<SmartRule> rules,
+    int index,
+    SmartRule expected,
+  ) {
+    if (index < 0 || rules[index] != expected) {
+      throw _conflict(
+        'The rule changed since it was opened. Reload and try again.',
+      );
+    }
+  }
+
+  static SmartRuleStoreException _conflict(String message) =>
+      SmartRuleStoreException(SmartRuleStoreErrorKind.conflict, message);
 
   static SmartRuleStoreException _notFound(String id) =>
       SmartRuleStoreException(

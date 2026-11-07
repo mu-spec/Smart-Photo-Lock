@@ -97,8 +97,9 @@ class AppContainer {
       cipher: settingsCipher,
     );
     lockSettings = LockSettingsRepositoryImpl(_database);
-    // Phase 10 / M1: Smart Rules configuration storage only. Constructed,
-    // never read or written at startup; nothing evaluates or applies rules.
+    // Phase 10 / M1: Smart Rules storage. Phase 10 / M2: read by the
+    // protection bootstrap on each sync (raise-only rule actions); written
+    // only from the Smart tab.
     smartRules = SmartRuleRepositoryImpl(_database);
     // Installed-apps discovery (Phase 3A): repository over the platform
     // service. The service instance is shared — no screen ever creates
@@ -156,6 +157,8 @@ class AppContainer {
       protectedApps: protectedApps,
       credentials: auth,
       watcher: watcherService,
+      // Phase 10 / M2: each sync also sends the raise-only Smart Rules.
+      smartRules: smartRules,
     );
     // Phase 7 / M1: read-only Protection Health over the SAME shared
     // services. Construction has no side effects; nothing probes until a
@@ -183,6 +186,10 @@ class AppContainer {
       now: _accessClock,
       // Phase 8 / M2: never weaker than the level native last confirmed.
       enforcedLevelFloor: protectionBootstrap.nativeLevelFor,
+      // Phase 10 / M2: never weaker than the active Smart Rule level.
+      ruleLevelFloor: protectionBootstrap.ruleCache.levelFor,
+      // R-A: Critical until the rules are read (and after a failed read).
+      ruleLevelsCurrent: () => protectionBootstrap.ruleCache.current,
     );
     lockTrigger = LockTrigger(
       monitor: foregroundMonitor,
@@ -316,7 +323,8 @@ class AppContainer {
   /// Lock profiles and rules.
   late final LockSettingsRepository lockSettings;
 
-  /// Phase 10 / M1: Smart Rules (configuration only; no rule actions).
+  /// Phase 10 / M1: Smart Rules storage. Phase 10 / M2: raise-only rule
+  /// actions, enforced through [protectionBootstrap] and native.
   late final SmartRuleRepository smartRules;
 
   /// Credential lifecycle (Phase 2A): enroll / status / authenticate /

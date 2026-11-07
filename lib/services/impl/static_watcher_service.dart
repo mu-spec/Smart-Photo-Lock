@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import '../../data/models/app_security_level.dart';
+import '../../rules/smart_rule.dart';
+import '../../rules/smart_rule_policy.dart';
 import '../../utilities/result.dart';
 import '../pending_lock_challenge.dart';
 import '../watcher_service.dart';
@@ -75,6 +77,20 @@ class StaticWatcherService implements WatcherService {
   final Map<String, AppSecurityLevel> securityLevels =
       <String, AppSecurityLevel>{};
 
+  /// Phase 10 / M2 (SIMULATED native): the raise-only rule specs the
+  /// simulated engine enforces, resolved like `SmartRuleSnapshotResolver`
+  /// in `SmartRulePolicy.kt`: not sent → kept; malformed → previous kept
+  /// (`invalid`); a set that reduces strictness without
+  /// `authorizedRuleRelaxation` → the union of previous and new (`held`);
+  /// otherwise replaced (`applied`).
+  final List<Map<String, Object?>> smartRules = <Map<String, Object?>>[];
+
+  /// Phase 10 / M2: rule status of the last applied snapshot.
+  SmartRuleSyncStatus lastRuleStatus = SmartRuleSyncStatus.unknown;
+
+  /// Phase 10 / M2: local clock of the simulated engine (tests inject).
+  DateTime Function() ruleClock = DateTime.now;
+
   /// Every snapshot received, in order (tests inspect transport).
   final List<ProtectionPolicySnapshot?> receivedPolicies =
       <ProtectionPolicySnapshot?>[];
@@ -85,6 +101,15 @@ class StaticWatcherService implements WatcherService {
 
   /// When non-null, [configureProtection] waits for it first.
   Completer<void>? configureGate;
+
+  /// Phase 10 / M2 persistence gate: per-call storage fault of the simulated
+  /// engine (null = none). [StaticConfigureFault.failBeforeApply] changes
+  /// nothing; [StaticConfigureFault.failAfterApply] mirrors the native
+  /// failed-commit path: the engine keeps the stricter UNION of its previous
+  /// and the sent rules (never the weaker set) and the call fails like a
+  /// `persisted=false` reply.
+  StaticConfigureFault? Function(ProtectionPolicySnapshot? policy)?
+      configureFault;
 
   String? _lastSession;
   int _lastRevision = -1;
@@ -118,12 +143,37 @@ class StaticWatcherService implements WatcherService {
     if (gate != null) await gate.future;
     final Object? error = configureError;
     if (error != null) return Result.failure(error);
+    final StaticConfigureFault? fault = configureFault?.call(policy);
+    if (fault == StaticConfigureFault.failBeforeApply) {
+      return Result.failure(StateError('simulated native write failure'));
+    }
+    if (fault == StaticConfigureFault.failAfterApply) {
+      final List<Map<String, Object?>>? sent = policy?.smartRules;
+      if (sent != null) {
+        final Set<String> seen = <String>{
+          for (final Map<String, Object?> r in smartRules) r.toString(),
+        };
+        for (final Map<String, Object?> r in sent) {
+          if (seen.add(r.toString())) smartRules.add(r);
+        }
+      }
+      return Result.failure(StateError('simulated native persisted=false'));
+    }
     if (policy != null &&
         policy.session == _lastSession &&
         policy.revision <= _lastRevision) {
       return Result.failure(StateError('stale protection snapshot'));
     }
-    final ProtectionPolicyAck ack = _resolveLevels(protectedPackages, policy);
+    final ProtectionPolicyAck levelsAck =
+        _resolveLevels(protectedPackages, policy);
+    final SmartRuleSyncStatus ruleStatus = _resolveRules(policy);
+    lastRuleStatus = ruleStatus;
+    final ProtectionPolicyAck ack = ProtectionPolicyAck(
+      status: levelsAck.status,
+      effectiveLevels: levelsAck.effectiveLevels,
+      heldDowngrades: levelsAck.heldDowngrades,
+      ruleStatus: ruleStatus,
+    );
     if (policy != null) {
       _lastSession = policy.session;
       _lastRevision = policy.revision;
@@ -137,6 +187,71 @@ class StaticWatcherService implements WatcherService {
       packages: Set<String>.of(protectedPackages),
     );
     return Result.success(ack);
+  }
+
+  SmartRuleSyncStatus _resolveRules(ProtectionPolicySnapshot? policy) {
+    final List<Map<String, Object?>>? sent = policy?.smartRules;
+    if (policy == null || sent == null) return SmartRuleSyncStatus.kept;
+    final List<SmartRule> previous;
+    final List<SmartRule> next;
+    try {
+      previous = simulatedRules(smartRules);
+      next = simulatedRules(sent);
+    } on Object {
+      return SmartRuleSyncStatus.invalid;
+    }
+    final bool relaxing =
+        SmartRulePolicy.relaxedPackages(previous, next).isNotEmpty;
+    final Set<String> raised =
+        SmartRulePolicy.raisedAt(previous, next, ruleClock());
+    authorizedPackages.removeAll(raised); // raised now → session revoked
+    if (relaxing && !policy.authorizedRuleRelaxation) {
+      final Set<String> seen = <String>{
+        for (final Map<String, Object?> r in smartRules) r.toString(),
+      };
+      for (final Map<String, Object?> r in sent) {
+        if (seen.add(r.toString())) smartRules.add(r);
+      }
+      return SmartRuleSyncStatus.held;
+    }
+    smartRules
+      ..clear()
+      ..addAll(sent);
+    return SmartRuleSyncStatus.applied;
+  }
+
+  /// Phase 10 / M2: the extra level the simulated engine's rules require
+  /// for [packageName] at [now] (null = none).
+  AppSecurityLevel? simulatedRuleLevel(String packageName, DateTime now) =>
+      SmartRulePolicy.ruleLevelFor(
+        simulatedRules(smartRules),
+        packageName,
+        now,
+      );
+
+  /// Rebuilds rule objects from transport specs (throws when malformed).
+  static List<SmartRule> simulatedRules(List<Map<String, Object?>> specs) {
+    int i = 0;
+    return <SmartRule>[
+      for (final Map<String, Object?> spec in specs)
+        SmartRule(
+          id: 'native${i++}',
+          name: 'native',
+          targetPackages: (spec['targets']! as List<Object?>).cast<String>(),
+          days: (spec['days']! as List<Object?>).cast<int>(),
+          time: spec['allDay'] == true
+              ? const SmartRuleTime.allDay()
+              : SmartRuleTime.window(
+                  startMinute: spec['start']! as int,
+                  endMinute: spec['end']! as int,
+                ),
+          action: switch (spec['level']) {
+            'sensitive' => SmartRuleAction.sensitive,
+            'critical' => SmartRuleAction.critical,
+            _ => throw FormatException('level ${spec['level']}'),
+          },
+        ),
+    ];
   }
 
   ProtectionPolicyAck _resolveLevels(
@@ -310,4 +425,13 @@ class StaticWatcherService implements WatcherService {
       ),
     );
   }
+}
+
+/// Phase 10 / M2 persistence gate: see [StaticWatcherService.configureFault].
+enum StaticConfigureFault {
+  /// The write failed before anything changed.
+  failBeforeApply,
+
+  /// The write changed state but reported failure (`persisted=false`).
+  failAfterApply,
 }

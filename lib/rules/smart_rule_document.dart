@@ -27,26 +27,39 @@ class SmartRuleDocumentException implements Exception {
 }
 
 /// Phase 10 / M1: the persisted form of the whole rule set, one JSON
-/// document (schema v1):
+/// document. Phase 10 / M2 writes schema v2, which adds a required
+/// per-rule `action`:
 ///
 /// ```json
-/// {"schema":"smart_rules","version":1,"rules":[
+/// {"schema":"smart_rules","version":2,"rules":[
 ///   {"id":"r1","name":"Work hours","enabled":true,
 ///    "targets":["com.example.mail"],"days":[1,2,3,4,5],
-///    "time":{"type":"window","start":540,"end":1020}}]}
+///    "time":{"type":"window","start":540,"end":1020},
+///    "action":"critical"}]}
 /// ```
+///
+/// Migration v1 → v2 (explicit, on read, [decodeDocument]): a v1 document
+/// (M1, no `action`) is accepted and every rule keeps its id, name, enabled
+/// state, targets, days and time, and receives
+/// [SmartRuleAction.migratedFromV1] (Standard: no enforcement effect, so a
+/// migrated rule never activates by surprise). The stored v1 text is NOT
+/// rewritten on read; the next confirmed write stores v2. Nothing is ever
+/// dropped: an invalid v1 rule makes the whole document corrupt.
 ///
 /// Decoding is all-or-nothing: one unreadable rule makes the whole document
 /// [SmartRuleDocumentProblem.corrupt]. There is no partial list and no
 /// silent fallback to "no rules". Encoding is deterministic (fixed key
 /// order, sorted lists, rules in stored order).
 ///
-/// Migration: a future schema bumps [currentVersion] and adds an explicit
-/// vN → vN+1 path here. An older build that meets a newer document reports
+/// A future schema bumps [currentVersion] and adds an explicit vN → vN+1
+/// path here. An older build that meets a newer document reports
 /// [SmartRuleDocumentProblem.unsupportedVersion] and refuses to write.
 abstract final class SmartRuleDocument {
   static const String schema = 'smart_rules';
-  static const int currentVersion = 1;
+  static const int currentVersion = 2;
+
+  /// The oldest schema this build can still read (and migrate).
+  static const int oldestReadableVersion = 1;
 
   static const Set<String> _keys = <String>{'schema', 'version', 'rules'};
 
@@ -65,8 +78,12 @@ abstract final class SmartRuleDocument {
     });
   }
 
-  /// Decodes [encode] output. Throws [SmartRuleDocumentException].
-  static List<SmartRule> decode(String raw) {
+  /// Decodes a stored document (v1 or v2). Throws
+  /// [SmartRuleDocumentException].
+  static List<SmartRule> decode(String raw) => decodeDocument(raw).rules;
+
+  /// Like [decode], also reporting the stored schema version.
+  static SmartRuleDocumentRead decodeDocument(String raw) {
     final Object? json;
     try {
       json = jsonDecode(raw);
@@ -103,7 +120,7 @@ abstract final class SmartRuleDocument {
         version: version,
       );
     }
-    if (version != currentVersion) {
+    if (version < oldestReadableVersion) {
       throw SmartRuleDocumentException(
         SmartRuleDocumentProblem.corrupt,
         'Version $version was never written by any build.',
@@ -111,18 +128,18 @@ abstract final class SmartRuleDocument {
       );
     }
     if (json.length != _keys.length || !json.keys.every(_keys.contains)) {
-      throw const SmartRuleDocumentException(
+      throw SmartRuleDocumentException(
         SmartRuleDocumentProblem.corrupt,
         'Unexpected fields in the document.',
-        version: currentVersion,
+        version: version,
       );
     }
     final Object? list = json['rules'];
     if (list is! List) {
-      throw const SmartRuleDocumentException(
+      throw SmartRuleDocumentException(
         SmartRuleDocumentProblem.corrupt,
         '"rules" is not a list.',
-        version: currentVersion,
+        version: version,
       );
     }
     final List<SmartRule> rules = <SmartRule>[];
@@ -130,23 +147,42 @@ abstract final class SmartRuleDocument {
     for (int i = 0; i < list.length; i++) {
       final SmartRule rule;
       try {
-        rule = SmartRule.fromJson(list[i]);
+        rule = SmartRule.fromJson(list[i], version: version);
       } on SmartRuleFormatException catch (e) {
         throw SmartRuleDocumentException(
           SmartRuleDocumentProblem.corrupt,
           'Rule $i is invalid (${e.field}): ${e.message}',
-          version: currentVersion,
+          version: version,
         );
       }
       if (!ids.add(rule.id)) {
         throw SmartRuleDocumentException(
           SmartRuleDocumentProblem.corrupt,
           'Duplicate rule id "${rule.id}".',
-          version: currentVersion,
+          version: version,
         );
       }
       rules.add(rule);
     }
-    return List<SmartRule>.unmodifiable(rules);
+    return SmartRuleDocumentRead(
+      rules: List<SmartRule>.unmodifiable(rules),
+      storedVersion: version,
+    );
   }
+}
+
+/// Result of [SmartRuleDocument.decodeDocument].
+final class SmartRuleDocumentRead {
+  const SmartRuleDocumentRead({
+    required this.rules,
+    required this.storedVersion,
+  });
+
+  final List<SmartRule> rules;
+
+  /// Schema version of the stored text (1 = migrated M1 document).
+  final int storedVersion;
+
+  /// True when [rules] were migrated from an older schema on this read.
+  bool get migrated => storedVersion < SmartRuleDocument.currentVersion;
 }

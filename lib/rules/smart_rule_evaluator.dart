@@ -140,8 +140,9 @@ final class SmartRuleEvaluation {
 ///
 /// No I/O, no clock reads, no timers, no state. It decides nothing about
 /// protection: it never changes a level, grants authorization, or touches
-/// a challenge, ticket or grace session. Nothing in the app calls it yet;
-/// rule actions arrive in Phase 10 / M2.
+/// a challenge, ticket or grace session. Phase 10 / M2: `SmartRulePolicy`
+/// uses it to compute the extra (raise-only) level of a rule; the action
+/// itself is not part of the match.
 ///
 /// Time-zone policy: [localDateTime] must be a LOCAL [DateTime] (the
 /// caller's device wall clock, e.g. `DateTime.now()` at the call site). Its
@@ -219,6 +220,29 @@ final class SmartRuleEvaluator {
   }
 
   /// Start inclusive, end exclusive.
+  /// Phase 10 / M2: the same enabled + app + time + day decision as
+  /// [evaluate] for an explicit ISO [weekday] (1..7) and [minuteOfDay]
+  /// (0..1439), without a [DateTime]. Used to compare rule sets over a whole
+  /// week. Out-of-range input or an invalid package never matches.
+  static bool matchesAt(
+    SmartRule rule,
+    String appPackage,
+    int weekday,
+    int minuteOfDay,
+  ) {
+    if (!rule.enabled || !rule.targets(appPackage)) return false;
+    if (!SmartRuleDays.isValid(weekday)) return false;
+    if (minuteOfDay < 0 || minuteOfDay >= SmartRuleTime.minutesPerDay) {
+      return false;
+    }
+    final SmartRuleTimeSegment segment = _segment(rule.time, minuteOfDay);
+    if (segment == SmartRuleTimeSegment.none) return false;
+    final int ownerDay = segment == SmartRuleTimeSegment.overnightAfterMidnight
+        ? SmartRuleDays.previous(weekday)
+        : weekday;
+    return rule.days.contains(ownerDay);
+  }
+
   static SmartRuleTimeSegment _segment(SmartRuleTime time, int minute) {
     switch (time) {
       case SmartRuleAllDay():

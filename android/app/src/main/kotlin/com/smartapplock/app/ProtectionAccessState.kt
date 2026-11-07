@@ -19,6 +19,11 @@ object ProtectionAccessState {
         var awaySinceElapsedMs: Long? = null,
         /** Gate finding 2: level Dart enforced for this grant (only tightens). */
         val floor: SecurityLevel? = null,
+        /**
+         * Phase 10 / M2: the level this grant was made at (stricter of the
+         * effective level and [floor]). A later, stricter level revokes it.
+         */
+        val grantLevel: SecurityLevel = SecurityLevel.STANDARD,
     )
 
     /** Stricter of the store level and the authorization's own floor. */
@@ -72,6 +77,7 @@ object ProtectionAccessState {
             activeUntilElapsedMs = nowElapsedMs + safeWindow,
             sessionWindowMs = safeWindow,
             floor = floor,
+            grantLevel = windowLevel,
         )
         currentForegroundPackage = packageName
     }
@@ -107,6 +113,11 @@ object ProtectionAccessState {
      * configured grace, Sensitive is capped, Critical has none (a leave
      * removes the authorization, so every observed re-entry challenges).
      * The default treats every package as Standard (pre-M2 behaviour).
+     *
+     * Phase 10 / M2: [levelOf] is the EFFECTIVE level (saved level raised by
+     * any active Smart Rule, see `ProtectionStateStore.effectiveLevel`). An
+     * authorization whose grant level is now weaker than that is removed and
+     * the observation challenges. The H-2 slide itself is unchanged.
      */
     @Synchronized
     fun observeForeground(
@@ -136,6 +147,13 @@ object ProtectionAccessState {
 
         if (!protected) return Decision.ALLOW
         val authorization = authorizations[packageName] ?: return Decision.CHALLENGE
+        if (levelFor(packageName, authorization, levelOf).isStricterThan(authorization.grantLevel)) {
+            // Phase 10 / M2: the level is now stricter than the one this grant
+            // was made at (a Smart Rule started or was saved). The older, more
+            // permissive window or grace never outlives the change.
+            authorizations.remove(packageName)
+            return Decision.CHALLENGE
+        }
         val awaySince = authorization.awaySinceElapsedMs
         if (awaySince != null) {
             val graceMs = SecurityLevelPolicy.graceMs(

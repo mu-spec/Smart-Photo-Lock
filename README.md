@@ -51,11 +51,19 @@ immutable rule model with a name, enabled state, exact target apps,
 selected weekdays and a local time window or explicit all day; one pure
 evaluator returning match / no match / invalid input with a reason; and
 versioned configuration storage that never reports a failed write as
-saved) is implemented and simulated-tested. It is **configuration only**:
-there is no rule UI and nothing reads or applies rules yet (actions are
-M2), so protection is unchanged; device QA joins the same combined round
-(`docs/regression.md`, Phase 10 / M1; not device verified, not release
-ready) — production scaffold, architecture, navigation, design
+saved) is implemented and simulated-tested. In M1 alone it was
+configuration only, with no rule UI and nothing applying rules; device QA
+joins the same combined round (`docs/regression.md`, Phase 10 / M1; not
+device verified, not release ready). Phase 10 / Milestone 2 (Smart Rules
+security-level actions and rule management: a rule can raise its protected
+apps to Sensitive or Critical during its days and time, never below the
+saved level; Unlocked is reserved and has no effect; the native watcher
+evaluates rules at each foreground decision with no alarms; reducing a
+rule needs the PIN/pattern; the Smart tab lists, creates, edits, enables,
+disables and deletes rules, says "confirmed" only after the native ack and
+guards unsaved changes) is implemented and simulated-tested; device QA
+joins the same combined round (`docs/regression.md`, Phase 10 / M2; not
+device verified, not release ready) — production scaffold, architecture, navigation, design
 system, persistence, secure storage, full authentication with settings,
 installed-apps management, the complete capability/permission layer,
 and the **core lock engine**: foreground detection (usage-stats +
@@ -501,7 +509,7 @@ lib/
 │   ├── screens/
 │   │   ├── home/             # Home tab (welcome, status, quick access)
 │   │   ├── apps/             # Apps tab (3B list + 3C search + 3D filters)
-│   │   ├── smart/            # Smart tab (placeholder)
+│   │   ├── smart/            # Smart tab: rule list, editor, change flow (P10 M2)
 │   │   ├── security/         # Security tab (status banner + control list)
 │   │   ├── settings/         # Settings tab (placeholder)
 │   │   ├── pin/              # PIN setup (2B) + unlock (2E) + change (2K)
@@ -544,9 +552,10 @@ lib/
 ├── rules/                    # lock rule model + evaluation (working)
 │   ├── lock_rule.dart        # Phase 1 scaffold (unused by production)
 │   ├── rule_engine.dart      # Phase 1 scaffold (unused by production)
-│   ├── smart_rule.dart       # Phase 10 / M1 Smart Rule model (10A, 10C–10E)
-│   ├── smart_rule_document.dart  # versioned JSON document (schema v1)
-│   └── smart_rule_evaluator.dart # pure evaluator + reasons (10B)
+│   ├── smart_rule.dart       # Smart Rule model + typed action (10A, 10C–10F)
+│   ├── smart_rule_document.dart  # versioned JSON document (schema v2, reads v1)
+│   ├── smart_rule_evaluator.dart # pure evaluator + reasons (10B)
+│   └── smart_rule_policy.dart    # M2 raise-only level policy + rule cache
 ├── profiles/                 # lock profiles
 │   ├── lock_profile.dart     # named package sets ("Kids mode", ...)
 │   └── profile_manager.dart  # CRUD + activation contract

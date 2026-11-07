@@ -3020,7 +3020,9 @@ classification and Phase 8 enforcement are unchanged.
 
 ## Phase 10 / M1 — Smart Rules: rule model, evaluation engine & conditions
 
-PRD 10A–10E. **Configuration only.** M1 adds a rule model, one pure
+PRD 10A–10E. (Historical M1 description; Phase 10 / M2 below adds rule
+actions, native enforcement and the rule UI.) **Configuration only.** M1
+adds a rule model, one pure
 evaluator and configuration storage. There is no rule UI, and nothing in
 the app reads, evaluates or applies saved rules: no consumer exists until
 the M2 security-level action is separately designed and approved. The
@@ -3185,3 +3187,187 @@ recommendations are unchanged and do not read rules. M3 precedence
   enforcement is enabled.
 - Critical and Sensitive guarantees and the existing native authorization
   rules must be preserved.
+
+## Phase 10 / M2 — Smart Rules: security-level actions & rule management UI
+
+PRD 10F–10I. The design gate (`Phase10_M2/SECURITY_DESIGN_DECISION.md`,
+outside the repo) was written before coding and passed: the PRD asks only
+that rules "change required protection level/behavior", so M2 is
+**raise-only** and needs no approval for scheduled unlocking or lowering.
+
+### Levels
+
+- **Baseline:** `ProtectedApp.securityLevel` (Phase 8). Rules never read,
+  modify or write it.
+- **Requested:** `SmartRuleAction` (`standard`, `sensitive`, `critical`,
+  `unlocked`), stored in rule JSON v2. Only `sensitive` and `critical`
+  raise (`SmartRuleAction.raisesTo`). `standard` adds nothing. `unlocked`
+  is reserved: the model accepts it, the editor offers it disabled, it is
+  never sent to native and it has no effect. An unknown action id makes the
+  document corrupt (no fallback to Standard).
+- **Effective:** `stricter(baseline, strictest raising action of the
+  enabled rules matching the package now)`
+  (`SmartRulePolicy.effectiveLevel`, Dart and Kotlin). It is never below the
+  baseline, and the protected set stays the gate.
+
+### Schema v2 and migration (`smart_rule.dart`, `smart_rule_document.dart`)
+
+- Document version 2; v1 documents are still read. Each v1 rule becomes
+  `action: standard` (`SmartRuleAction.migratedFromV1`), keeping its id,
+  name, enabled state, targets, days and time. Standard adds nothing, so
+  migration never activates protection.
+- Reads never rewrite. The v1 → v2 rewrite happens only on the next
+  user write, through the same atomic write, read-back and rollback path as
+  M1.
+- Newer versions remain `unsupportedVersion` (kept, never overwritten).
+  Corrupt data is reported, not replaced.
+- The repository gained compare-and-swap: `save(rule, expected:,
+  mustBeNew:)` and `delete(id, expected:)` return `conflict` when the stored
+  rule changed, so a stale form never overwrites a newer change.
+
+### Enforcement path (native is the gate)
+
+1. `ProtectionBootstrap.synchronize()` reads the rules and sends the
+   raising, enabled ones (`smartRules`, `smartRulesVersion`) in the same
+   `syncPolicy` snapshot as the protected set and levels. If the rule read
+   fails, `smartRules` is omitted, so native keeps what it has persisted.
+2. Native (`ProtectionStateStore.configure` +
+   `SmartRuleSnapshotResolver`) resolves the snapshot:
+   - `APPLIED`: the sent rules replace the stored ones;
+   - `HELD`: the change reduces strictness without
+     `authorizedRuleRelaxation`, so native stores the union of the old and
+     new rules (stricter);
+   - `KEPT`: no rules were sent;
+   - `INVALID`: a malformed transport, so the previous rules stay.
+
+   The rules are written in the same `commit()` as the levels. If the
+   commit fails, the store is rewritten (best effort) to the union of the
+   previous and new rules and the reply says `persisted=false`. The reply
+   carries `ruleStatus`. Dart exposes it per call as
+   `ProtectionBootstrapResult.policyAck`.
+3. At every `observeForeground` decision and at `authorizePackage`, the
+   watcher asks `ProtectionStateStore.effectiveLevel(pkg, now)`. This uses
+   the wall clock and the default time zone at that moment (local fields,
+   Monday = 1). There is no timer, alarm or polling. A damaged stored rule
+   set returns Critical.
+4. Authorizations remember their grant level. When the effective level is
+   now stricter, the next decision revokes the grant and challenges
+   (`ProtectionAccessState`). The Dart `DefaultAccessController` does the
+   same and uses the rule floor for grace. A rule that ends only returns
+   the app to its baseline: no grace, no authorization and no cleared
+   challenge. H-2 is unchanged.
+5. The Dart `SmartRuleEnforcementCache` mirrors the saved rules for the
+   Flutter-side decisions. It is updated from the saved rules even when
+   native held or failed. **Native stays the final gate.** The cache can
+   only make the Dart side stricter than native, never laxer than the
+   baseline.
+6. **Start-up floor (R-A).** The cache is `current` only while the latest
+   rule read succeeded. Before the first successful read in a process
+   (cold start) and after any failed read, `DefaultAccessController`
+   treats every protected (or unknown) app as Critical. That means a
+   1-minute window and no grace, and Critical is the floor native
+   `authorizePackage` receives. Unprotected apps are never affected, and
+   saved levels never change. This closes the restart gap where native
+   reloads an older, weaker persisted rule set (an ambiguous failed write)
+   before Dart has read and re-sent the stricter saved rules. The first
+   successful read lifts the floor to the actual effective levels.
+
+### Changing rules (`lib/ui/screens/smart/smart_rule_change.dart`)
+
+`applySmartRuleChange` runs in this order:
+
+1. A fresh read; a changed rule returns `conflict` and an identical one
+   returns `unchanged`.
+2. `SmartRulePolicy.relaxedPackages(old, new)` lists packages whose
+   rule-provided strictness drops for any (day, minute). The check covers
+   disable, delete, narrower targets/days/time and a lower action.
+3. If that list is not empty, CR-2 runs through `relaxSmartRulesWith` in
+   `unprotect_gate.dart`. That is the existing
+   `requestUnprotectAuthorization`: PIN/pattern only, one use, bound to the
+   packages, at most 60 s, consumed before the write.
+4. A compare-and-swap write.
+5. `revokeImmediately` for packages whose level rose now.
+6. `synchronize(authorizedRuleRelaxation: relaxed.isNotEmpty)`.
+7. **Failed reduction (Option A).** If a reduction is not acknowledged
+   `applied`, the previous rules are restored in app storage with a
+   whole-list compare-and-swap (`replaceRules(previous, expected:
+   attempted)`) and re-sent without the relaxation flag:
+   - "Couldn't apply the change. Your previous rule settings will be
+     restored." when the restore worked;
+   - a separate message when the restore failed, which never says
+     "Nothing was changed".
+
+   Neither outcome counts as saved. The editor keeps the draft, and a
+   retry needs the PIN/pattern again.
+8. Otherwise the outcome is mapped from that call's `ruleStatus` only:
+   - `applied` → "confirmed";
+   - `held` → "earlier stricter settings still apply";
+   - anything else → "saved, not confirmed".
+
+`confirmHeldRuleRelaxation` lets the Smart tab re-send a held reduction with
+a fresh CR-2 proof. The proof authorizes one rule-set replacement only: it
+never grants app access, never creates grace and is never stored. If the
+flagged write is not acknowledged `applied`, the same saved rules are
+re-sent without the flag:
+- `held` (native re-persisted the stricter union) → "Not confirmed. The
+  earlier, stricter rule settings still apply.";
+- `applied` (the current rules are already in force) → "Confirmed";
+- anything else → "Couldn't confirm the change. Protection hasn't
+  confirmed which rule settings apply. Try again."
+
+### UI
+
+- **`SmartScreen`** (Smart tab). It loads lazily on first activation, and
+  an inactive tab never shows a spinner. It has:
+  - a heading, intro and list rows (switch, name, apps, days, time, level);
+  - empty, loading, read-error, corrupt and newer-version states with
+    Retry;
+  - the held notice;
+  - "Create Smart Rule".
+
+  The switch changes only after a confirmed save, and stays the same with
+  an error message on failure.
+- **`SmartRuleEditorScreen`** (create and edit) has these steps: name →
+  protected apps (only the user's protected, installed apps, each selected
+  explicitly) → days → time / All day → level → review.
+  - **Validation:** a blank name, no apps, no days or a zero-length window
+    blocks saving, with field messages.
+  - **Weaker levels:** the review explains levels weaker than an app's
+    saved level ("no change").
+  - **Draft guard:** `PopScope` asks "Discard changes?" / "Keep editing"
+    for a dirty form. An unchanged or saved form leaves normally, and a
+    failed save keeps the draft. Challenge routes are pushed by
+    `LockChallengeHost` above the editor and are never intercepted.
+- `SmartWideButton` is a full-width button that wraps at 2× text on
+  320 dp. It is used where `DsButton` would overflow.
+- `LockChallengeHost`, `ExternalRouteGuard` and the five-tab navigation are
+  unchanged.
+
+### Files
+
+- **Dart:**
+  - rules: `smart_rule.dart`, `smart_rule_document.dart`,
+    `smart_rule_evaluator.dart` (`matchesAt`) and the new
+    `smart_rule_policy.dart`;
+  - repository and implementation;
+  - `watcher_service.dart` and `static_watcher_service.dart`;
+  - `protection_bootstrap.dart`, `default_access_controller.dart` and
+    `app_container.dart`;
+  - `unprotect_gate.dart` and `main_shell.dart`;
+  - the new `ui/screens/smart/*` files.
+- **Kotlin:** the new `SmartRulePolicy.kt`, plus `ProtectionStateStore.kt`,
+  `ProtectionAccessState.kt`, `WatcherService.kt` and `WatcherChannel.kt`.
+- **Native test:** `SmartRuleEnforcementTest.kt`.
+- No new service, alarm, permission or dependency.
+
+### Limits (see `docs/capabilities.md`)
+
+- Rule starts are event-driven.
+- Clock or time-zone changes can avoid the extra strictness only, never the
+  baseline.
+- Native trusts the Dart relaxation flag, like Phase 8
+  `authorizedDowngrades`.
+- Rules are plaintext at rest.
+- The native rollback after a failed commit is best effort.
+- Several matching rules use the strictest level. Diagnostics and
+  arbitration are M3.

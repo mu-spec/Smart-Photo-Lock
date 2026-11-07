@@ -19,6 +19,11 @@ enum SmartRuleStoreErrorKind {
 
   /// No rule with that id exists. Nothing was written.
   notFound,
+
+  /// Phase 10 / M2: the stored rule is not the version the caller edited
+  /// (changed or deleted meanwhile), or a new rule's id already exists.
+  /// Nothing was written; reload and retry.
+  conflict,
 }
 
 class SmartRuleStoreException implements Exception {
@@ -45,12 +50,36 @@ abstract interface class SmartRuleRepository {
 
   /// Inserts a new rule (appended) or replaces the rule with the same id
   /// (position kept). Saving an identical rule writes nothing.
-  Future<Result<void>> saveRule(SmartRule rule);
+  ///
+  /// Phase 10 / M2 stale-edit protection (optional, compare-and-swap):
+  /// [mustBeNew] fails with `conflict` when the id already exists;
+  /// [expected] fails with `conflict` unless the stored rule with that id
+  /// equals it exactly (so an old form never overwrites a newer change).
+  Future<Result<void>> saveRule(
+    SmartRule rule, {
+    SmartRule? expected,
+    bool mustBeNew = false,
+  });
 
-  /// Removes the rule with [id]; `notFound` when there is none.
-  Future<Result<void>> deleteRule(String id);
+  /// Removes the rule with [id]; `notFound` when there is none. With
+  /// [expected], `conflict` unless the stored rule equals it.
+  Future<Result<void>> deleteRule(String id, {SmartRule? expected});
 
   /// Persists the enabled state of the rule with [id] (the rule is kept;
-  /// disabling never deletes). `notFound` when there is none.
-  Future<Result<void>> setRuleEnabled(String id, {required bool enabled});
+  /// disabling never deletes). `notFound` when there is none. With
+  /// [expected], `conflict` unless the stored rule equals it.
+  Future<Result<void>> setRuleEnabled(
+    String id, {
+    required bool enabled,
+    SmartRule? expected,
+  });
+
+  /// Phase 10 / M2: replaces the whole stored list by [rules] (order kept),
+  /// only when the stored list still equals [expected] exactly (otherwise
+  /// `conflict`, nothing written). Used to restore the previous rules after
+  /// a PIN-confirmed reduction that native did not durably acknowledge.
+  Future<Result<void>> replaceRules(
+    List<SmartRule> rules, {
+    required List<SmartRule> expected,
+  });
 }

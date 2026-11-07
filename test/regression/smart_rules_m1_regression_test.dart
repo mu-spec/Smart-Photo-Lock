@@ -1,5 +1,9 @@
 // Phase 10 / M1 regression: Smart Rules are configuration only.
 //
+// Phase 10 / M2: these rules carry the Standard action (the v1 migration
+// default), which still changes no enforcement. Raising actions are covered
+// by smart_rules_m2_regression_test.dart.
+//
 // SIMULATED: production app, MainShell, router, challenge host, Phase 7
 // health, Phase 8 levels and Phase 9 Security Center over the container's
 // in-memory stores and static platform services, with saved Smart Rules in
@@ -198,8 +202,8 @@ List<Object> _watcherCounters(StaticWatcherService w) => <Object>[
 
 void main() {
   testWidgets(
-      '35. navigation intact; the Smart tab is still the non-operational '
-      'placeholder; nothing reads saved rules at startup or on any tab',
+      '35. navigation intact; (Phase 10 / M2) the Smart tab lists the saved '
+      'rule without claiming it is active; navigating writes nothing',
       (WidgetTester tester) async {
     final _Fx fx = await _Fx.create();
     await fx.saveMatchingRule();
@@ -220,10 +224,15 @@ void main() {
     }
     expect(find.byType(SmartScreen), findsOneWidget);
     expect(find.text(SmartScreen.description), findsOneWidget);
-    // The saved rule is never presented, let alone as active.
-    expect(find.text('All protected apps, always'), findsNothing);
+    // Phase 10 / M2 (intentional change from M1, where the tab was a
+    // placeholder and nothing read rules): the Smart tab now lists saved
+    // rules and the protection sync reads them. The M1 rule has the
+    // migrated Standard action, so it is shown as adding no protection and
+    // never as active.
+    expect(find.text('All protected apps, always'), findsOneWidget);
+    expect(find.text('Standard · adds no protection'), findsOneWidget);
     expect(find.textContaining('Active'), findsNothing);
-    expect(run.db.ruleReads, 0);
+    expect(run.db.ruleReads, greaterThan(0));
     expect(run.db.ruleWrites, 0);
   });
 

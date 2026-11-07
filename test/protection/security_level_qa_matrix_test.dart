@@ -12,6 +12,7 @@ import 'package:smart_app_lock/data/models/app_security_level.dart';
 import 'package:smart_app_lock/data/models/protected_app.dart';
 import 'package:smart_app_lock/data/storage/impl/in_memory_local_database.dart';
 import 'package:smart_app_lock/protection/access_controller.dart';
+import 'package:smart_app_lock/security/storage/impl/in_memory_secret_store.dart';
 
 const String _app = 'com.example.app';
 const String _systemUi = 'com.android.systemui';
@@ -39,23 +40,30 @@ class _Clock {
 }
 
 class _Fx {
-  _Fx(this.c, this.clock, this.db);
+  _Fx(this.c, this.clock, this.db, this.secrets);
 
   final AppContainer c;
   final _Clock clock;
   final InMemoryLocalDatabase db;
+  final InMemorySecretStore secrets;
 
   AccessController get access => c.accessController;
 
   static Future<_Fx> create(
     AppSecurityLevel level, {
     InMemoryLocalDatabase? database,
+    InMemorySecretStore? secretStore,
     bool enroll = true,
   }) async {
     final _Clock clock = _Clock();
     final InMemoryLocalDatabase db = database ?? InMemoryLocalDatabase();
-    final AppContainer c =
-        AppContainer.inMemory(accessClock: clock.call, database: db);
+    // A process restart keeps the Keystore-backed secret store too.
+    final InMemorySecretStore secrets = secretStore ?? InMemorySecretStore();
+    final AppContainer c = AppContainer.inMemory(
+      accessClock: clock.call,
+      database: db,
+      secretStore: secrets,
+    );
     if (enroll) await c.auth.enrollPin(_pin);
     if (database == null) {
       await c.protectedApps.add(
@@ -69,7 +77,7 @@ class _Fx {
     }
     await c.protectionBootstrap.synchronize();
     c.accessController.setGracePeriod(_grace);
-    return _Fx(c, clock, db);
+    return _Fx(c, clock, db, secrets);
   }
 
   Future<AccessDecision> leaveAndReturn(Duration away, {String? via}) async {
@@ -154,7 +162,12 @@ void main() {
           'does', () async {
         final _Fx fx = await _Fx.create(l);
         await fx.access.grantAccess(_app);
-        final _Fx reborn = await _Fx.create(l, database: fx.db, enroll: false);
+        final _Fx reborn = await _Fx.create(
+          l,
+          database: fx.db,
+          secretStore: fx.secrets,
+          enroll: false,
+        );
         expect(await reborn.access.evaluate(_app), AccessDecision.challenge);
         expect(
           await reborn.leaveAndReturn(const Duration(seconds: 10)),

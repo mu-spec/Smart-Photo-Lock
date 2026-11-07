@@ -41,6 +41,9 @@ import '../pin/pin_unlock_screen.dart';
 /// Phase 8 / M2: LOWERING a security level reuses this exact gate (same
 /// proof, same rules) through [lowerSecurityLevelWith], with its own
 /// confirmation title. Raising a level needs no confirmation.
+///
+/// Phase 10 / M2: a Smart Rule change that REDUCES rule protection reuses it
+/// too, through [relaxSmartRulesWith] (all affected packages at once).
 
 /// Why an unprotect request was not authorized.
 enum UnprotectDenial {
@@ -219,6 +222,37 @@ Future<Result<void>> lowerSecurityLevelWith(
   authorization._consumed.add(packageName);
   return repository.setSecurityLevel(packageName, level);
 }
+
+/// Phase 10 / M2: runs [write], a Smart Rule change that REDUCES rule
+/// strictness for [packages] (a disabled, deleted, narrowed or lowered
+/// raising rule; see `SmartRulePolicy.relaxedPackages`), only if
+/// [authorization] covers EVERY package in [packages], has not expired and
+/// has not been used for any of them.
+///
+/// All packages are checked first, then all are consumed BEFORE [write]
+/// runs, so a failed write needs a new confirmation (fail closed). An empty
+/// [packages] is refused: a change that relaxes nothing needs no proof, and
+/// the caller must not ask native to accept a relaxation for it.
+Future<Result<T>> relaxSmartRulesWith<T>(
+  UnprotectAuthorization authorization,
+  Set<String> packages,
+  Future<Result<T>> Function() write, {
+  DateTime Function()? clock,
+}) async {
+  final DateTime now = (clock ?? DateTime.now)();
+  if (packages.isEmpty ||
+      !packages.every((String p) => authorization.allows(p, now))) {
+    return Result.failure(
+      StateError('Reducing Smart Rule protection is not authorized.'),
+    );
+  }
+  authorization._consumed.addAll(packages);
+  return write();
+}
+
+/// Title of the confirmation shown before a Smart Rule change that reduces
+/// rule protection (Phase 10 / M2).
+const String relaxRuleConfirmTitle = 'Confirm to reduce Smart Rule protection';
 
 /// Title of the confirmation shown before a security level is lowered.
 const String lowerLevelConfirmTitle = 'Confirm to lower the security level';

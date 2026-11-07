@@ -165,6 +165,9 @@ void main() {
       final _Fx fx = await _Fx.create(<String, AppSecurityLevel>{
         _app: _Level.standard,
       });
+      // R-A: the start-up rule load (until then every protected app is
+      // Critical; see smart_rules_startup_floor_m2_test.dart).
+      await fx.c.protectionBootstrap.synchronize();
       final LockSession s = (await fx.access.grantAccess(_app)).valueOrNull!;
       expect(s.window, LockSession.defaultWindow);
       fx.clock.advance(const Duration(seconds: 1));
@@ -180,6 +183,9 @@ void main() {
       final _Fx fx = await _Fx.create(<String, AppSecurityLevel>{
         _app: _Level.sensitive,
       });
+      // R-A: the start-up rule load (until then every protected app is
+      // Critical; see smart_rules_startup_floor_m2_test.dart).
+      await fx.c.protectionBootstrap.synchronize();
       final LockSession s = (await fx.access.grantAccess(_app)).valueOrNull!;
       expect(s.window, const Duration(minutes: 1));
       fx.clock.advance(const Duration(seconds: 1));
@@ -235,6 +241,9 @@ void main() {
         _app: _Level.critical,
         _other: _Level.standard,
       });
+      // R-A: the start-up rule load (until then every protected app is
+      // Critical; see smart_rules_startup_floor_m2_test.dart).
+      await fx.c.protectionBootstrap.synchronize();
       await fx.access.grantAccess(_app);
       await fx.access.grantAccess(_other);
       await fx.access.revokeAllExcept('com.android.launcher'); // Home
@@ -674,6 +683,9 @@ void main() {
         _app: _Level.critical,
         _other: _Level.standard,
       });
+      // R-A: the start-up rule load (until then every protected app is
+      // Critical; see smart_rules_startup_floor_m2_test.dart).
+      await fx.c.protectionBootstrap.synchronize();
       final LockSession critical =
           (await fx.access.grantAccess(_app)).valueOrNull!;
       expect(critical.securityLevel, _Level.critical);

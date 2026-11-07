@@ -389,10 +389,11 @@ displays what already exists:
 
 ## Smart Rules limits (Phase 10 / M1)
 
-- **Nothing is enforced yet.** M1 stores and evaluates rules, but no part of
-  the app reads or applies them: protection is decided only by the saved
-  protected apps, their levels and the grace period. The Smart tab is
-  still a placeholder. Rule actions arrive in M2.
+- **Nothing is enforced yet (M1 only; superseded by M2 below).** M1 stores
+  and evaluates rules, but no part of the app reads or applies them:
+  protection is decided only by the saved protected apps, their levels and
+  the grace period. The Smart tab is still a placeholder. Rule actions
+  arrive in M2.
 - **Local wall-clock time.** Rules follow the device's current local time
   and weekday (Monday = 1). Changing the device clock or time zone changes
   what a rule would match; in M1 that has no effect on protection.
@@ -406,3 +407,48 @@ displays what already exists:
 - **Device behaviour is unverified** until the combined Phase 6–10 round.
   Rule persistence, clock boundaries and corrupt-data handling on a device
   need a harness or the M2 UI (`docs/regression.md`, Phase 10 / M1).
+
+## Smart Rules limits (Phase 10 / M2)
+
+- **Rules only add protection.** A rule can raise a protected app to
+  Sensitive or Critical during its days and time. The effective level is
+  the stricter of the saved level and the rule level, so it is never below
+  the level saved on the Apps screen. A Standard rule adds nothing.
+  Unlocked is reserved: it is not offered when creating a rule, has no
+  effect, and never lowers or turns off protection. Scheduled unlocking or
+  lowering would need a separate approval.
+- **Rules never protect new apps.** A rule targets exact protected apps.
+  An app that is unprotected or uninstalled is not locked by a rule.
+- **Reducing protection needs the PIN or pattern.** Disabling or deleting a
+  raising rule, or making it narrower or weaker, asks for the app
+  PIN/pattern (biometric is not accepted) through the same confirmation as
+  unprotecting an app. Without it the native side keeps the stricter rules,
+  and the Smart tab says that the earlier, stricter settings still apply,
+  with "Confirm with PIN or pattern".
+- **Rule starts are event-driven.** The native watcher checks the rule at
+  every foreground decision (app switch, window change, screen on) and when
+  granting access. There are no alarms or timers. If you stay inside an app
+  with no new foreground event, a rule that starts takes effect at the next
+  event. When a rule ends, the app returns to its saved level with no grace
+  period and no skipped challenge.
+- **Device clock and time zone.** Rules follow the device's local time.
+  Changing the clock or time zone can switch the **extra** rule strictness
+  on or off. It never goes below the saved level. Skipped
+  daylight-saving times never match; a repeated hour matches both times.
+- **One rule at a time, conservatively.** M2 supports one matching rule per
+  app. If several rules match, the strictest level wins. Conflict
+  diagnostics and arbitration are Milestone 3.
+- **Saved vs confirmed.** The app says "Protection confirmed the rule" only
+  after the native watcher confirms that save. Otherwise it says the rule is
+  saved but not confirmed yet (apps keep at least their saved levels), or
+  that the earlier, stricter settings still apply. A failed save is never
+  shown as saved, and the switch shows the stored state only.
+- **Unreadable data stays visible.** Corrupt or newer-version rules are
+  shown as an error and cannot be edited. The native side keeps its last
+  confirmed rules. A damaged native rule store makes every protected app
+  Critical until it is repaired.
+- **Plaintext at rest.** Rules are stored as plain JSON. Tampering can only
+  remove extra strictness, and the native side keeps it unless the change
+  was confirmed with the PIN.
+- **Device behaviour is unverified** until the combined Phase 6–10 round
+  (`docs/regression.md`, Phase 10 / M2).

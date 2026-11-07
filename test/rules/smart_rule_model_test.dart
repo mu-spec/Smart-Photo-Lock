@@ -39,7 +39,7 @@ TypeMatcher<SmartRuleDocumentException> _docError(
 Map<String, Object?> _ruleJson([Map<String, Object?> patch = const {}]) =>
     <String, Object?>{..._rule().toJson(), ...patch};
 
-String _doc(List<Object?> rules, {Object? version = 1}) => jsonEncode(
+String _doc(List<Object?> rules, {Object? version = 2}) => jsonEncode(
       <String, Object?>{
         'schema': 'smart_rules',
         'version': version,
@@ -294,7 +294,7 @@ void main() {
           ).toJson()));
     });
 
-    test('document v1: exact format, order kept, round trip', () {
+    test('document v2: exact format, order kept, round trip', () {
       final List<SmartRule> rules = <SmartRule>[
         _rule(id: 'b'),
         _rule(id: 'a', time: const SmartRuleTime.allDay(), days: <int>[1]),
@@ -302,13 +302,14 @@ void main() {
       final String encoded = SmartRuleDocument.encode(rules);
       expect(
         encoded,
-        '{"schema":"smart_rules","version":1,"rules":['
+        '{"schema":"smart_rules","version":2,"rules":['
         '{"id":"b","name":"Work hours","enabled":true,'
         '"targets":["com.example.mail"],"days":[1,2,3,4,5],'
-        '"time":{"type":"window","start":540,"end":1020}},'
+        '"time":{"type":"window","start":540,"end":1020},'
+        '"action":"standard"},'
         '{"id":"a","name":"Work hours","enabled":true,'
         '"targets":["com.example.mail"],"days":[1],'
-        '"time":{"type":"allDay"}}]}',
+        '"time":{"type":"allDay"},"action":"standard"}]}',
       );
       expect(SmartRuleDocument.decode(encoded), rules);
       expect(SmartRuleDocument.decode(SmartRuleDocument.encode(const [])),
@@ -326,12 +327,12 @@ void main() {
   group('9. schema versions', () {
     test('a newer version is reported as unsupported, with the version', () {
       expect(
-        () => SmartRuleDocument.decode(_doc(<Object?>[], version: 2)),
+        () => SmartRuleDocument.decode(_doc(<Object?>[], version: 3)),
         throwsA(
           _docError(SmartRuleDocumentProblem.unsupportedVersion).having(
             (SmartRuleDocumentException e) => e.version,
             'version',
-            2,
+            3,
           ),
         ),
       );

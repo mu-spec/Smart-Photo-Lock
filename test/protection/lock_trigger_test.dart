@@ -329,6 +329,9 @@ void main() {
   test('with a grace period, leaving keeps the session instead of '
       'revoking it', () async {
     await protect('com.whatsapp');
+    // R-A: the start-up rule load (until then every protected app is
+    // Critical: no grace).
+    await container.protectionBootstrap.synchronize();
     final DefaultAccessController controller =
         container.accessController as DefaultAccessController;
     controller.setGracePeriod(const Duration(seconds: 30));
@@ -411,6 +414,9 @@ void main() {
         addedAt: DateTime(2026, 8, 21),
       ),
     );
+    // R-A: the start-up rule load (until then every protected app is
+    // Critical: no grace).
+    await clocked.protectionBootstrap.synchronize();
 
     await clockedTrigger.start();
     final StaticAccessibilityLockService a11y =

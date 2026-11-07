@@ -55,6 +55,9 @@ void main() {
       '(fail-closed)', () async {
     final AppContainer boot1 = boot();
     await protect(boot1, 'com.whatsapp');
+    // R-A: the start-up rule load (until then every protected app is
+    // Critical: no grace).
+    await boot1.protectionBootstrap.synchronize();
     final DefaultAccessController c1 =
         boot1.accessController as DefaultAccessController;
     c1.setGracePeriod(const Duration(seconds: 30));
@@ -87,6 +90,8 @@ void main() {
     );
     // A fresh grace cycle works: grant, leave, return inside 30s.
     await protect(boot2, 'com.whatsapp');
+    // R-A: the start-up rule load after recreation.
+    await boot2.protectionBootstrap.synchronize();
     final DefaultAccessController c2 =
         boot2.accessController as DefaultAccessController;
     c2.setGracePeriod(const Duration(seconds: 30));

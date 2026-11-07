@@ -130,6 +130,8 @@ class ProtectionPolicySnapshot {
     required this.session,
     required this.revision,
     this.authorizedDowngrades = const <String>{},
+    this.smartRules,
+    this.authorizedRuleRelaxation = false,
   });
 
   /// Transport schema version understood by native (`policyVersion`).
@@ -147,6 +149,18 @@ class ProtectionPolicySnapshot {
   /// these; any other lower level is held at the stricter one.
   final Set<String> authorizedDowngrades;
 
+  /// Phase 10 / M2: the raise-only rule specs native enforces
+  /// (`SmartRulePolicy.nativeTransport`). Null = not sent: native keeps the
+  /// rules it last persisted (the Dart rule document could not be read, so
+  /// nothing may be relaxed by omission). An empty list = no raising rules.
+  final List<Map<String, Object?>>? smartRules;
+
+  /// Phase 10 / M2: true only for the one snapshot sent right after a rule
+  /// change that REDUCES rule strictness was confirmed through the CR-2
+  /// credential gate. Without it native holds the stricter union of its
+  /// previous and the new rules.
+  final bool authorizedRuleRelaxation;
+
   Map<String, Object?> toChannelArguments() => <String, Object?>{
         'policyVersion': currentVersion,
         'securityLevels': <String, String>{
@@ -156,7 +170,31 @@ class ProtectionPolicySnapshot {
         'snapshotSession': session,
         'snapshotRevision': revision,
         'authorizedDowngrades': authorizedDowngrades.toList(growable: false),
+        if (smartRules != null) ...<String, Object?>{
+          'smartRulesVersion': 1,
+          'smartRules': smartRules,
+          'authorizedRuleRelaxation': authorizedRuleRelaxation,
+        },
       };
+}
+
+/// Phase 10 / M2: how native treated the Smart Rules part of a snapshot.
+enum SmartRuleSyncStatus {
+  /// The sent rules are the ones native enforces.
+  applied,
+
+  /// The sent rules REDUCE strictness without a CR-2 confirmation: native
+  /// enforces the stricter union of its previous and the new rules.
+  held,
+
+  /// No rules were sent: native kept the rules it had persisted.
+  kept,
+
+  /// The rule data was malformed: native kept its previous rules.
+  invalid,
+
+  /// Native did not report (older reply format or no reply).
+  unknown,
 }
 
 /// How native treated the level part of a snapshot.
@@ -184,6 +222,7 @@ class ProtectionPolicyAck {
     required this.status,
     this.effectiveLevels = const <String, AppSecurityLevel>{},
     this.heldDowngrades = const <String>{},
+    this.ruleStatus = SmartRuleSyncStatus.unknown,
   });
 
   static const ProtectionPolicyAck unknown =
@@ -196,6 +235,9 @@ class ProtectionPolicyAck {
 
   /// Packages whose requested lower level native did NOT apply.
   final Set<String> heldDowngrades;
+
+  /// Phase 10 / M2: native's treatment of the Smart Rules part.
+  final SmartRuleSyncStatus ruleStatus;
 
   bool get applied =>
       status != ProtectionPolicyStatus.stale &&
@@ -219,7 +261,13 @@ class ProtectionPolicyAck {
             e.key! as String: AppSecurityLevel.fromStorage(e.value),
     };
     final Object? heldRaw = raw['heldDowngrades'];
+    final Object? ruleRaw = raw['ruleStatus'];
     return ProtectionPolicyAck(
+      ruleStatus: SmartRuleSyncStatus.values
+              .where((SmartRuleSyncStatus s) =>
+                  s != SmartRuleSyncStatus.unknown && s.name == ruleRaw)
+              .firstOrNull ??
+          SmartRuleSyncStatus.unknown,
       status: status,
       effectiveLevels: levels,
       heldDowngrades: <String>{

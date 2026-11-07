@@ -2,8 +2,9 @@
 ///
 /// Pure Dart, immutable and validated at construction. A [SmartRule] is
 /// configuration only: it says WHICH apps, on WHICH days and at WHAT local
-/// time a rule applies. It carries no action yet (security-level actions are
-/// Phase 10 / M2) and nothing in the app acts on it. Evaluation lives in
+/// time a rule applies. Phase 10 / M2 adds a typed [SmartRuleAction] (the
+/// security level the rule asks for). Actions can only RAISE protection
+/// above an app's saved level; see `SmartRulePolicy`. Evaluation lives in
 /// `SmartRuleEvaluator`; persistence in `SmartRuleRepository`.
 ///
 /// Not to be confused with the Phase 1 scaffolding `LockRule` /
@@ -16,6 +17,8 @@
 ///  * [SmartRule.fromJson] is strict: persisted data must already be in that
 ///    canonical form, otherwise it is rejected as corrupt (never repaired).
 library;
+
+import '../data/models/app_security_level.dart';
 
 /// Rule data that failed validation. [field] names the offending part
 /// (`id`, `name`, `targetPackages`, `days`, `time`, `rule`).
@@ -179,8 +182,57 @@ final class SmartRuleWindow extends SmartRuleTime {
       '${(m % 60).toString().padLeft(2, '0')}';
 }
 
+/// Phase 10 / M2 (PRD 10F): the security level a rule asks for while it
+/// matches.
+///
+/// Raise-only: [sensitive] and [critical] can make an app stricter than its
+/// saved level. [standard] never changes anything (every protected app is at
+/// least Standard). [unlocked] is RESERVED: accepted so stored data stays
+/// readable, never offered by the UI, never sent to native enforcement and
+/// never lowers protection. An unknown stored id is corrupt data; it never
+/// falls back to Standard.
+enum SmartRuleAction {
+  standard('standard', 'Standard'),
+  sensitive('sensitive', 'Sensitive'),
+  critical('critical', 'Critical'),
+  unlocked('unlocked', 'Unlocked');
+
+  const SmartRuleAction(this.storageId, this.label);
+
+  /// Persisted id (exact, case-sensitive).
+  final String storageId;
+
+  /// User-facing name.
+  final String label;
+
+  /// The level this action can raise an app to, or null when it can never
+  /// raise one ([standard], [unlocked]).
+  AppSecurityLevel? get raisesTo => switch (this) {
+        SmartRuleAction.sensitive => AppSecurityLevel.sensitive,
+        SmartRuleAction.critical => AppSecurityLevel.critical,
+        SmartRuleAction.standard || SmartRuleAction.unlocked => null,
+      };
+
+  /// Whether this action can ever change enforcement.
+  bool get canRaise => raisesTo != null;
+
+  /// Exact id → action; anything else → null (the caller rejects it).
+  static SmartRuleAction? fromStorageId(Object? raw) {
+    for (final SmartRuleAction a in values) {
+      if (a.storageId == raw) return a;
+    }
+    return null;
+  }
+
+  /// The action a migrated v1 rule receives. v1 rules had no action and
+  /// were never enforced; [standard] keeps them without any enforcement
+  /// effect (no surprise activation) while preserving their enabled state.
+  static const SmartRuleAction migratedFromV1 = SmartRuleAction.standard;
+}
+
 /// One Smart Rule (PRD 10A): stable id, name, enabled state, exact target
-/// packages (10E), selected days (10D) and a local time condition (10C).
+/// packages (10E), selected days (10D), a local time condition (10C) and,
+/// from M2, the requested [action] (10F).
 ///
 /// Equality covers every field; lists are sorted, so equal rules serialize
 /// to identical JSON. No timestamps are stored: nothing in M1 needs them and
@@ -193,6 +245,7 @@ final class SmartRule {
     required this.targetPackages,
     required this.days,
     required this.time,
+    required this.action,
   });
 
   /// Validates and normalizes. Throws [SmartRuleFormatException].
@@ -213,6 +266,7 @@ final class SmartRule {
     required Iterable<int> days,
     required SmartRuleTime time,
     bool enabled = true,
+    SmartRuleAction action = SmartRuleAction.standard,
   }) {
     return SmartRule._(
       id: _validId(id),
@@ -221,6 +275,7 @@ final class SmartRule {
       targetPackages: _validTargets(targetPackages),
       days: _validDays(days),
       time: time,
+      action: action,
     );
   }
 
@@ -253,6 +308,9 @@ final class SmartRule {
 
   final SmartRuleTime time;
 
+  /// Phase 10 / M2: the requested security level (raise-only).
+  final SmartRuleAction action;
+
   /// True when [packageName] is one of [targetPackages] (exact match).
   bool targets(String packageName) => targetPackages.contains(packageName);
 
@@ -270,6 +328,7 @@ final class SmartRule {
     Iterable<int>? days,
     SmartRuleTime? time,
     bool? enabled,
+    SmartRuleAction? action,
   }) {
     return SmartRule(
       id: id,
@@ -278,8 +337,12 @@ final class SmartRule {
       days: days ?? this.days,
       time: time ?? this.time,
       enabled: enabled ?? this.enabled,
+      action: action ?? this.action,
     );
   }
+
+  /// Rule JSON layout version written by [toJson] (document schema v2).
+  static const int jsonVersion = 2;
 
   Map<String, Object?> toJson() => <String, Object?>{
         'id': id,
@@ -288,9 +351,11 @@ final class SmartRule {
         'targets': List<String>.of(targetPackages),
         'days': List<int>.of(days),
         'time': time.toJson(),
+        'action': action.storageId,
       };
 
-  static const Set<String> _jsonKeys = <String>{
+  /// v1 (Phase 10 / M1) rule fields: no action.
+  static const Set<String> _jsonKeysV1 = <String>{
     'id',
     'name',
     'enabled',
@@ -299,15 +364,36 @@ final class SmartRule {
     'time',
   };
 
+  /// v2 (Phase 10 / M2) rule fields: v1 plus a required `action`.
+  static const Set<String> _jsonKeys = <String>{..._jsonKeysV1, 'action'};
+
   /// Strict decode of persisted [toJson] output. Rejects missing, unknown or
   /// mistyped fields and anything not already canonical (untrimmed name,
   /// unsorted or duplicated packages or days). Throws
   /// [SmartRuleFormatException]; never returns a repaired rule.
-  static SmartRule fromJson(Object? raw) {
+  ///
+  /// Phase 10 / M2: [version] is the rule layout of the containing document.
+  /// `1` = M1 layout (no `action` allowed); the rule is migrated explicitly
+  /// with [SmartRuleAction.migratedFromV1]. `2` = current layout; `action`
+  /// is required and must be an exact known id (no fallback). Any other
+  /// value is rejected.
+  static SmartRule fromJson(Object? raw, {int version = jsonVersion}) {
     if (raw is! Map) {
       throw const SmartRuleFormatException('rule', 'Not an object.');
     }
-    _exactKeys(raw, _jsonKeys, 'rule');
+    if (version != 1 && version != jsonVersion) {
+      throw SmartRuleFormatException('rule', 'Unknown rule layout $version.');
+    }
+    _exactKeys(raw, version == 1 ? _jsonKeysV1 : _jsonKeys, 'rule');
+    final SmartRuleAction? action = version == 1
+        ? SmartRuleAction.migratedFromV1
+        : SmartRuleAction.fromStorageId(raw['action']);
+    if (action == null) {
+      throw SmartRuleFormatException(
+        'action',
+        'Unknown action: ${raw['action']}.',
+      );
+    }
     final Object? id = raw['id'];
     final Object? name = raw['name'];
     final Object? enabled = raw['enabled'];
@@ -338,6 +424,7 @@ final class SmartRule {
       days: days.cast<int>(),
       time: SmartRuleTime.fromJson(raw['time']),
       enabled: enabled,
+      action: action,
     );
     if (rule.name != name) {
       throw const SmartRuleFormatException('name', 'Not trimmed.');
@@ -362,7 +449,8 @@ final class SmartRule {
       other.enabled == enabled &&
       _sameList(other.targetPackages, targetPackages) &&
       _sameList(other.days, days) &&
-      other.time == time;
+      other.time == time &&
+      other.action == action;
 
   @override
   int get hashCode => Object.hash(
@@ -372,12 +460,13 @@ final class SmartRule {
         Object.hashAll(targetPackages),
         Object.hashAll(days),
         time,
+        action,
       );
 
   @override
   String toString() => 'SmartRule($id, "$name", '
       '${enabled ? 'enabled' : 'disabled'}, targets=$targetPackages, '
-      'days=$days, time=$time)';
+      'days=$days, time=$time, action=${action.storageId})';
 
   // -- validation ------------------------------------------------------------
 

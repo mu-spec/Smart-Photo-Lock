@@ -2769,3 +2769,122 @@ remain open.
 
 **Status:** implemented and simulated-tested. It is **not device verified**
 and **not release ready**.
+
+# Phase 10 / M2 — Smart Rules: security-level actions & rule management UI
+
+## Automated evidence (Phase 10 / M2)
+
+All results are **SIMULATED**:
+- Dart: production policy, repository, bootstrap, access controller and UI
+  code over the container's in-memory stores and the static watcher. The
+  static watcher mirrors the native rule resolution (applied / held / kept)
+  and its persistence.
+- Kotlin: production `SmartRulePolicy`, `ProtectionStateStore` and
+  `ProtectionAccessState` on the JVM, with a stub Android `Context`.
+
+No device, real watcher, real clock change or OEM behaviour is observed.
+
+| Suite | Tests | Covers |
+| --- | --- | --- |
+| `test/rules/smart_rule_policy_m2_test.dart` (new) | 16 | **Floor:** 1 effective = max(baseline, rule) for every baseline × action; 2 Standard and Unlocked never take part; 3 disabled, non-target and UTC instants never match. **Conditions:** 4 overnight window owned by its start day, end exclusive; 5 overlapping rules → strictest (M2 interim). **Change analysis:** 6 disable/delete/narrow/lower → relaxed (CR-2); 7 widen/raise/rename → nothing relaxed; 8 `raisedAt` only for apps stricter now. **Transport and cache:** 9 enabled raising rules only, canonical; 10 cache per instant, last good copy kept. **Schema:** 11 v1 → v2 keeps every field, action = Standard; 12 v1 with an action key, v2 without one, or an unknown action → corrupt (no Standard fallback); 13 v2 round trip incl. reserved Unlocked; 14 a v1 store reads migrated and is written as v2 only on a user write; 15 a future version fails closed, bytes unchanged. **Writes:** 16 compare-and-swap conflicts write nothing |
+| `test/protection/smart_rule_enforcement_m2_test.dart` (new) | 10 | **Bootstrap ↔ native:** 17 the snapshot carries only enabled raising rules, with the per-call ack; 18 an unreadable document sends no rules (native keeps its own) and the Dart cache keeps the last good copy; 19 a reduction without the CR-2 flag is held as the stricter union, and is applied with it. **Access controller:** 20 a rule raise ends an older, laxer session; 21 a rule ending gives no grace or authorization; 22 the floor holds (Sensitive never lowers Critical); 23 a clock moved back or forward is evaluated at each decision; 24 no inherited grace when a rule starts during grace. **Ack parsing:** 25 only an exact `ruleStatus` is trusted; a failed configure is a failed sync |
+| `test/ui/smart_rules_screen_m2_test.dart` (new) | 26 | **33 List:** empty, read error with Retry (never an empty list), corrupt and newer-version states, row content. **34–37 Create:** full flow saved and sent, "confirmed" only after the ack, with no relaxation flag on a raise; 34b no ack → "Saved, but…"; 35 validation; 36 only protected apps; 37 Unlocked not selectable. **38 Toggle:** disable needs the PIN, cancel changes nothing, the switch follows storage; enabling needs no PIN, sends no relaxation flag and ends a laxer session; a failed write keeps the switch; state survives restart. **39 Draft guard:** unchanged, dirty + Keep editing / Discard, edit revert, save success, save failure keeps the draft, routes on top (CR-2, lock challenge) never intercepted, stale form never overwrites. **Delete and held:** delete needs the PIN; held reduction notice confirmed with the PIN. **40 Accessibility:** 320 dp at 2× text in light and dark mode, semantics. **CR-2 proof scope:** empty set, unconfirmed package, expired and reused proofs refused; one valid use writes once. **Presentation:** day and time summaries |
+| `test/regression/smart_rules_m2_regression_test.dart` (new) | 5 | M2-R1 Phase 8 levels not overwritten, native levels unchanged, rule level simulated; M2-R2 Phase 9 score and recommendations unchanged before/after a raising rule and after restart; M2-R3 a Standard app under a Critical rule is challenged and a wrong PIN never grants; M2-R4 a pending challenge survives a rule change, a raise ends the open session, a grant covers only its app; M2-R5 after restart rules are re-sent, the cache gives Critical, navigation intact |
+| `SmartRuleEnforcementTest.kt` (new, JVM) | 24 | Same-day start inclusive / end exclusive; overnight owner day; Sunday → Monday; Calendar → ISO weekday; exact package match; floor; strictest of several; relaxation detection; transport validation; resolver kept/held/applied/invalid; codec round trip and damage; persisted rule inside/outside its window; overnight across the store and week; unauthorized removal held, authorized applied; omitted or malformed rules keep the stored ones; a failed commit never weakens and reports `persisted=false`; damaged store → Critical; legacy store without rules → baseline; clock moves switch only the extra strictness; time zone read at each decision; DST skipped and repeated hours; a rule start revokes a lower grant at the next decision; a rule end gives no authorization or grace; the same level keeps the H-2 slide |
+| Updated M1 suites | 26 / 21 / 4 | Model and repository tests use schema v2 (v1 still read). M1 regression test 35 now expects the Smart tab to list a saved rule as "Standard · adds no protection", never "Active", with no rule writes when navigating |
+
+**Totals:**
+- **Full Flutter:** **+1600, all passed**, EXIT 0, no skips or reruns
+  (1543 + 57 new: 16 + 10 + 26 + 5). Run 2 gave the same result. Two
+  assertions (no relaxation flag on raises) were then added to the UI
+  suite, and run 3 is the final result.
+- **Kotlin JVM:** **OK (330)** = 306 + 24 new. **Typecheck:** exit 0, 87
+  classes.
+- **Static checks:** `flutter analyze` no issues; `dart format` 0 changed on
+  the 24 new or changed Dart files (`unprotect_gate.dart` was unformatted at
+  the baseline and is not reformatted; its new hunk is formatted);
+  `git diff --check` clean.
+- Run 1 (before fixes) failed with 273 timeouts. Their cause was a spinner on
+  the inactive Smart tab inside the `IndexedStack`, which kept
+  `pumpAndSettle` waiting in every full-app test. Fixed in production: an
+  inactive tab never shows a spinner, and a missing container shows an error
+  state.
+
+**Targeted mutation checks: 27/27 killed, 0 invalid**
+(`Phase10_M2/run_m2_mutations.py`, outside the repo; one production spot per
+mutant; Dart mutants run the M2 suites and Kotlin mutants run
+`SmartRuleEnforcementTest`; restoration verified byte-identical):
+- **floor (2/2):** effective level ignores the baseline; controller takes
+  the rule level over the saved one;
+- **Unlocked / migration / schema (5/5):** Unlocked raises; Unlocked
+  selectable; v1 migration activates rules; unknown action → Standard; a
+  newer version read as current;
+- **ack (1/1):** "confirmed" without an applied ack;
+- **CR-2 / enable-disable (4/4):** reductions skip CR-2; relaxation flag
+  on every change; empty package set accepted; partial coverage accepted;
+- **stale state / rollback (4/4):** unreadable rules sent as empty; cache
+  cleared on a failed read; compare-and-swap disabled; no rollback after a
+  failed read-back;
+- **challenge / grace isolation (3/3):** laxer session survives a raise;
+  rule end turns a strict unlock into grace; change flow keeps sessions made
+  stricter;
+- **editor (2/2):** draft guard disabled; empty app selection not
+  reported;
+- **native (6/6):** floor ignored; overnight tail owned by the current day;
+  end inclusive; unconfirmed relaxation accepted; damaged store → baseline;
+  grant not revoked on a rise.
+
+Not covered automatically:
+- the real watcher on a device, and real clock, time-zone or DST changes;
+- process death during a commit, and the OEM `SharedPreferences` behaviour;
+- TalkBack output;
+- every OEM behaviour.
+
+### Persistence gate: failed-reduction rollback (Option A) and start-up floor (R-A)
+
+SIMULATED (Flutter test environment, and the JVM for the native gate
+harness kept outside the repository). No device.
+
+| Suite | Tests | Covers |
+| --- | --- | --- |
+| `test/ui/smart_rules_reduction_rollback_m2_test.dart` (new) | 13 | **Option A:** A success; B/C a PIN-confirmed reduction that fails before or after reaching native storage → previous rules restored exactly (CAS), re-sent without the relaxation flag, "Couldn't apply the change. Your previous rule settings will be restored.", never saved, no session or authorization; D the restore also fails → its own message, never "Nothing was changed"; E exact list and order restored, editor open; the draft is kept for a retry that asks for the PIN again; H cancel writes nothing and sends no flagged snapshot; 3 `replaceRules` unit tests. **confirmHeldRuleRelaxation:** CH-1 a confirmation that lands but reports failure → unflagged re-sync, native re-holds the stricter rules, "still apply" only then; CH-2 confirmation and re-sync both fail → "Couldn't confirm…" (neither outcome claimed); CH-3 cancel sends nothing |
+| `test/regression/smart_rules_startup_floor_m2_test.dart` (new) | 8 | **R-A:** RA-1 cold start before the first rule read → challenge, Critical grant (1-minute window, no grace), saved levels unchanged; RA-2 failed start-up read → Critical until a successful read, then actual levels and Standard grace; RA-3 a failed read after a good one revokes an open Standard session; RA-4 control after a successful sync; RA-5 unprotected apps unaffected, nothing newly protected or authorized; RA-6 restart after an ambiguous failed relaxation (native weaker, storage restored) → Critical before the sync, stricter rules re-applied by it; RA-7/RA-8 through the real lock host: a PIN unlock after a failed read or during the cold-start read sends the Critical floor to native `authorizePackage`, and returning inside the Standard grace challenges again |
+| Updated Phase 5/8 suites | 10 tests | `security_level_enforcement_test` (1, 2, 5/6, native-gate grant), `lock_trigger_test` (two grace tests), `process_recreation_test` (two grace tests) now run the start-up rule load (`protectionBootstrap.synchronize()`) before asserting Standard/Sensitive grace; `security_level_qa_matrix_test` restart shares the secret store (a restart keeps the Keystore). The assertions are unchanged |
+
+The native durability gate harness (`Phase10_M2/gate/NativeDurabilityGateTest.kt`)
+gives 16 of 16. G1 native only; G2/G3 a grant with the Critical floor
+(rules loaded, or R-A before they are known); G4/G5 the gap closes at the
+first Dart sync. A record test shows that native alone still relies on
+the floor Dart sends.
+
+## Phase 10 / M2 device QA (adds to the consolidated plan; not executed)
+
+Session 1i (RX1–RX12) of the consolidated plan
+(`Phase10_M2/P6_P10_CONSOLIDATED_QA_PLAN.md`):
+- update in place;
+- the create flow and validation;
+- a raising rule enforced;
+- no inherited grace;
+- rule end with no free pass;
+- reductions needing the PIN/pattern;
+- the floor;
+- restart;
+- clock and time zone;
+- the draft guard;
+- accessibility;
+- Phase 9 unchanged.
+
+With the M2 build, RS5–RS9 run through the UI except the RS9
+corrupt-document check (still DEFERRED).
+
+Release blockers:
+- RX1, RX3–RX7;
+- RX8 (a);
+- RX9 (a) and (c);
+- the challenge part of RX10;
+- RX12.
+
+F3, biometric, E13, Q6 and the combined Phase 6–10 round remain open.
+
+**Status:** implemented and simulated-tested. It is **not device verified**
+and **not release ready**.

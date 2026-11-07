@@ -571,7 +571,9 @@ class WatcherService : Service() {
                     fromUsageEvents = source == ForegroundSource.USAGE_EVENTS,
                 ) { accessibilityEnabledOrUnknown(context) },
                 // Phase 8 / M2: per-package grace from the persisted levels.
-                levelOf = { ProtectionStateStore.securityLevel(context, it) },
+                // Phase 10 / M2: effective level incl. active Smart Rules,
+                // evaluated now at this foreground decision.
+                levelOf = { ProtectionStateStore.effectiveLevel(context, it) },
             )
             if (!protected || decision == ProtectionAccessState.Decision.ALLOW) {
                 resetRecovery()
@@ -625,8 +627,9 @@ class WatcherService : Service() {
                 packageName,
                 sessionWindowMs,
                 // Phase 8 / M2: the level caps the H-2 window natively, even
-                // if Dart requested a longer one.
-                level = ProtectionStateStore.securityLevel(context, packageName),
+                // if Dart requested a longer one. Phase 10 / M2: the effective
+                // level (saved level raised by an active Smart Rule).
+                level = ProtectionStateStore.effectiveLevel(context, packageName),
                 // Gate finding 2: Dart's level for this grant; only tightens.
                 floor = levelFloor,
             )
@@ -742,7 +745,7 @@ class WatcherService : Service() {
                 packageName = context.packageName,
                 protected = false,
                 nowElapsedMs = SystemClock.elapsedRealtime(),
-                levelOf = { ProtectionStateStore.securityLevel(context, it) },
+                levelOf = { ProtectionStateStore.effectiveLevel(context, it) },
             )
         }
 
@@ -1055,7 +1058,7 @@ class WatcherService : Service() {
                 ProtectionAccessState.observeForeground(
                     packageName = request.homePackage,
                     protected = false,
-                    levelOf = { ProtectionStateStore.securityLevel(context, it) },
+                    levelOf = { ProtectionStateStore.effectiveLevel(context, it) },
                 )
             }
             // Emergency exit is not authorization and never starts/extends

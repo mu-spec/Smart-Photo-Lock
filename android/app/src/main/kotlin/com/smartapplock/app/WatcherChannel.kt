@@ -37,6 +37,14 @@ object WatcherChannel {
                                 authorizedDowngrades =
                                     call.argument<List<String>>("authorizedDowngrades")
                                         ?.toSet() ?: emptySet(),
+                                // Phase 10 / M2: optional raise-only rules
+                                // (absent = keep the persisted rules).
+                                rulesPresent = (call.arguments as? Map<*, *>)
+                                    ?.containsKey("smartRules") == true,
+                                rulesVersion = call.argument<Any>("smartRulesVersion"),
+                                rawRules = call.argument<Any>("smartRules"),
+                                authorizedRuleRelaxation =
+                                    call.argument<Boolean>("authorizedRuleRelaxation") == true,
                             )
                             val outcome =
                                 ProtectionStateStore.configure(activity, enabled, packages, policy)
