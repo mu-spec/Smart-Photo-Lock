@@ -63,7 +63,16 @@ rule needs the PIN/pattern; the Smart tab lists, creates, edits, enables,
 disables and deletes rules, says "confirmed" only after the native ack and
 guards unsaved changes) is implemented and simulated-tested; device QA
 joins the same combined round (`docs/regression.md`, Phase 10 / M2; not
-device verified, not release ready) — production scaffold, architecture, navigation, design
+device verified, not release ready). Phase 11 / Milestone 2 (Security
+Profiles: manual switching and custom profiles from the Smart tab; profiles
+only add protection to apps that are already protected and never unlock
+anything; switching to a stronger profile needs no PIN, lowering protection
+needs the app's own PIN/pattern for that exact change; the profile shows as
+active only after the native watcher confirms it; create, rename,
+duplicate, edit and delete custom profiles with unsaved-change guards) is
+implemented and simulated-tested; device QA joins the same combined round
+(`docs/regression.md`, Phase 11 / M2; not device verified, not release
+ready) — production scaffold, architecture, navigation, design
 system, persistence, secure storage, full authentication with settings,
 installed-apps management, the complete capability/permission layer,
 and the **core lock engine**: foreground detection (usage-stats +

@@ -131,7 +131,7 @@ abstract final class SecurityProfilePolicy {
   ) =>
       SmartRule(
         id: '$overlayRulePrefix${profile.id}-$part',
-        name: '${profile.kind.label} profile',
+        name: '${profile.name} profile',
         targetPackages: targets,
         days: _everyDay,
         time: const SmartRuleTime.allDay(),

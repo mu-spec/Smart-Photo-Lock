@@ -58,7 +58,12 @@ SecurityProfile _profile(Object? raw) {
           as Map<String, Object?>;
   final List<Object?> profiles = <Object?>[
     for (final Object? q in doc['profiles']! as List<Object?>)
-      (q! as Map<String, Object?>)['id'] == p['id'] ? p : q,
+      // Phase 11 / M2: v2 entries carry the preset's fixed name; the
+      // shared vectors (v1 entry shape) are unchanged.
+      if (q case final Map<String, Object?> m when m['id'] == p['id'])
+        <String, Object?>{...p, 'name': m['name']}
+      else
+        q,
   ];
   doc['profiles'] = profiles;
   doc['activeProfileId'] = p['id'];
@@ -101,8 +106,21 @@ void main() {
     final List<Object?> encoded = (jsonDecode(
             SecurityProfileDocument.encode(SecurityProfileSet.defaults()))
         as Map<String, Object?>)['profiles']! as List<Object?>;
-    expect(encoded.map(_canonical).toList(),
+    // Phase 11 / M2: v2 entries also carry each preset's fixed name, which
+    // is not part of the shared (policy) vectors: compare the policy fields
+    // exactly, and the names separately.
+    expect(
+        encoded
+            .map((Object? e) => _canonical(
+                Map<String, Object?>.of(e! as Map<String, Object?>)
+                  ..remove('name')))
+            .toList(),
         (v['presets']! as List<Object?>).map(_canonical).toList());
+    expect(
+        encoded
+            .map((Object? e) => (e! as Map<String, Object?>)['name'])
+            .toList(),
+        <String>['Normal', 'Home', 'Work', 'Guest', 'Kids']);
   });
 
   group('scenarios', () {

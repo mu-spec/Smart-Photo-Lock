@@ -4,10 +4,13 @@ import '../../../app/app_scope.dart';
 import '../../../data/models/protected_app.dart';
 import '../../../data/repositories/smart_rule_repository.dart';
 import '../../../design_system/design_system.dart';
+import '../../../profiles/security_profile.dart';
 import '../../../rules/smart_rule.dart';
 import '../../../rules/smart_rule_diagnostics.dart';
 import '../../../services/watcher_service.dart';
 import '../../../utilities/result.dart';
+import 'profile_presentation.dart';
+import 'profiles_screen.dart';
 import 'smart_rule_change.dart';
 import 'smart_rule_details.dart';
 import 'smart_rule_editor_screen.dart';
@@ -65,6 +68,9 @@ class _SmartScreenState extends State<SmartScreen> {
   final Set<String> _busy = <String>{};
   bool _confirmingHeld = false;
   bool _started = false;
+  // Phase 11 / M2: the saved profiles (null = unreadable / not loaded).
+  SecurityProfileSet? _profiles;
+  Object? _profileError;
 
   @override
   void didChangeDependencies() {
@@ -98,9 +104,15 @@ class _SmartScreenState extends State<SmartScreen> {
     final Result<List<SmartRule>> rules = await container.smartRules.getRules();
     final Result<List<ProtectedApp>> apps =
         await container.protectedApps.getProtectedApps();
+    final Result<SecurityProfileSet> profiles =
+        await container.securityProfiles.getProfiles();
     if (!mounted) return;
     setState(() {
       _loading = false;
+      _profiles = profiles.valueOrNull;
+      _profileError = profiles.isFailure
+          ? (profiles.errorOrNull ?? StateError('No profiles read.'))
+          : null;
       if (rules.isFailure || rules.valueOrNull == null) {
         _rules = null;
         _error = rules.errorOrNull ?? StateError('No rules read.');
@@ -177,6 +189,8 @@ class _SmartScreenState extends State<SmartScreen> {
             packages: <String>{
               for (final ProtectedApp a in apps.valueOrNull!) a.packageName,
             },
+            // Phase 11 / M2: bound to the rules this screen displays.
+            expectedRules: _rules,
             clock: widget.clock,
           );
     if (!mounted) return;
@@ -186,6 +200,8 @@ class _SmartScreenState extends State<SmartScreen> {
       SmartRuleChangeStatus.denied => SmartRuleText.denied(outcome.denial),
       // Only after native durably re-held the stricter rules.
       SmartRuleChangeStatus.savedHeld => SmartRuleText.heldNotConfirmed,
+      // The saved settings changed since they were shown: nothing sent.
+      SmartRuleChangeStatus.conflict => SmartRuleText.outcome(outcome),
       _ => SmartRuleText.heldUnknown,
     });
   }
@@ -219,6 +235,11 @@ class _SmartScreenState extends State<SmartScreen> {
               ),
         ),
         const SizedBox(height: DsSpacing.lg),
+        if (AppScope.read(context) != null &&
+            (_profiles != null || _profileError != null)) ...<Widget>[
+          _profileCard(context),
+          const SizedBox(height: DsSpacing.lg),
+        ],
         if (_held) ...<Widget>[
           _heldNotice(context),
           const SizedBox(height: DsSpacing.lg)
@@ -335,6 +356,62 @@ class _SmartScreenState extends State<SmartScreen> {
     return SmartRuleDetailsText.engine(
       SmartRuleDiagnostics.engineStateWithoutSaved(
         container.protectionBootstrap.ruleCache,
+      ),
+    );
+  }
+
+  Future<void> _openProfiles() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        settings: const RouteSettings(name: ProfilesScreen.routeName),
+        builder: (BuildContext _) => ProfilesScreen(clock: widget.clock),
+      ),
+    );
+    if (!mounted) return;
+    await _load();
+  }
+
+  /// Phase 11 / M2: the active profile and what native confirmed.
+  Widget _profileCard(BuildContext context) {
+    final SecurityProfileSet? set = _profiles;
+    final TextStyle? secondary =
+        Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: context.dsColors.textSecondary,
+            );
+    final String title;
+    final String detail;
+    if (set == null) {
+      title = ProfileText.heading;
+      detail = ProfileText.loadError(_profileError);
+    } else {
+      final SecurityProfile active = set.active;
+      title = '${ProfileText.heading}: ${active.name}';
+      detail = '${ProfileText.summary(active)} · ${ProfileText.nativeStatus(
+        profileNativeStatus(
+          saved: set,
+          record: AppScope.read(context)?.protectionBootstrap.lastRuleExchange,
+          protectedPackages: _apps.keys.toSet(),
+        ),
+      )}';
+    }
+    return DsCard(
+      key: const Key('smart_profile_card'),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text(title, style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: DsSpacing.xxs),
+          Text(detail,
+              key: const Key('smart_profile_detail'), style: secondary),
+          Align(
+            alignment: AlignmentDirectional.centerStart,
+            child: TextButton(
+              key: const Key('smart_profile_change'),
+              onPressed: _openProfiles,
+              child: const Text(ProfileText.change),
+            ),
+          ),
+        ],
       ),
     );
   }

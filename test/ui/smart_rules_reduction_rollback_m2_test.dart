@@ -21,6 +21,7 @@ import 'package:smart_app_lock/data/repositories/smart_rule_repository.dart';
 import 'package:smart_app_lock/data/storage/impl/in_memory_local_database.dart';
 import 'package:smart_app_lock/protection/impl/default_access_controller.dart';
 import 'package:smart_app_lock/rules/smart_rule.dart';
+import 'package:smart_app_lock/rules/smart_rule_policy.dart';
 import 'package:smart_app_lock/services/impl/static_watcher_service.dart';
 import 'package:smart_app_lock/services/watcher_service.dart';
 import 'package:smart_app_lock/ui/screens/pin/pin_unlock_screen.dart';
@@ -259,8 +260,16 @@ void main() {
       expect((await fx.rules()).single.enabled, isFalse);
       expect(fx.watcher.simulatedRuleLevel(_notes, _now), _L.critical);
       expect(fx.flaggedSnapshots, 1);
-      expect(fx.watcher.receivedPolicies.last!.authorizedRuleRelaxation, isTrue,
-          reason: 'no further (unflagged) snapshot after a failed restore');
+      // Phase 11 / M2 (gate J): right after the failed flagged write the
+      // bootstrap re-sends the PREVIOUS, stricter rules without the flag
+      // (native re-persists them). Nothing reduced is ever sent afterwards,
+      // in particular not the reduced rules app storage still holds.
+      final ProtectionPolicySnapshot last = fx.watcher.receivedPolicies.last!;
+      expect(last.authorizedRuleRelaxation, isFalse);
+      expect(last.smartRules,
+          SmartRulePolicy.nativeTransport(<SmartRule>[_rule()]),
+          reason: 'the last snapshot is the stricter previous state');
+      expect(fx.watcher.lastRuleStatus, SmartRuleSyncStatus.applied);
     });
 
     testWidgets(

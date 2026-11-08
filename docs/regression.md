@@ -3076,3 +3076,95 @@ F3, biometric, E13, Q6 and the detailed Phase 6–10 sessions remain open.
 
 **Status:** implemented and simulated-tested. It is **not device verified**
 and **not release ready**.
+
+# Phase 11 / M2 — Security Profiles: manual switching & custom profiles
+
+## Automated evidence (Phase 11 / M2)
+
+All results are **SIMULATED**: production profile, bootstrap, gate,
+switching and UI code over `AppContainer.inMemory`, with the static watcher
+(which mirrors the native `SmartRuleSnapshotResolver`: unflagged relaxing →
+HELD union; flagged → APPLIED from whatever it holds) standing in for
+native. **No native code changed.** Proofs are minted through the real PIN
+screen. No device, real watcher, TalkBack or OEM behaviour is observed.
+
+| Suite | Tests | Covers |
+| --- | --- | --- |
+| `test/profiles/security_profile_m2_model_test.dart` (new) | 15 | **Custom model:** id `custom-` + 12 lowercase hex only; names trimmed, 1–32 characters, no control characters, unique ignoring case (incl. presets); raise-only (no Standard, no own package); presets keep their names, Normal/Guest immutable, Home editable but not removable; duplicate ids refused; at most 20 custom profiles and 2048 entries; canonical order; deleting the active profile makes Normal active; unknown/preset deletes refused; unique new ids; a custom profile compiles exactly like a preset with the same levels. **Document v2:** round trip with names; v1 decodes losslessly; 8 corrupt v2 variants rejected (renamed preset, untrimmed name, bad id, missing/extra key, duplicate name, unknown active, Standard); a v1 custom entry is corrupt; newer versions unsupported |
+| `test/protection/bound_relaxation_m2_test.dart` (new) | 20 | **Exact protocol:** Guest → Normal asks the proof for exactly the relaxed apps; an unflagged probe of Guest precedes ONE flagged Normal; the document is committed only after the ack; nothing granted; nothing relaxed → no proof and no flag. **Isolation:** native holding an unrelated rule reduction → a profile reduction is `blocked` (no flag, rule still enforced); the reverse (held profile blocks a rule flag); wrong before-binding → `conflict`, nothing sent; a concurrent rule change → `conflict`; refused proof → `denied`, nothing sent; unprotected apps never in scope. **Precedence:** the stricter of overlay and rule decides in both directions on the Dart floor, the access decision and native. **Ack/recovery:** flagged write failing before or after apply → stricter state re-sent and acknowledged, document never committed (`notApplied`); recovery also failing → `unknown`; probe failure → `unknown`, no flag; document write failing after native applied → raised back; **process death** after the flagged ack but before the commit → the restart (R-A floor first) re-applies Guest unflagged; restart with Guest loads one profile; `confirmSaved` bound to the displayed rules; `synchronize()` can no longer send the flag. **Final gate:** a probe native resolved but could not persist (`persisted=false`, held union) is `unknown` and never followed by the flag, the unrelated held reduction stays enforced; probe, flag and commit are one serialized section (a concurrent `synchronize()` waits and then sends the committed profile unflagged) |
+| `test/ui/security_profiles_m2_test.dart` (new) | 28 | **Switching** through Smart card → Profiles: stronger (no PIN, applied only after the ack, open session revoked, saved levels unchanged, others never protected); weaker (PIN titled for profiles, no biometric; cancel and wrong PIN write and send nothing; PIN → ONE flag, no grant, no auto-open); a profile PIN never releases a held rule; equal (no PIN, no flag); failed save → nothing claimed; unconfirmed sync → "Saved, not confirmed yet" and a Critical Dart floor; stale screen → conflict, no write. **Final gate:** a failed lowering (flagged write failing → "previous profile is still active"; flagged write and recovery failing → "Couldn't confirm the change") never shows "Normal is active" or a false "Applied". **Management:** create with name validation, inactive save without native contact; discard dialog (keep editing / discard); failed save keeps the draft and a retry doesn't duplicate; active edit-down needs the PIN; inactive edits never do (no flag, no authorized package, Dart floor and native unchanged); deleting the active profile → Normal with the PIN; duplicate Guest; corrupt and newer documents → error states, nothing written. **CR-2 isolation with real PIN proofs:** a profile proof can't unprotect, downgrade, write or flag a rule, or confirm saved settings, and flags one profile change once; a downgrade proof flags nothing; a rule proof flags only its own written packages, once, never after `maxAge` or with the clock moved back, never a profile; profile proofs out of scope / expired / clock moved back / empty refused; `confirmSaved` proofs separate. **Session safety:** lockout unchanged by a switch, a weaker switch impossible while locked out; a pending challenge survives both directions; no package authorized, no grace; an existing Critical grant isn't turned into Standard grace. **UI:** 320 dp at 2× text in light and dark (Smart card, list, editor) without overflow; TalkBack reads the name and "Active" once, inactive tiles are buttons, choices are labelled "<app>: <level>"; "Applied" only after an ack |
+
+Changed existing suites (deliberate, follow from the gate):
+- `security_profile_parity_vectors_test.dart` (58): v2 entries carry the
+  preset name (merged into the v1-shape vectors; presets compared on policy
+  fields plus names separately). The shared fixture's "newer version"
+  document is now version 3 (version 2 is current); regenerated by its
+  generator, a one-value diff, `--check` current. Kotlin does not read
+  `presets` or `invalidDocuments`.
+- `security_profile_repository_test.dart` (13): the "newer version" case
+  uses `SecurityProfileDocument.version + 1`.
+- `security_profiles_m1_regression_test.dart` (14): D6-1 now leaves Guest
+  through the bound protocol (the broad flag no longer exists); S-3 lists
+  `profile_change.dart` as an allowed `saveProfiles` caller.
+- `smart_rule_enforcement_m2_test.dart`, `smart_rules_m3_regression_test.dart`:
+  authorized rule relaxations go through `applyBoundRelaxation`.
+- `smart_rules_reduction_rollback_m2_test.dart` D/J: strengthened — after a
+  failed reduction the previous rules are re-sent unflagged and applied.
+
+**Totals (final, formatted code):**
+- **Full Flutter:** **+1940, all passed**, EXIT 0, no skips
+  (1877 + 63 new: 15 + 20 + 28).
+- **Kotlin JVM (regression, no native change):** **OK (361)**; Phase 10
+  rule parity **OK (9)**; profile parity **OK (6)** on the updated shared
+  fixture.
+- **Static checks:** `dart analyze lib test` no issues; `dart format
+  --language-version=3.5` on the M2 Dart files (the sensitive
+  `unprotect_gate.dart` is not reformatted); `git diff --check` clean
+  (tracked and new files).
+- Failures found while building M2, all fixed:
+  - 3 expected failures from the v2 document in existing suites (parity
+    loader, repository "newer version", M1 static S-3), updated as listed
+    above; 2 more in the parity suite (presets with names; the fixture's
+    "newer version" was version 2).
+  - 1 **TalkBack defect** in the new Profiles list (the name and "Active"
+    were read twice), fixed in production.
+  - Test-only issues: a lazily built list at 320 dp, list order by label,
+    a Guest setup that made a rule deletion non-relaxing.
+
+**Targeted mutation checks: 25/25 killed, 0 invalid**
+(`Phase11/run_p11m2_mutations.py`, outside the repo; one production
+behaviour per mutant; runs the 3 new suites plus the M1 regression and the
+R-A start-up floor suite; unmutated baseline +80 green; restoration
+verified byte-identical). The first full run killed **20/22**; the two
+survivors exposed real test gaps (a rule-reduction flag past `maxAge`; the
+Dart floor with a rule and a profile at different levels). Tests were
+added (CR-3 expiry, PR-1) and both were then killed. The final security
+gate added 4 focused tests (GATE-1 to GATE-4) and 3 mutants, all killed:
+- **PIN gate / CR-2 (6/6):** missing PIN gate; broad `packageChange` proof
+  for profiles; intent ignored in `consumeBoundRelaxation`; rule flag not
+  limited to written packages; single use dropped; expiry ignored;
+- **bound protocol (8/8):** wrong before-binding; probe ack not checked;
+  probe skipped; probe sends the after state; dropped rollback (relaxed
+  state re-sent); unconfirmed recovery reported as restored; commit before
+  the flag; profile cache not refreshed;
+- **switching (4/4):** false applied ack; grace inheritance (no revoke);
+  stale overwrite (CAS removed in both layers); inactive edit contacting
+  native;
+- **policy / R-A (4/4):** wrong priority; Guest protecting unprotected apps;
+  R-A skipped; R-A ignoring the profile read;
+- **final gate (3/3):** bound protocol not serialized; failed lowering
+  (`notApplied`) reported as active; unconfirmed lowering (`unknown`)
+  reported as active.
+
+Not covered automatically: the real watcher on a device; real process
+death; TalkBack speech; OEM behaviour.
+
+## Phase 11 / M2 device QA (not executed)
+
+Plan only: Session 1k (PS1–PS14) in the consolidated plan
+(`Phase10_M3/P6_P10_CONSOLIDATED_QA_PLAN.md`, outside the repo). PS14 is
+HARNESS only. F3, biometric, the unverified parts of E13 and Q6, and the
+step-level Phase 6–10 sessions remain open release gates.
+
+**Status:** implemented and simulated-tested. It is **not device verified**
+and **not release ready**.

@@ -3088,7 +3088,7 @@
   {
    "name": "newer version",
    "document": {
-    "version": 2,
+    "version": 3,
     "activeProfileId": "normal",
     "profiles": [
      {

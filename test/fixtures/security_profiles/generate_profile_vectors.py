@@ -342,7 +342,8 @@ INVALID_DOCUMENTS = [
     ("level as number", mutate(lambda d: set_profile(d, "home", all=2)), "corrupt"),
     ("version 0", mutate(lambda d: d.update(version=0)), "corrupt"),
     ("version as string", mutate(lambda d: d.update(version="1")), "corrupt"),
-    ("newer version", mutate(lambda d: d.update(version=2)), "unsupportedVersion"),
+    # Phase 11 / M2: version 2 is now the current document version.
+    ("newer version", mutate(lambda d: d.update(version=3)), "unsupportedVersion"),
 ]
 
 

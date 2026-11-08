@@ -22,6 +22,7 @@ import 'package:smart_app_lock/data/repositories/impl/smart_rule_repository_impl
 import 'package:smart_app_lock/data/storage/impl/in_memory_key_value_store.dart';
 import 'package:smart_app_lock/data/storage/impl/in_memory_local_database.dart';
 import 'package:smart_app_lock/protection/access_controller.dart';
+import 'package:smart_app_lock/protection/bound_relaxation.dart';
 import 'package:smart_app_lock/protection/impl/default_access_controller.dart';
 import 'package:smart_app_lock/protection/protection_bootstrap.dart';
 import 'package:smart_app_lock/rules/smart_rule.dart';
@@ -164,9 +165,29 @@ class _Fx {
     return _Fx(next, db, kv, secrets);
   }
 
-  Future<ProtectionBootstrapResult> sync({bool relax = false}) async {
-    final Result<ProtectionBootstrapResult> r =
-        await bootstrap.synchronize(authorizedRuleRelaxation: relax);
+  /// [relax]: a CR-2-confirmed relaxation. Phase 11 / M2: the broad flag
+  /// parameter was removed; the relaxation goes through the bound protocol
+  /// (a rule reduction from [relaxFrom], probed; or, without it, the
+  /// explicit confirmSaved operation), then a plain sync reports the ack.
+  Future<ProtectionBootstrapResult> sync({
+    bool relax = false,
+    List<SmartRule>? relaxFrom,
+  }) async {
+    if (relax) {
+      final List<SmartRule> stored =
+          (await c.smartRules.getRules()).valueOrNull!;
+      final BoundRelaxationResult bound = await bootstrap.applyBoundRelaxation(
+        intent: relaxFrom == null
+            ? BoundRelaxationIntent.confirmSaved
+            : BoundRelaxationIntent.ruleReduction,
+        authorize: (Set<String> _) => true,
+        rulesBefore: relaxFrom ?? stored,
+        rulesAfter: stored,
+        storageHoldsAfter: true,
+      );
+      expect(bound.status, BoundRelaxationStatus.applied);
+    }
+    final Result<ProtectionBootstrapResult> r = await bootstrap.synchronize();
     expect(r.isSuccess, isTrue, reason: '${r.errorOrNull}');
     return r.valueOrNull!;
   }
@@ -305,7 +326,10 @@ void main() {
         'remaining overlapping rule in Dart AND native', () async {
       final _Fx fx = await _Fx.create(rules: <SmartRule>[_work, _lunch]);
       expect((await fx.c.smartRules.deleteRule(_lunch.id)).isSuccess, isTrue);
-      expect((await fx.sync(relax: true)).policyAck.ruleStatus,
+      expect(
+          (await fx.sync(relax: true, relaxFrom: <SmartRule>[_work, _lunch]))
+              .policyAck
+              .ruleStatus,
           SmartRuleSyncStatus.applied);
       _now = _at(13);
       expect(await fx.grant(_notes), _L.sensitive);

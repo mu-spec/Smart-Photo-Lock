@@ -21,6 +21,7 @@ import 'package:smart_app_lock/profiles/security_profile.dart';
 import 'package:smart_app_lock/profiles/security_profile_document.dart';
 import 'package:smart_app_lock/profiles/security_profile_policy.dart';
 import 'package:smart_app_lock/protection/access_controller.dart';
+import 'package:smart_app_lock/protection/bound_relaxation.dart';
 import 'package:smart_app_lock/rules/smart_rule.dart';
 import 'package:smart_app_lock/rules/smart_rule_policy.dart';
 import 'package:smart_app_lock/security/storage/impl/in_memory_secret_store.dart';
@@ -309,8 +310,28 @@ void main() {
       expect(fx.watcher.simulatedRuleLevel(_std, now), _L.critical);
       expect(fx.watcher.authorizedPackages, isEmpty);
 
-      await fx.c.protectionBootstrap
-          .synchronize(authorizedRuleRelaxation: true);
+      // Phase 11 / M2: the broad `synchronize(authorizedRuleRelaxation:)`
+      // door was removed. A profile-intent flag cannot release this held
+      // state (the probe of the expected-before state is not applied) ...
+      final BoundRelaxationResult blocked =
+          await fx.c.protectionBootstrap.applyBoundRelaxation(
+        intent: BoundRelaxationIntent.profileChange,
+        authorize: (Set<String> _) => true,
+        profilesBefore: SecurityProfileSet.defaults(),
+        profilesAfter: SecurityProfileSet.defaults(),
+      );
+      expect(blocked.status, isNot(BoundRelaxationStatus.applied));
+      expect(fx.watcher.simulatedRuleLevel(_std, now), _L.critical);
+      // ... only the explicit, bound confirmSaved operation can.
+      final BoundRelaxationResult confirmed =
+          await fx.c.protectionBootstrap.applyBoundRelaxation(
+        intent: BoundRelaxationIntent.confirmSaved,
+        authorize: (Set<String> _) => true,
+        profilesBefore: SecurityProfileSet.defaults(),
+        profilesAfter: SecurityProfileSet.defaults(),
+        storageHoldsAfter: true,
+      );
+      expect(confirmed.status, BoundRelaxationStatus.applied);
       expect(fx.c.protectionBootstrap.lastRuleExchange!.status,
           SmartRuleSyncStatus.applied);
       expect(fx.watcher.simulatedRuleLevel(_std, now), isNull);
@@ -425,8 +446,8 @@ void main() {
     });
 
     test(
-        'S-3. no app code can activate a profile in M1 (no saveProfiles '
-        'caller outside the repository)', () {
+        'S-3 (updated for M2). the ONLY app code that writes profiles is the '
+        'M2 profile change module (no other saveProfiles caller)', () {
       final List<String> callers = <String>[
         for (final FileSystemEntity e
             in Directory('lib').listSync(recursive: true))
@@ -438,6 +459,7 @@ void main() {
       expect(callers, <String>[
         'lib/data/repositories/impl/security_profile_repository_impl.dart',
         'lib/data/repositories/security_profile_repository.dart',
+        'lib/ui/screens/smart/profile_change.dart',
       ]);
     });
 

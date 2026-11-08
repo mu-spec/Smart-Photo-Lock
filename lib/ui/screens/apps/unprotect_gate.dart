@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../data/models/app_security_level.dart';
 import '../../../data/repositories/protected_apps_repository.dart';
+import '../../../protection/bound_relaxation.dart';
 import '../../../security/credentials/auth_result.dart';
 import '../../../security/credentials/auth_type.dart';
 import '../../../security/credentials/biometric_options.dart';
@@ -45,6 +46,22 @@ import '../pin/pin_unlock_screen.dart';
 /// Phase 10 / M2: a Smart Rule change that REDUCES rule protection reuses it
 /// too, through [relaxSmartRulesWith] (all affected packages at once).
 
+/// Phase 11 / M2: what a confirmation was requested FOR. A proof is usable
+/// only by consumers of its own intent, so a profile confirmation can never
+/// unprotect or downgrade an app, and a package confirmation can never
+/// authorize a profile change.
+enum UnprotectIntent {
+  /// Unprotect, lower a level, or write a Smart Rule reduction (the
+  /// pre-M2 family; these keep their shared package-scoped semantics).
+  packageChange,
+
+  /// A profile switch, an edit of the active profile, or deleting it.
+  profileChange,
+
+  /// Apply the saved rules and profile when native holds stricter ones.
+  confirmSaved,
+}
+
 /// Why an unprotect request was not authorized.
 enum UnprotectDenial {
   /// The user dismissed the confirmation (Back or cancel), or the route was
@@ -82,7 +99,11 @@ final class UnprotectAuthorization {
     required Set<String> packages,
     required this.method,
     required this.verifiedAt,
+    this.intent = UnprotectIntent.packageChange,
   }) : packages = Set<String>.unmodifiable(packages);
+
+  /// What the confirmation was requested for (Phase 11 / M2).
+  final UnprotectIntent intent;
 
   /// How long a proof stays usable after the credential was verified.
   static const Duration maxAge = Duration(seconds: 60);
@@ -97,6 +118,12 @@ final class UnprotectAuthorization {
   final DateTime verifiedAt;
 
   final Set<String> _consumed = <String>{};
+
+  /// Packages consumed by [relaxSmartRulesWith] (the rule write).
+  final Set<String> _ruleWriteConsumed = <String>{};
+
+  /// Whether this proof already authorized a native relaxation flag.
+  bool _flagUsed = false;
 
   /// Whether [packageName] may still be unprotected with this proof at [now].
   bool allows(String packageName, DateTime now) {
@@ -122,6 +149,7 @@ Future<UnprotectRequestResult> requestUnprotectAuthorization({
   required Set<String> packages,
   DateTime Function()? clock,
   String title = unprotectConfirmTitle,
+  UnprotectIntent intent = UnprotectIntent.packageChange,
 }) async {
   final DateTime Function() now = clock ?? DateTime.now;
   final Result<CredentialState> statusResult = await credentials.status();
@@ -177,6 +205,7 @@ Future<UnprotectRequestResult> requestUnprotectAuthorization({
       packages: packages,
       method: method,
       verifiedAt: verifiedAt,
+      intent: intent,
     ),
   );
 }
@@ -193,7 +222,8 @@ Future<Result<void>> removeProtectionWith(
   DateTime Function()? clock,
 }) async {
   final DateTime now = (clock ?? DateTime.now)();
-  if (!authorization.allows(packageName, now)) {
+  if (authorization.intent != UnprotectIntent.packageChange ||
+      !authorization.allows(packageName, now)) {
     return Result.failure(
       StateError('Unprotect is not authorized for $packageName.'),
     );
@@ -214,7 +244,8 @@ Future<Result<void>> lowerSecurityLevelWith(
   DateTime Function()? clock,
 }) async {
   final DateTime now = (clock ?? DateTime.now)();
-  if (!authorization.allows(packageName, now)) {
+  if (authorization.intent != UnprotectIntent.packageChange ||
+      !authorization.allows(packageName, now)) {
     return Result.failure(
       StateError('Lowering the level is not authorized for $packageName.'),
     );
@@ -240,15 +271,75 @@ Future<Result<T>> relaxSmartRulesWith<T>(
   DateTime Function()? clock,
 }) async {
   final DateTime now = (clock ?? DateTime.now)();
-  if (packages.isEmpty ||
+  if (authorization.intent != UnprotectIntent.packageChange ||
+      packages.isEmpty ||
       !packages.every((String p) => authorization.allows(p, now))) {
     return Result.failure(
       StateError('Reducing Smart Rule protection is not authorized.'),
     );
   }
   authorization._consumed.addAll(packages);
+  authorization._ruleWriteConsumed.addAll(packages);
   return write();
 }
+
+/// Phase 11 / M2: consumes [authorization] for ONE native relaxation flag
+/// covering exactly [packages] (computed by the protection bootstrap inside
+/// its serialized section, after it re-read storage and before it probes).
+///
+///  * [BoundRelaxationIntent.ruleReduction]: only the proof whose Smart Rule
+///    write ([relaxSmartRulesWith]) consumed every package in [packages].
+///    A downgrade or unprotect proof never qualifies.
+///  * [BoundRelaxationIntent.profileChange]: only a proof requested with
+///    [UnprotectIntent.profileChange]; every package unused and in scope.
+///  * [BoundRelaxationIntent.confirmSaved]: only a proof requested with
+///    [UnprotectIntent.confirmSaved]; every package unused and in scope.
+///
+/// At most one flag per proof, within [UnprotectAuthorization.maxAge]. An
+/// empty [packages] is refused (nothing to relax needs no flag).
+bool consumeBoundRelaxation(
+  UnprotectAuthorization authorization,
+  Set<String> packages,
+  BoundRelaxationIntent intent, {
+  DateTime Function()? clock,
+}) {
+  final DateTime now = (clock ?? DateTime.now)();
+  final Duration age = now.difference(authorization.verifiedAt);
+  if (packages.isEmpty ||
+      authorization._flagUsed ||
+      age.isNegative ||
+      age > UnprotectAuthorization.maxAge) {
+    return false;
+  }
+  switch (intent) {
+    case BoundRelaxationIntent.ruleReduction:
+      if (authorization.intent != UnprotectIntent.packageChange ||
+          !authorization._ruleWriteConsumed.containsAll(packages)) {
+        return false;
+      }
+    case BoundRelaxationIntent.profileChange:
+    case BoundRelaxationIntent.confirmSaved:
+      final UnprotectIntent required =
+          intent == BoundRelaxationIntent.profileChange
+              ? UnprotectIntent.profileChange
+              : UnprotectIntent.confirmSaved;
+      if (authorization.intent != required ||
+          !packages.every((String p) => authorization.allows(p, now))) {
+        return false;
+      }
+      authorization._consumed.addAll(packages);
+  }
+  authorization._flagUsed = true;
+  return true;
+}
+
+/// Title of the confirmation shown before a profile change that lowers
+/// protection (Phase 11 / M2).
+const String profileChangeConfirmTitle = 'Confirm to lower profile protection';
+
+/// Title of the confirmation shown before saved settings replace stricter
+/// protection that native is still holding (Phase 11 / M2).
+const String confirmSavedConfirmTitle = 'Confirm to apply your saved settings';
 
 /// Title of the confirmation shown before a Smart Rule change that reduces
 /// rule protection (Phase 10 / M2).

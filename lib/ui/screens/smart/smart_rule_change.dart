@@ -2,6 +2,7 @@ import 'package:flutter/widgets.dart';
 
 import '../../../data/repositories/smart_rule_repository.dart';
 import '../../../protection/access_controller.dart';
+import '../../../protection/bound_relaxation.dart';
 import '../../../protection/protection_bootstrap.dart';
 import '../../../rules/smart_rule.dart';
 import '../../../rules/smart_rule_policy.dart';
@@ -235,19 +236,38 @@ Future<SmartRuleChangeOutcome> applySmartRuleChange({
   for (final String pkg in SmartRulePolicy.raisedAt(before, after, now())) {
     await accessController.revokeImmediately(pkg);
   }
-  final Result<ProtectionBootstrapResult> sync = await bootstrap.synchronize(
-    authorizedRuleRelaxation: relaxed.isNotEmpty,
-  );
+  if (authorization != null) {
+    // Phase 11 / M2: the relaxation flag is bound to THIS change. The
+    // bootstrap re-reads storage (must hold [after]), probes that native
+    // holds exactly [before] (+ the stored profile), consumes this proof's
+    // rule-write packages, and only then sends [after] with the flag. A
+    // held profile reduction (or anything else) is never released here.
+    final UnprotectAuthorization proof = authorization;
+    final BoundRelaxationResult bound = await bootstrap.applyBoundRelaxation(
+      intent: BoundRelaxationIntent.ruleReduction,
+      authorize: (Set<String> packages) => consumeBoundRelaxation(
+        proof,
+        packages,
+        BoundRelaxationIntent.ruleReduction,
+        clock: clock,
+      ),
+      rulesBefore: before,
+      rulesAfter: after,
+      storageHoldsAfter: true,
+    );
+    if (bound.status != BoundRelaxationStatus.applied) {
+      return _rollBackReduction(
+        repository: repository,
+        bootstrap: bootstrap,
+        previous: before,
+        attempted: after,
+      );
+    }
+    return const SmartRuleChangeOutcome(SmartRuleChangeStatus.enforced);
+  }
+  final Result<ProtectionBootstrapResult> sync = await bootstrap.synchronize();
   final SmartRuleSyncStatus? ruleStatus =
       sync.valueOrNull?.policyAck.ruleStatus;
-  if (relaxed.isNotEmpty && ruleStatus != SmartRuleSyncStatus.applied) {
-    return _rollBackReduction(
-      repository: repository,
-      bootstrap: bootstrap,
-      previous: before,
-      attempted: after,
-    );
-  }
   return SmartRuleChangeOutcome(switch (ruleStatus) {
     SmartRuleSyncStatus.applied => SmartRuleChangeStatus.enforced,
     SmartRuleSyncStatus.held => SmartRuleChangeStatus.savedHeld,
@@ -297,11 +317,18 @@ Future<SmartRuleChangeOutcome> _rollBackReduction({
 /// (`held` = earlier rules plus current ones) or reports that the current
 /// rules are already in force (`applied`). Any other result is
 /// [SmartRuleChangeStatus.relaxationUnconfirmed]: neither outcome is claimed.
+///
+/// Phase 11 / M2: the proof has its own intent
+/// ([UnprotectIntent.confirmSaved]) and the flag is sent only through
+/// `ProtectionBootstrap.applyBoundRelaxation`, bound to [expectedRules] (the
+/// rules on screen) and the stored profile: a change made since the screen
+/// loaded yields [SmartRuleChangeStatus.conflict] and nothing is sent.
 Future<SmartRuleChangeOutcome> confirmHeldRuleRelaxation({
   required NavigatorState navigator,
   required CredentialManager credentials,
   required ProtectionBootstrap bootstrap,
   required Set<String> packages,
+  List<SmartRule>? expectedRules,
   DateTime Function()? clock,
 }) async {
   if (packages.isEmpty) {
@@ -313,6 +340,7 @@ Future<SmartRuleChangeOutcome> confirmHeldRuleRelaxation({
     packages: packages,
     clock: clock,
     title: relaxRuleConfirmTitle,
+    intent: UnprotectIntent.confirmSaved,
   );
   final UnprotectAuthorization? authorization = request.authorization;
   if (authorization == null) {
@@ -321,15 +349,26 @@ Future<SmartRuleChangeOutcome> confirmHeldRuleRelaxation({
       denial: request.denial,
     );
   }
-  final Result<ProtectionBootstrapResult> sync =
-      await relaxSmartRulesWith<ProtectionBootstrapResult>(
-    authorization,
-    packages,
-    () => bootstrap.synchronize(authorizedRuleRelaxation: true),
-    clock: clock,
+  // Phase 11 / M2: bound to the saved configuration (the displayed rules
+  // when given, plus the stored profile) and to its own intent.
+  final BoundRelaxationResult bound = await bootstrap.applyBoundRelaxation(
+    intent: BoundRelaxationIntent.confirmSaved,
+    authorize: (Set<String> scope) => consumeBoundRelaxation(
+      authorization,
+      scope,
+      BoundRelaxationIntent.confirmSaved,
+      clock: clock,
+    ),
+    rulesBefore: expectedRules,
+    rulesAfter: expectedRules,
+    storageHoldsAfter: true,
   );
-  if (sync.valueOrNull?.policyAck.ruleStatus == SmartRuleSyncStatus.applied) {
+  if (bound.status == BoundRelaxationStatus.applied) {
     return const SmartRuleChangeOutcome(SmartRuleChangeStatus.enforced);
+  }
+  if (bound.status == BoundRelaxationStatus.conflict ||
+      bound.status == BoundRelaxationStatus.denied) {
+    return const SmartRuleChangeOutcome(SmartRuleChangeStatus.conflict);
   }
   final Result<ProtectionBootstrapResult> resync =
       await bootstrap.synchronize();

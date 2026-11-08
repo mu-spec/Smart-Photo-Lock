@@ -17,6 +17,12 @@
 /// by the model. Anything else is [SecurityProfileDocumentProblem.corrupt];
 /// a newer version is [SecurityProfileDocumentProblem.unsupportedVersion].
 /// A rejected document is never "repaired" or replaced by defaults here.
+///
+/// Phase 11 / M2: version 2 adds `name` to every entry and allows custom
+/// profiles (`custom-` + 12 hex digits; a validated, trimmed name). A
+/// preset's stored name must equal its fixed label. Version 1 (M1, presets
+/// only, no `name`) still decodes; it is rewritten as version 2 only by the
+/// next successful save.
 library;
 
 import 'dart:convert';
@@ -38,7 +44,10 @@ class SecurityProfileDocumentException implements Exception {
 }
 
 abstract final class SecurityProfileDocument {
-  static const int version = 1;
+  static const int version = 2;
+
+  /// Phase 11 / M1 documents (presets only, no names) still decode.
+  static const int legacyVersion = 1;
 
   static String encode(SecurityProfileSet set) => jsonEncode(<String, Object?>{
         'version': version,
@@ -47,6 +56,7 @@ abstract final class SecurityProfileDocument {
           for (final SecurityProfile p in set.profiles)
             <String, Object?>{
               'id': p.id,
+              'name': p.name,
               'all': p.allProtectedLevel?.storageId,
               'apps': <String, Object?>{
                 for (final MapEntry<String, AppSecurityLevel> e
@@ -73,7 +83,9 @@ abstract final class SecurityProfileDocument {
         'Version $v is newer than $version.',
       );
     }
-    if (v != version) throw _corrupt('Unknown version $v.');
+    if (v != version && v != legacyVersion) {
+      throw _corrupt('Unknown version $v.');
+    }
     _exactKeys(json, const <String>{'version', 'activeProfileId', 'profiles'});
     final Object? active = json['activeProfileId'];
     final Object? list = json['profiles'];
@@ -81,7 +93,9 @@ abstract final class SecurityProfileDocument {
     if (list is! List<Object?>) throw _corrupt('profiles is not a list.');
     try {
       return SecurityProfileSet(
-        profiles: <SecurityProfile>[for (final Object? p in list) _one(p)],
+        profiles: <SecurityProfile>[
+          for (final Object? p in list) _one(p, legacy: v == legacyVersion),
+        ],
         activeProfileId: active,
       );
     } on SecurityProfileFormatException catch (e) {
@@ -89,21 +103,51 @@ abstract final class SecurityProfileDocument {
     }
   }
 
-  static SecurityProfile _one(Object? raw) {
+  static SecurityProfile _one(Object? raw, {required bool legacy}) {
     if (raw is! Map<String, Object?>) throw _corrupt('Profile not an object.');
-    _exactKeys(raw, const <String>{'id', 'all', 'apps'});
-    final SecurityProfileKind? kind = SecurityProfileKind.fromId(raw['id']);
-    if (kind == null) throw _corrupt('Unknown profile id: ${raw['id']}.');
+    _exactKeys(
+      raw,
+      legacy
+          ? const <String>{'id', 'all', 'apps'}
+          : const <String>{'id', 'name', 'all', 'apps'},
+    );
+    final Object? id = raw['id'];
+    final Object? name = raw['name'];
     final Object? all = raw['all'];
     final Object? apps = raw['apps'];
+    if (id is! String) throw _corrupt('Profile id is not a string.');
+    if (!legacy && name is! String) throw _corrupt('Name is not a string.');
     if (apps is! Map<String, Object?>) throw _corrupt('apps not an object.');
-    return SecurityProfile(
-      kind: kind,
-      allProtectedLevel: all == null ? null : _level(all),
-      appLevels: <String, AppSecurityLevel>{
-        for (final MapEntry<String, Object?> e in apps.entries)
-          e.key: _level(e.value),
-      },
+    final AppSecurityLevel? allLevel = all == null ? null : _level(all);
+    final Map<String, AppSecurityLevel> appLevels = <String, AppSecurityLevel>{
+      for (final MapEntry<String, Object?> e in apps.entries)
+        e.key: _level(e.value),
+    };
+    final SecurityProfileKind? kind = SecurityProfileKind.fromId(id);
+    if (kind != null) {
+      // A preset's stored name must be its fixed label (no rename).
+      if (!legacy && name != kind.label) {
+        throw _corrupt('Preset $id has an unexpected name.');
+      }
+      return SecurityProfile(
+        kind: kind,
+        allProtectedLevel: allLevel,
+        appLevels: appLevels,
+      );
+    }
+    if (legacy) throw _corrupt('Unknown profile id: $id.');
+    if (!SecurityProfile.customIdPattern.hasMatch(id)) {
+      throw _corrupt('Unknown profile id: $id.');
+    }
+    // A stored name must already be in canonical (trimmed) form.
+    if ((name as String).trim() != name) {
+      throw _corrupt('Name of $id is not trimmed.');
+    }
+    return SecurityProfile.custom(
+      id: id,
+      name: name,
+      allProtectedLevel: allLevel,
+      appLevels: appLevels,
     );
   }
 

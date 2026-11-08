@@ -136,8 +136,9 @@ void main() {
   });
 
   test('newer version: unsupported, write refused, value untouched', () async {
-    const String newer =
-        '{"version":2,"activeProfileId":"normal","profiles":[]}';
+    // Phase 11 / M2: version 2 is current; anything newer is unsupported.
+    final String newer = '{"version":${SecurityProfileDocument.version + 1},'
+        '"activeProfileId":"normal","profiles":[]}';
     await db.setSetting(_key, newer);
     db.calls.clear();
     expect(_kind(await repo.getProfiles()),

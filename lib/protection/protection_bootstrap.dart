@@ -13,6 +13,7 @@ import '../rules/smart_rule_policy.dart';
 import '../security/credentials/credential_manager.dart';
 import '../services/watcher_service.dart';
 import '../utilities/result.dart';
+import 'bound_relaxation.dart';
 
 class ProtectionBootstrapResult {
   const ProtectionBootstrapResult({
@@ -155,21 +156,280 @@ class ProtectionBootstrap {
   /// lists packages whose lower level was JUST confirmed through the CR-2
   /// credential gate; native holds any other lower level.
   ///
-  /// Phase 10 / M2: [authorizedRuleRelaxation] is true only right after a
-  /// rule change that reduces rule strictness was confirmed through the
-  /// CR-2 gate; it applies to this one snapshot only.
+  /// Phase 11 / M2: this NEVER sets the native rule relaxation flag. A
+  /// reduction of rule or profile protection goes through
+  /// [applyBoundRelaxation] only (the broad Phase 10 parameter was removed
+  /// so no caller can send the flag for whatever happens to be stored).
   Future<Result<ProtectionBootstrapResult>> synchronize({
     Set<String> authorizedDowngrades = const <String>{},
-    bool authorizedRuleRelaxation = false,
-  }) {
+  }) =>
+      _serialized(() => _synchronize(authorizedDowngrades));
+
+  Future<T> _serialized<T>(Future<T> Function() action) {
     final Future<void> previous = _tail;
     final Completer<void> done = Completer<void>();
     _tail = done.future;
-    return previous
-        .then(
-          (_) => _synchronize(authorizedDowngrades, authorizedRuleRelaxation),
-        )
-        .whenComplete(done.complete);
+    return previous.then((_) => action()).whenComplete(done.complete);
+  }
+
+  /// Phase 11 / M2: the ONLY way to send the native rule relaxation flag.
+  /// See `bound_relaxation.dart` for the protocol. Runs entirely inside the
+  /// serialized queue, so no other snapshot can interleave.
+  ///
+  /// The operation's captured state: [rulesBefore]/[rulesAfter] and
+  /// [profilesBefore]/[profilesAfter]. A null pair means "unchanged by this
+  /// operation"; the stored value read inside the section is used for both
+  /// sides. Storage must equal the BEFORE side ([storageHoldsAfter] false:
+  /// [commit] persists the change only after native applied it) or the
+  /// AFTER side ([storageHoldsAfter] true: the Phase 10 write-first rule
+  /// path and [BoundRelaxationIntent.confirmSaved]).
+  ///
+  /// [authorize] must consume the operation's proof for exactly the packages
+  /// it is given (the relaxed set computed here) and return whether it did.
+  /// It is called at most once, before any snapshot is sent.
+  Future<BoundRelaxationResult> applyBoundRelaxation({
+    required BoundRelaxationIntent intent,
+    required bool Function(Set<String> packages) authorize,
+    List<SmartRule>? rulesBefore,
+    List<SmartRule>? rulesAfter,
+    SecurityProfileSet? profilesBefore,
+    SecurityProfileSet? profilesAfter,
+    bool storageHoldsAfter = false,
+    Future<Result<void>> Function()? commit,
+  }) {
+    assert((rulesBefore == null) == (rulesAfter == null));
+    assert((profilesBefore == null) == (profilesAfter == null));
+    assert(commit == null || !storageHoldsAfter);
+    return _serialized(
+      () => _applyBound(
+        intent: intent,
+        authorize: authorize,
+        rulesBefore: rulesBefore,
+        rulesAfter: rulesAfter,
+        profilesBefore: profilesBefore,
+        profilesAfter: profilesAfter,
+        storageHoldsAfter: storageHoldsAfter,
+        commit: commit,
+      ),
+    );
+  }
+
+  Future<BoundRelaxationResult> _applyBound({
+    required BoundRelaxationIntent intent,
+    required bool Function(Set<String> packages) authorize,
+    required List<SmartRule>? rulesBefore,
+    required List<SmartRule>? rulesAfter,
+    required SecurityProfileSet? profilesBefore,
+    required SecurityProfileSet? profilesAfter,
+    required bool storageHoldsAfter,
+    required Future<Result<void>> Function()? commit,
+  }) async {
+    // 1. Re-read everything. Any unreadable part: nothing is sent.
+    final credentialResult = await _credentials.status();
+    final appsResult = await _protectedApps.getProtectedApps();
+    if (credentialResult.isFailure || appsResult.isFailure) {
+      return BoundRelaxationResult(
+        BoundRelaxationStatus.unavailable,
+        error: credentialResult.errorOrNull ?? appsResult.errorOrNull,
+      );
+    }
+    final List<ProtectedApp> apps = appsResult.valueOrNull!;
+    final List<SmartRule>? storedRules = await _readRules();
+    final SecurityProfileSet? storedProfiles = await _readProfileSet();
+    if (storedRules == null || storedProfiles == null) {
+      return BoundRelaxationResult(
+        BoundRelaxationStatus.unavailable,
+        error: _lastRuleReadError ?? _lastProfileReadError,
+      );
+    }
+    final List<SmartRule>? expectedRules =
+        storageHoldsAfter ? rulesAfter : rulesBefore;
+    final SecurityProfileSet? expectedProfiles =
+        storageHoldsAfter ? profilesAfter : profilesBefore;
+    if ((expectedRules != null && !_sameRules(storedRules, expectedRules)) ||
+        (expectedProfiles != null && storedProfiles != expectedProfiles)) {
+      return const BoundRelaxationResult(BoundRelaxationStatus.conflict);
+    }
+    final _BoundState before = _BoundState(
+      rulesBefore ?? storedRules,
+      (profilesBefore ?? storedProfiles).active,
+    );
+    final _BoundState after = _BoundState(
+      rulesAfter ?? storedRules,
+      (profilesAfter ?? storedProfiles).active,
+    );
+    final Set<String> packages =
+        apps.map((ProtectedApp app) => app.packageName).toSet();
+    final bool configured =
+        credentialResult.valueOrNull!.hasAnyCredential && packages.isNotEmpty;
+
+    // 2. The relaxed packages, over the full weekly schedule.
+    final Set<String> relaxed = intent == BoundRelaxationIntent.confirmSaved
+        ? packages
+        : SmartRulePolicy.relaxedPackages(
+            before.combined(packages),
+            after.combined(packages),
+          );
+    if (relaxed.isEmpty) {
+      // Nothing to relax: no proof is consumed and no flag is sent.
+      if (commit != null) {
+        final Result<void> committed = await commit();
+        if (committed.isFailure) {
+          return BoundRelaxationResult(
+            BoundRelaxationStatus.conflict,
+            error: committed.errorOrNull,
+          );
+        }
+        await _readProfileSet();
+      }
+      final Result<ProtectionPolicyAck> sent =
+          await _sendBound(apps, configured, after, flag: false);
+      return BoundRelaxationResult(
+        switch (sent.valueOrNull?.ruleStatus) {
+          SmartRuleSyncStatus.applied => BoundRelaxationStatus.applied,
+          SmartRuleSyncStatus.held => BoundRelaxationStatus.held,
+          _ => BoundRelaxationStatus.unconfirmed,
+        },
+        error: sent.errorOrNull,
+      );
+    }
+
+    // 3. The proof, for exactly these packages, once.
+    if (!authorize(Set<String>.unmodifiable(relaxed))) {
+      return const BoundRelaxationResult(BoundRelaxationStatus.denied);
+    }
+
+    // 4. Probe: native must hold exactly expected-before. confirmSaved is
+    // by definition used while native holds something else (held), and is
+    // bound to the displayed saved state instead.
+    if (intent != BoundRelaxationIntent.confirmSaved) {
+      final Result<ProtectionPolicyAck> probe =
+          await _sendBound(apps, configured, before, flag: false);
+      if (probe.isFailure) {
+        return BoundRelaxationResult(
+          BoundRelaxationStatus.unknown,
+          error: probe.errorOrNull,
+        );
+      }
+      if (probe.valueOrNull!.ruleStatus != SmartRuleSyncStatus.applied) {
+        return const BoundRelaxationResult(BoundRelaxationStatus.blocked);
+      }
+    }
+
+    // 5. The flag, for the requested state only.
+    final Result<ProtectionPolicyAck> flagged =
+        await _sendBound(apps, configured, after, flag: true);
+    Object? failure = flagged.errorOrNull;
+    if (flagged.isSuccess &&
+        flagged.valueOrNull!.ruleStatus != SmartRuleSyncStatus.applied) {
+      failure = StateError('Native did not apply the relaxation.');
+    }
+
+    // 6. Commit (profiles), then success; any failure raises back.
+    if (failure == null && commit != null) {
+      final Result<void> committed = await commit();
+      if (committed.isFailure) failure = committed.errorOrNull;
+      await _readProfileSet();
+    }
+    if (failure == null) {
+      return const BoundRelaxationResult(BoundRelaxationStatus.applied);
+    }
+    if (storageHoldsAfter && intent == BoundRelaxationIntent.confirmSaved) {
+      // Nothing stricter to restore (the saved state IS the target); the
+      // caller re-sends the saved state without the flag.
+      return BoundRelaxationResult(
+        BoundRelaxationStatus.unknown,
+        error: failure,
+      );
+    }
+    final Result<ProtectionPolicyAck> restore =
+        await _sendBound(apps, configured, before, flag: false);
+    final SmartRuleSyncStatus? restored = restore.valueOrNull?.ruleStatus;
+    return BoundRelaxationResult(
+      restored == SmartRuleSyncStatus.applied ||
+              restored == SmartRuleSyncStatus.held
+          ? BoundRelaxationStatus.notApplied
+          : BoundRelaxationStatus.unknown,
+      error: failure,
+    );
+  }
+
+  /// Sends [state] as ONE combined transport (rules + profile overlay) with
+  /// the stored levels; records exactly what was sent with the ack.
+  Future<Result<ProtectionPolicyAck>> _sendBound(
+    List<ProtectedApp> apps,
+    bool configured,
+    _BoundState state, {
+    required bool flag,
+  }) async {
+    final Set<String> packages =
+        apps.map((ProtectedApp app) => app.packageName).toSet();
+    _overlayPackages = Set<String>.unmodifiable(packages);
+    final List<Map<String, Object?>> rulePart =
+        SmartRulePolicy.nativeTransport(state.rules);
+    final List<Map<String, Object?>> profilePart =
+        SmartRulePolicy.nativeTransport(
+      SecurityProfilePolicy.overlayRules(state.profile, packages),
+    );
+    final configuredResult = await _watcher.configureProtection(
+      enabled: configured,
+      protectedPackages: packages,
+      policy: ProtectionPolicySnapshot(
+        levels: <String, AppSecurityLevel>{
+          for (final ProtectedApp app in apps)
+            app.packageName: app.securityLevel,
+        },
+        session: session,
+        revision: ++_revision,
+        smartRules: SecurityProfilePolicy.nativeTransport(
+          state.rules,
+          state.profile,
+          packages,
+        ),
+        authorizedRuleRelaxation: flag,
+      ),
+    );
+    if (configuredResult.isFailure) {
+      _lastRuleExchange = SmartRuleNativeRecord(
+        status: SmartRuleSyncStatus.unknown,
+        sentRules: rulePart,
+        failed: true,
+        sentProfileOverlay: profilePart,
+      );
+      return Result.failure(configuredResult.errorOrNull!);
+    }
+    final ProtectionPolicyAck ack = configuredResult.valueOrNull!;
+    _lastRuleExchange = SmartRuleNativeRecord(
+      status: ack.ruleStatus,
+      sentRules: rulePart,
+      sentProfileOverlay: profilePart,
+    );
+    if (ack.status != ProtectionPolicyStatus.unknown) _lastAck = ack;
+    return Result.success(ack);
+  }
+
+  Future<SecurityProfileSet?> _readProfileSet() async {
+    final SecurityProfileRepository? repository = _profiles;
+    if (repository == null) return SecurityProfileSet.defaults();
+    final Result<SecurityProfileSet> read = await repository.getProfiles();
+    final SecurityProfileSet? set = read.valueOrNull;
+    if (read.isFailure || set == null) {
+      _lastProfileReadError =
+          read.errorOrNull ?? StateError('No profiles read.');
+      profileCache.markReadFailed();
+      return null;
+    }
+    _lastProfileReadError = null;
+    profileCache.update(set);
+    return set;
+  }
+
+  static bool _sameRules(List<SmartRule> a, List<SmartRule> b) {
+    if (a.length != b.length) return false;
+    for (int i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 
   /// Phase 10 / M2: the saved rules for this snapshot, or null (= send
@@ -190,29 +450,8 @@ class ProtectionBootstrap {
     return rules;
   }
 
-  /// Phase 11 / M1: the active profile for this snapshot; Normal when no
-  /// repository is wired; null when the read failed (send nothing).
-  Future<SecurityProfile?> _readActiveProfile() async {
-    final SecurityProfileRepository? repository = _profiles;
-    if (repository == null) {
-      return SecurityProfile.preset(SecurityProfileKind.normal);
-    }
-    final Result<SecurityProfileSet> read = await repository.getProfiles();
-    final SecurityProfileSet? set = read.valueOrNull;
-    if (read.isFailure || set == null) {
-      _lastProfileReadError =
-          read.errorOrNull ?? StateError('No profiles read.');
-      profileCache.markReadFailed();
-      return null;
-    }
-    _lastProfileReadError = null;
-    profileCache.update(set);
-    return set.active;
-  }
-
   Future<Result<ProtectionBootstrapResult>> _synchronize(
     Set<String> authorizedDowngrades,
-    bool authorizedRuleRelaxation,
   ) async {
     final credentialResult = await _credentials.status();
     if (credentialResult.isFailure) {
@@ -227,7 +466,7 @@ class ProtectionBootstrap {
     final bool configured =
         credentialResult.valueOrNull!.hasAnyCredential && packages.isNotEmpty;
     final List<SmartRule>? savedRules = await _readRules();
-    final SecurityProfile? profile = await _readActiveProfile();
+    final SecurityProfile? profile = (await _readProfileSet())?.active;
     // Phase 11 / M1: one transport (rules + profile overlay), or nothing at
     // all when either part is unknown.
     final bool send = savedRules != null && profile != null;
@@ -254,7 +493,6 @@ class ProtectionBootstrap {
         revision: ++_revision,
         authorizedDowngrades: authorizedDowngrades.intersection(packages),
         smartRules: rules,
-        authorizedRuleRelaxation: rules != null && authorizedRuleRelaxation,
       ),
     );
     if (configuredResult.isFailure) {
@@ -307,4 +545,17 @@ class ProtectionBootstrap {
       ),
     );
   }
+}
+
+/// One side (before or after) of a bound relaxation.
+final class _BoundState {
+  const _BoundState(this.rules, this.profile);
+
+  final List<SmartRule> rules;
+  final SecurityProfile profile;
+
+  List<SmartRule> combined(Set<String> protectedPackages) => <SmartRule>[
+        ...rules,
+        ...SecurityProfilePolicy.overlayRules(profile, protectedPackages),
+      ];
 }

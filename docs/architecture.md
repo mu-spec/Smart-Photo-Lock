@@ -3692,3 +3692,141 @@ points), 11 switches/edits (5 relaxing) and 17 invalid documents.
   - best-effort native rollback;
   - native alone has the Standard floor at a cold start (R-A is
     Dart-side).
+
+## Phase 11 / M2 — Security Profiles: manual switching & custom profiles
+
+M2 makes profiles user-reachable from the Smart tab (a profile card that
+opens `ProfilesScreen`; no new tab, tile, widget or notification). Users
+can switch profiles and create, rename, duplicate, edit and delete custom
+profiles. The M1 engine is unchanged: one engine, raise-only overlays,
+`effective = stricter(saved baseline, profile overlay, matching rules)`,
+legacy `LockProfile` still disconnected. **No native code changed.** The
+design gate is `Phase11/M2_SECURITY_DESIGN_GATE.md`, outside the repo.
+
+### Bound relaxation ("probe-then-flag")
+
+The native relaxation flag (`authorizedRuleRelaxation`) is a single
+boolean: native relaxes from whatever it currently holds to the candidate.
+M2 makes it impossible to use that boolean beyond one exact, authorized
+before → after pair:
+
+- `ProtectionBootstrap.synchronize()` no longer accepts the flag. The only
+  code path that can send it is `ProtectionBootstrap.applyBoundRelaxation`
+  (`lib/protection/bound_relaxation.dart` for the intents and results).
+  It runs inside the bootstrap's serialized queue, the only
+  `configureProtection` caller.
+- Steps:
+  1. Re-read credentials, protected apps, rules and the profile
+     document. The stored state must equal the operation's expectation
+     (expected-before for profile changes, the written state for the
+     Phase 10 write-first rule path). Otherwise `conflict`; nothing sent.
+  2. Recompute the relaxed packages over the whole weekly schedule
+     (`SmartRulePolicy.relaxedPackages`, the shared Dart/Kotlin
+     semantics). Nothing relaxed → an ordinary unflagged send; no proof is
+     consumed.
+  3. Consume the proof for exactly those packages (`authorize`), else
+     `denied`; nothing sent.
+  4. **Probe:** send expected-before unflagged. Only `APPLIED` (native
+     then holds exactly expected-before) continues; `HELD`/other →
+     `blocked`, failure → `unknown`. The flag is never sent.
+  5. **Flag:** send requested-after with the flag. Native relaxes from
+     exactly expected-before, so the relaxation is exactly the authorized
+     difference and can never release an unrelated held reduction.
+  6. Profile changes commit the document only after the flagged
+     `APPLIED`. Any failure re-sends expected-before unflagged (a raise
+     back) → `notApplied`, or `unknown` if that is not acknowledged.
+- `confirmSaved` (the held notice's "apply saved settings") has no probe:
+  it is used precisely while native holds something stricter, and is bound
+  to the displayed saved rules and profile instead.
+
+### CR-2 proof isolation (`unprotect_gate.dart`)
+
+`UnprotectAuthorization` now carries an `UnprotectIntent`:
+`packageChange` (unprotect, downgrade, rule writes; unchanged Phase 8/10
+behaviour), `profileChange` and `confirmSaved`. Each proof is PIN/pattern
+only (no biometric or device credential), package-scoped and valid for
+`UnprotectAuthorization.maxAge`.
+
+- `removeProtectionWith` / `lowerSecurityLevelWith` /
+  `relaxSmartRulesWith` accept `packageChange` proofs only.
+- `consumeBoundRelaxation(proof, packages, intent)` raises at most one
+  flag per proof:
+  - `ruleReduction`: a `packageChange` proof, and only for packages its
+    own rule write consumed;
+  - `profileChange` / `confirmSaved`: the matching intent, every package in
+    scope and unused;
+  - empty sets, expired proofs and a clock moved backwards are refused.
+
+### Switching and editing (`lib/ui/screens/smart/profile_change.dart`)
+
+`applyProfileChange(expected, requested)` handles switch, save and delete:
+1. CAS: storage must still equal the screen's `expected`, else
+   `conflict` (stale form, nothing written).
+2. Inactive edits (same active overlay): saved with no native contact and
+   no proof.
+3. Stronger or equal (nothing relaxed over the week): save →
+   `revokeImmediately` for apps that are stricter right now →
+   `synchronize()`. `enforced` only with an applied ack; otherwise
+   `savedHeld` / `savedUnconfirmed`. Never a PIN.
+4. Lowering (including a mixed change or deleting the active profile,
+   which falls back to Normal): PIN with intent `profileChange` for exactly
+   the relaxed apps → `applyBoundRelaxation` with the document commit
+   after the ack. Cancel or a wrong PIN writes and sends nothing.
+
+Switching never unlocks, grants, authorizes a package, clears a challenge,
+extends grace, resets lockout or changes saved levels.
+
+### Model and document v2
+
+- Custom profiles: id `custom-` + 12 lowercase hex (generated once per
+  editor, so a retried save never duplicates), `kind == null`; name 1–32
+  characters, trimmed, no control characters, unique case-insensitively
+  (including the preset names).
+- Limits: at most 20 custom profiles, 512 apps per profile, 2048 entries in
+  total.
+- Presets keep their fixed names; Normal and Guest are immutable; Home,
+  Work and Kids are editable but not removable; customize through
+  duplication.
+- Document v2 adds `name` to each entry; v1 still decodes losslessly; newer
+  versions are unsupported (read-only error, never overwritten).
+
+### UI
+
+- Smart tab card (`smart_profile_card`): active profile, extra protection,
+  native status; opens the Profiles screen.
+- `ProfilesScreen`: tiles with name, preset/custom label, explanation,
+  extra protection, active state and native status ("Applied";
+  "Applied, with stricter earlier protection still in force";
+  "Saved, not confirmed yet"; "Unavailable"; "Not checked yet"); a menu to use, edit, duplicate or delete; loading,
+  error (corrupt, unsupported, unavailable) and limit states.
+- `ProfileEditorScreen`: name, "all protected apps" level, per-app levels
+  for already-protected apps only (Kids suggestions are text only, never
+  enrolled); a failed save keeps the draft; leaving with unsaved changes
+  asks "Discard changes / Keep editing".
+
+### Files
+
+- New: `lib/protection/bound_relaxation.dart`,
+  `lib/ui/screens/smart/profile_change.dart`,
+  `profile_presentation.dart`, `profiles_screen.dart`,
+  `profile_editor_screen.dart`.
+- Changed: `protection_bootstrap.dart` (bound protocol, broad flag
+  removed), `unprotect_gate.dart` (intents, `consumeBoundRelaxation`),
+  `smart_rule_change.dart` and `smart_screen.dart` (Phase 10 rule
+  reductions and the held confirmation now use the bound protocol),
+  `security_profile.dart`, `security_profile_document.dart`,
+  `security_profile_policy.dart`.
+
+### Limits (M2)
+
+- Unprotecting an app while an "all protected apps" overlay is active
+  shrinks that entry, which native holds. Later reductions then report
+  `blocked` until the user confirms the saved settings with the PIN
+  (`confirmSaved`). Never weaker.
+- Native still trusts the Dart layer of the same process to raise the flag
+  only through `applyBoundRelaxation` (unchanged Phase 10 trust boundary).
+  A native-side digest check ("R-C") is a possible future hardening that
+  needs approval.
+- No activation by Smart Rules (M3), no Android Work Profile, no scheduled
+  switching.
+- Device behaviour is unverified.

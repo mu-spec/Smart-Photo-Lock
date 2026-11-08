@@ -15,6 +15,7 @@ import 'package:smart_app_lock/data/models/protected_app.dart';
 import 'package:smart_app_lock/data/repositories/impl/smart_rule_repository_impl.dart';
 import 'package:smart_app_lock/data/storage/impl/in_memory_local_database.dart';
 import 'package:smart_app_lock/protection/access_controller.dart';
+import 'package:smart_app_lock/protection/bound_relaxation.dart';
 import 'package:smart_app_lock/protection/impl/default_access_controller.dart';
 import 'package:smart_app_lock/protection/protection_bootstrap.dart';
 import 'package:smart_app_lock/rules/smart_rule.dart';
@@ -88,9 +89,29 @@ class _Fx {
     expect((await c.smartRules.saveRule(rule)).isSuccess, isTrue);
   }
 
-  Future<ProtectionBootstrapResult> sync({bool relax = false}) async {
-    final Result<ProtectionBootstrapResult> r =
-        await bootstrap.synchronize(authorizedRuleRelaxation: relax);
+  /// [relax]: a CR-2-confirmed relaxation. Phase 11 / M2: the broad flag
+  /// parameter was removed; the relaxation goes through the bound protocol
+  /// (a rule reduction from [relaxFrom], probed; or, without it, the
+  /// explicit confirmSaved operation), then a plain sync reports the ack.
+  Future<ProtectionBootstrapResult> sync({
+    bool relax = false,
+    List<SmartRule>? relaxFrom,
+  }) async {
+    if (relax) {
+      final List<SmartRule> stored =
+          (await c.smartRules.getRules()).valueOrNull!;
+      final BoundRelaxationResult bound = await bootstrap.applyBoundRelaxation(
+        intent: relaxFrom == null
+            ? BoundRelaxationIntent.confirmSaved
+            : BoundRelaxationIntent.ruleReduction,
+        authorize: (Set<String> _) => true,
+        rulesBefore: relaxFrom ?? stored,
+        rulesAfter: stored,
+        storageHoldsAfter: true,
+      );
+      expect(bound.status, BoundRelaxationStatus.applied);
+    }
+    final Result<ProtectionBootstrapResult> r = await bootstrap.synchronize();
     expect(r.isSuccess, isTrue, reason: '${r.errorOrNull}');
     return r.valueOrNull!;
   }

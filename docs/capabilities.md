@@ -452,3 +452,44 @@ displays what already exists:
   was confirmed with the PIN.
 - **Device behaviour is unverified** until the combined Phase 6–10 round
   (`docs/regression.md`, Phase 10 / M2).
+
+## Security Profiles limits (Phase 11 / M2)
+
+- **Profiles only add protection.** A profile can raise apps that are
+  already protected to Sensitive or Critical. It never protects a new app,
+  never unprotects one and never changes an app's saved level. Guest makes
+  every protected app Critical. Kids suggestions (Settings, Play Store,
+  payment apps) are shown as text only and never added automatically.
+- **Switching is manual, on the Smart tab.** There is no automatic or
+  scheduled switching, no switching from Quick Settings, a widget or a
+  notification, and no Android Work Profile integration. Smart Rules don't
+  switch profiles (Milestone 3).
+- **Lowering protection needs the app's PIN or pattern.** Switching to a
+  profile that is weaker at any time of the week, editing the active
+  profile down or deleting the active profile (which returns to Normal)
+  asks for the PIN/pattern for exactly that change. Biometrics and the
+  device screen lock are not accepted for this. Stronger or equal
+  switches don't ask. Cancelling changes nothing.
+- **Switching never unlocks.** It doesn't open apps, extend grace, clear a
+  pending challenge or reset a lockout. A stronger profile ends weaker
+  open sessions at once.
+- **"Active" means confirmed.** A profile is shown as active and applied
+  only after the native watcher confirms it. Otherwise the app says it is
+  saved but not confirmed yet (apps keep at least the stricter
+  protection), or that stricter earlier protection is still in force.
+- **Held protection blocks lowering.** If the native watcher is still
+  holding stricter protection from an earlier unconfirmed change (for
+  example, unprotecting an app while Guest is active), lowering a profile
+  reports that it couldn't lower protection now. Confirming the saved
+  settings with the PIN from the Smart tab resolves it. Protection is
+  never weaker in the meantime.
+- **Limits:** up to 20 custom profiles; names up to 32 characters, unique
+  regardless of case. Normal and Guest can't be edited; Home, Work and Kids
+  can be edited but not deleted; duplicate a preset to customize it
+  freely.
+- **Unreadable data stays visible.** A corrupt or newer-version profile
+  document is shown as an error; nothing can be switched or saved, and it
+  is never overwritten. Every protected app stays at least Critical until
+  profiles can be read at start-up.
+- **Device behaviour is unverified** until the combined device round
+  (`docs/regression.md`, Phase 11 / M2).
