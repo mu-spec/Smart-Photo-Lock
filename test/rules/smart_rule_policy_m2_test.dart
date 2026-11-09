@@ -51,7 +51,7 @@ void main() {
   group('1–3. baseline floor: rules only raise', () {
     test('1. effective = max(baseline, rule) for every baseline × action', () {
       for (final _L baseline in _L.values) {
-        for (final _A action in _A.values) {
+        for (final _A action in _A.levelActions) {
           final AppSecurityLevel? rule = SmartRulePolicy.ruleLevelFor(
             <SmartRule>[_rule(action: action)],
             _bank,
@@ -361,21 +361,25 @@ void main() {
       }
     });
 
-    test('13. v2 round trip keeps every action, including reserved Unlocked',
-        () {
+    // P11-M3 intended update: the current schema is v3 (level rules keep
+    // the exact v2 field layout); profile rules are covered in
+    // smart_rule_profile_m3_model_test.dart.
+    test(
+        '13. round trip keeps every level action, including reserved '
+        'Unlocked (written as the current v3)', () {
       final List<SmartRule> rules = <SmartRule>[
-        for (final _A a in _A.values) _rule(id: a.storageId, action: a),
+        for (final _A a in _A.levelActions) _rule(id: a.storageId, action: a),
       ];
       expect(SmartRuleDocument.decode(SmartRuleDocument.encode(rules)), rules);
       final SmartRuleDocumentRead read =
           SmartRuleDocument.decodeDocument(SmartRuleDocument.encode(rules));
-      expect(read.storedVersion, 2);
+      expect(read.storedVersion, 3);
       expect(read.migrated, isFalse);
     });
 
     test(
-        '14. repository: a v1 store reads migrated and is written as v2 only '
-        'on the next confirmed change', () async {
+        '14. repository: a v1 store reads migrated and is written as the '
+        'current v3 only on the next confirmed change', () async {
       final InMemoryLocalDatabase db = InMemoryLocalDatabase();
       final String raw = v1Doc(<Map<String, Object?>>[v1Rule('a')]);
       await db.setSetting(SmartRuleRepositoryImpl.storageKey, raw);
@@ -393,14 +397,14 @@ void main() {
       final Map<String, dynamic> stored =
           jsonDecode((await db.getSetting(SmartRuleRepositoryImpl.storageKey))!)
               as Map<String, dynamic>;
-      expect(stored['version'], 2);
+      expect(stored['version'], 3);
       expect((stored['rules'] as List<dynamic>).single['action'], 'sensitive');
     });
 
     test('15. a future version fails closed and stays byte-for-byte', () async {
       final InMemoryLocalDatabase db = InMemoryLocalDatabase();
       const String raw =
-          '{"schema":"smart_rules","version":3,"rules":[{"x":1}],"z":{}}';
+          '{"schema":"smart_rules","version":4,"rules":[{"x":1}],"z":{}}';
       await db.setSetting(SmartRuleRepositoryImpl.storageKey, raw);
       final SmartRuleRepositoryImpl repo = SmartRuleRepositoryImpl(db);
       final Object? error = (await repo.getRules()).errorOrNull;

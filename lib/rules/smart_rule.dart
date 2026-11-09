@@ -195,7 +195,13 @@ enum SmartRuleAction {
   standard('standard', 'Standard'),
   sensitive('sensitive', 'Sensitive'),
   critical('critical', 'Critical'),
-  unlocked('unlocked', 'Unlocked');
+  unlocked('unlocked', 'Unlocked'),
+
+  /// Phase 11 / M3: while the rule matches, the referenced Security
+  /// Profile's raise-only overlay applies IN ADDITION to the manually
+  /// selected profile ([SmartRule.profileId]). Never raises an app by
+  /// itself (no targets); compiled by `SecurityProfilePolicy`. Schema v3.
+  applyProfile('profile', 'Apply profile');
 
   const SmartRuleAction(this.storageId, this.label);
 
@@ -210,11 +216,24 @@ enum SmartRuleAction {
   AppSecurityLevel? get raisesTo => switch (this) {
         SmartRuleAction.sensitive => AppSecurityLevel.sensitive,
         SmartRuleAction.critical => AppSecurityLevel.critical,
-        SmartRuleAction.standard || SmartRuleAction.unlocked => null,
+        SmartRuleAction.standard ||
+        SmartRuleAction.unlocked ||
+        SmartRuleAction.applyProfile =>
+          null,
       };
 
   /// Whether this action can ever change enforcement.
   bool get canRaise => raisesTo != null;
+
+  /// The level actions (everything except [applyProfile]), in order of
+  /// declaration. A level rule always has targets; a profile rule never
+  /// does.
+  static const List<SmartRuleAction> levelActions = <SmartRuleAction>[
+    standard,
+    sensitive,
+    critical,
+    unlocked,
+  ];
 
   /// Exact id → action; anything else → null (the caller rejects it).
   static SmartRuleAction? fromStorageId(Object? raw) {
@@ -246,6 +265,7 @@ final class SmartRule {
     required this.days,
     required this.time,
     required this.action,
+    required this.profileId,
   });
 
   /// Validates and normalizes. Throws [SmartRuleFormatException].
@@ -259,6 +279,10 @@ final class SmartRule {
   ///    never means "all apps".
   ///  * [days]: at least one of 1..7 (Monday = 1); duplicates removed;
   ///    sorted.
+  ///  * Phase 11 / M3: [SmartRuleAction.applyProfile] requires a valid
+  ///    [profileId] ([isValidProfileId]) and NO [targetPackages] (the
+  ///    profile defines the apps); every other action requires targets and
+  ///    no [profileId].
   factory SmartRule({
     required String id,
     required String name,
@@ -267,17 +291,50 @@ final class SmartRule {
     required SmartRuleTime time,
     bool enabled = true,
     SmartRuleAction action = SmartRuleAction.standard,
+    String? profileId,
   }) {
+    final bool profileRule = action == SmartRuleAction.applyProfile;
+    if (profileRule) {
+      if (!isValidProfileId(profileId)) {
+        throw SmartRuleFormatException(
+          'profile',
+          'Not a valid profile id: "$profileId".',
+        );
+      }
+      if (targetPackages.isNotEmpty) {
+        throw const SmartRuleFormatException(
+          'targetPackages',
+          'A profile rule has no app list; the profile defines the apps.',
+        );
+      }
+    } else if (profileId != null) {
+      throw const SmartRuleFormatException(
+        'profile',
+        'Only an "Apply profile" rule references a profile.',
+      );
+    }
     return SmartRule._(
       id: _validId(id),
       name: _validName(name),
       enabled: enabled,
-      targetPackages: _validTargets(targetPackages),
+      targetPackages:
+          profileRule ? const <String>[] : _validTargets(targetPackages),
       days: _validDays(days),
       time: time,
       action: action,
+      profileId: profileRule ? profileId : null,
     );
   }
+
+  /// Phase 11 / M3: profile ids a rule may reference: the five preset ids
+  /// or `custom-` + 12 lowercase hex digits (same grammar as
+  /// `SecurityProfile`). Existence is checked against the profile set when
+  /// the policy is compiled (a missing profile fails closed).
+  static bool isValidProfileId(Object? value) =>
+      value is String && _profileIdPattern.hasMatch(value);
+
+  static final RegExp _profileIdPattern =
+      RegExp(r'^(normal|home|work|guest|kids|custom-[0-9a-f]{12})$');
 
   static const int maxIdLength = 64;
   static const int maxNameLength = 80;
@@ -311,6 +368,13 @@ final class SmartRule {
   /// Phase 10 / M2: the requested security level (raise-only).
   final SmartRuleAction action;
 
+  /// Phase 11 / M3: the profile an [SmartRuleAction.applyProfile] rule
+  /// activates while it matches; null for every other action.
+  final String? profileId;
+
+  /// Phase 11 / M3: whether this rule activates a profile.
+  bool get isProfileRule => action == SmartRuleAction.applyProfile;
+
   /// True when [packageName] is one of [targetPackages] (exact match).
   bool targets(String packageName) => targetPackages.contains(packageName);
 
@@ -321,7 +385,8 @@ final class SmartRule {
       _packagePattern.hasMatch(value);
 
   /// A copy with the given fields replaced, validated again. The [id] never
-  /// changes.
+  /// changes. (Switching between a level action and
+  /// [SmartRuleAction.applyProfile] needs the constructor.)
   SmartRule copyWith({
     String? name,
     Iterable<String>? targetPackages,
@@ -329,6 +394,7 @@ final class SmartRule {
     SmartRuleTime? time,
     bool? enabled,
     SmartRuleAction? action,
+    String? profileId,
   }) {
     return SmartRule(
       id: id,
@@ -338,21 +404,34 @@ final class SmartRule {
       time: time ?? this.time,
       enabled: enabled ?? this.enabled,
       action: action ?? this.action,
+      profileId: profileId ?? this.profileId,
     );
   }
 
-  /// Rule JSON layout version written by [toJson] (document schema v2).
-  static const int jsonVersion = 2;
+  /// Rule JSON layout version written by [toJson] (document schema v3).
+  static const int jsonVersion = 3;
 
-  Map<String, Object?> toJson() => <String, Object?>{
-        'id': id,
-        'name': name,
-        'enabled': enabled,
-        'targets': List<String>.of(targetPackages),
-        'days': List<int>.of(days),
-        'time': time.toJson(),
-        'action': action.storageId,
-      };
+  /// Level rules keep the exact v2 layout. A profile rule (v3 only) has no
+  /// `targets` and a required `profile`.
+  Map<String, Object?> toJson() => isProfileRule
+      ? <String, Object?>{
+          'id': id,
+          'name': name,
+          'enabled': enabled,
+          'days': List<int>.of(days),
+          'time': time.toJson(),
+          'action': action.storageId,
+          'profile': profileId,
+        }
+      : <String, Object?>{
+          'id': id,
+          'name': name,
+          'enabled': enabled,
+          'targets': List<String>.of(targetPackages),
+          'days': List<int>.of(days),
+          'time': time.toJson(),
+          'action': action.storageId,
+        };
 
   /// v1 (Phase 10 / M1) rule fields: no action.
   static const Set<String> _jsonKeysV1 = <String>{
@@ -364,8 +443,20 @@ final class SmartRule {
     'time',
   };
 
-  /// v2 (Phase 10 / M2) rule fields: v1 plus a required `action`.
+  /// v2 (Phase 10 / M2) rule fields: v1 plus a required `action`. Also the
+  /// v3 layout of every level rule.
   static const Set<String> _jsonKeys = <String>{..._jsonKeysV1, 'action'};
+
+  /// v3 (Phase 11 / M3) profile rule fields: no `targets`, plus `profile`.
+  static const Set<String> _jsonKeysProfile = <String>{
+    'id',
+    'name',
+    'enabled',
+    'days',
+    'time',
+    'action',
+    'profile',
+  };
 
   /// Strict decode of persisted [toJson] output. Rejects missing, unknown or
   /// mistyped fields and anything not already canonical (untrimmed name,
@@ -377,27 +468,45 @@ final class SmartRule {
   /// with [SmartRuleAction.migratedFromV1]. `2` = current layout; `action`
   /// is required and must be an exact known id (no fallback). Any other
   /// value is rejected.
+  ///
+  /// Phase 11 / M3: `3` = v2 layout for level rules, or the profile layout
+  /// ([_jsonKeysProfile]) for `action: "profile"`. A `"profile"` action in a
+  /// v1/v2 document is rejected (it never existed there).
   static SmartRule fromJson(Object? raw, {int version = jsonVersion}) {
     if (raw is! Map) {
       throw const SmartRuleFormatException('rule', 'Not an object.');
     }
-    if (version != 1 && version != jsonVersion) {
+    if (version != 1 && version != 2 && version != jsonVersion) {
       throw SmartRuleFormatException('rule', 'Unknown rule layout $version.');
     }
-    _exactKeys(raw, version == 1 ? _jsonKeysV1 : _jsonKeys, 'rule');
     final SmartRuleAction? action = version == 1
         ? SmartRuleAction.migratedFromV1
         : SmartRuleAction.fromStorageId(raw['action']);
-    if (action == null) {
+    if (action == null ||
+        (action == SmartRuleAction.applyProfile && version < 3)) {
       throw SmartRuleFormatException(
         'action',
         'Unknown action: ${raw['action']}.',
       );
     }
+    final bool profileRule = action == SmartRuleAction.applyProfile;
+    _exactKeys(
+      raw,
+      version == 1
+          ? _jsonKeysV1
+          : profileRule
+              ? _jsonKeysProfile
+              : _jsonKeys,
+      'rule',
+    );
+    final Object? profile = profileRule ? raw['profile'] : null;
+    if (profileRule && profile is! String) {
+      throw const SmartRuleFormatException('profile', 'Not a string.');
+    }
     final Object? id = raw['id'];
     final Object? name = raw['name'];
     final Object? enabled = raw['enabled'];
-    final Object? targets = raw['targets'];
+    final Object? targets = profileRule ? const <String>[] : raw['targets'];
     final Object? days = raw['days'];
     if (id is! String) {
       throw const SmartRuleFormatException('id', 'Not a string.');
@@ -425,6 +534,7 @@ final class SmartRule {
       time: SmartRuleTime.fromJson(raw['time']),
       enabled: enabled,
       action: action,
+      profileId: profile as String?,
     );
     if (rule.name != name) {
       throw const SmartRuleFormatException('name', 'Not trimmed.');
@@ -450,7 +560,8 @@ final class SmartRule {
       _sameList(other.targetPackages, targetPackages) &&
       _sameList(other.days, days) &&
       other.time == time &&
-      other.action == action;
+      other.action == action &&
+      other.profileId == profileId;
 
   @override
   int get hashCode => Object.hash(
@@ -461,12 +572,14 @@ final class SmartRule {
         Object.hashAll(days),
         time,
         action,
+        profileId,
       );
 
   @override
   String toString() => 'SmartRule($id, "$name", '
       '${enabled ? 'enabled' : 'disabled'}, targets=$targetPackages, '
-      'days=$days, time=$time, action=${action.storageId})';
+      'days=$days, time=$time, action=${action.storageId}'
+      '${isProfileRule ? ', profile=$profileId' : ''})';
 
   // -- validation ------------------------------------------------------------
 

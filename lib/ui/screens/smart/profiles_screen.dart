@@ -12,6 +12,7 @@ import '../../../app/app_scope.dart';
 import '../../../data/models/protected_app.dart';
 import '../../../design_system/design_system.dart';
 import '../../../profiles/security_profile.dart';
+import '../../../rules/smart_rule.dart';
 import '../../../utilities/result.dart';
 import 'profile_change.dart';
 import 'profile_editor_screen.dart';
@@ -38,6 +39,11 @@ class _ProfilesScreenState extends State<ProfilesScreen> {
   List<ProtectedApp> _apps = const <ProtectedApp>[];
   bool _started = false;
 
+  /// Phase 11 / M3: the saved Smart Rules (to show which profiles scheduled
+  /// rules use). Null when unreadable (no usage shown; deletes are still
+  /// checked against freshly read rules when applied).
+  List<SmartRule>? _rules;
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -59,8 +65,10 @@ class _ProfilesScreenState extends State<ProfilesScreen> {
         await container.securityProfiles.getProfiles();
     final Result<List<ProtectedApp>> apps =
         await container.protectedApps.getProtectedApps();
+    final Result<List<SmartRule>> rules = await container.smartRules.getRules();
     if (!mounted) return;
     setState(() {
+      _rules = rules.valueOrNull;
       _loading = false;
       _set = read.valueOrNull;
       _error = read.isFailure
@@ -165,6 +173,10 @@ class _ProfilesScreenState extends State<ProfilesScreen> {
           profile: profile,
           duplicateOf: duplicateOf,
           protectedApps: _apps,
+          referencingRules: profile == null
+              ? 0
+              : rulesReferencing(_rules ?? const <SmartRule>[], profile.id)
+                  .length,
           clock: widget.clock,
         ),
       ),
@@ -236,6 +248,7 @@ class _ProfilesScreenState extends State<ProfilesScreen> {
       saved: set,
       record: container?.protectionBootstrap.lastRuleExchange,
       protectedPackages: _apps.map((ProtectedApp a) => a.packageName).toSet(),
+      rules: _rules,
     );
     return <Widget>[
       SmartWideButton(
@@ -308,6 +321,13 @@ class _ProfilesScreenState extends State<ProfilesScreen> {
                   const SizedBox(height: DsSpacing.xxs),
                   Text(ProfileText.explanation(p), style: secondary),
                   Text(ProfileText.summary(p), style: secondary),
+                  if (rulesReferencing(_rules ?? const <SmartRule>[], p.id)
+                      case final List<SmartRule> used when used.isNotEmpty)
+                    Text(
+                      ProfileText.usedByRules(used.length),
+                      key: Key('profile_used_by_${p.id}'),
+                      style: secondary,
+                    ),
                   const SizedBox(height: DsSpacing.xs),
                   Wrap(
                     spacing: DsSpacing.xs,

@@ -1,11 +1,16 @@
 import 'package:flutter/widgets.dart';
 
+import '../../../data/models/protected_app.dart';
+import '../../../data/repositories/protected_apps_repository.dart';
+import '../../../data/repositories/security_profile_repository.dart';
 import '../../../data/repositories/smart_rule_repository.dart';
+import '../../../profiles/security_profile.dart';
+import '../../../profiles/security_profile_policy.dart';
 import '../../../protection/access_controller.dart';
 import '../../../protection/bound_relaxation.dart';
 import '../../../protection/protection_bootstrap.dart';
 import '../../../rules/smart_rule.dart';
-import '../../../rules/smart_rule_policy.dart';
+import '../../../rules/smart_rule_document.dart';
 import '../../../security/credentials/credential_manager.dart';
 import '../../../services/watcher_service.dart';
 import '../../../utilities/result.dart';
@@ -41,6 +46,15 @@ import '../apps/unprotect_gate.dart';
 ///
 /// Never grants a session, extends grace, clears a challenge or resets
 /// lockout. Raising rule protection needs no confirmation.
+///
+/// Phase 11 / M3: steps 2 and 4 compare the COMBINED policy (rules + manual
+/// profile overlay + overlays activated by "Apply profile" rules) for the
+/// protected apps over the whole week, so disabling, deleting or narrowing
+/// a profile-activation rule needs the PIN like any other reduction. The
+/// profile set is read here and bound to the operation (a concurrent
+/// profile change is a conflict), so a rule proof never carries a profile
+/// reduction. A profile rule that references a profile which no longer
+/// exists is refused (stale form).
 sealed class SmartRuleChange {
   const SmartRuleChange();
 
@@ -161,6 +175,8 @@ Future<SmartRuleChangeOutcome> applySmartRuleChange({
   required SmartRuleChange change,
   required NavigatorState navigator,
   required SmartRuleRepository repository,
+  required SecurityProfileRepository profiles,
+  required ProtectedAppsRepository protectedApps,
   required CredentialManager credentials,
   required AccessController accessController,
   required ProtectionBootstrap bootstrap,
@@ -182,8 +198,43 @@ Future<SmartRuleChangeOutcome> applySmartRuleChange({
   if (_sameRules(before, after)) {
     return const SmartRuleChangeOutcome(SmartRuleChangeStatus.unchanged);
   }
+  if (SmartRuleDocument.limitProblem(after) != null) {
+    return const SmartRuleChangeOutcome(SmartRuleChangeStatus.failed);
+  }
+  // Phase 11 / M3: the combined comparison needs the profiles and the
+  // protected apps. Unknown → fail closed (nothing written or sent).
+  final Result<SecurityProfileSet> profileRead = await profiles.getProfiles();
+  final Result<List<ProtectedApp>> appRead =
+      await protectedApps.getProtectedApps();
+  final SecurityProfileSet? profileSet = profileRead.valueOrNull;
+  final List<ProtectedApp>? apps = appRead.valueOrNull;
+  if (profileSet == null || apps == null) {
+    return SmartRuleChangeOutcome(
+      SmartRuleChangeStatus.failed,
+      error: profileRead.errorOrNull ?? appRead.errorOrNull,
+    );
+  }
+  // The chosen profile was deleted since the form opened: an ENABLED rule
+  // may not be saved (or re-enabled) pointing at it. Disabling or deleting
+  // such a rule stays possible (a CR-2 reduction: it compiles to Critical).
+  final String changedId = change.rule.id;
+  for (final SmartRule r in after) {
+    if (r.id == changedId &&
+        r.enabled &&
+        SecurityProfilePolicy.referencesMissingProfile(r, profileSet)) {
+      return const SmartRuleChangeOutcome(SmartRuleChangeStatus.conflict);
+    }
+  }
+  final Set<String> protectedPackages =
+      apps.map((ProtectedApp a) => a.packageName).toSet();
 
-  final Set<String> relaxed = SmartRulePolicy.relaxedPackages(before, after);
+  final Set<String> relaxed = SecurityProfilePolicy.combinedRelaxedPackages(
+    rulesBefore: before,
+    rulesAfter: after,
+    profilesBefore: profileSet,
+    profilesAfter: profileSet,
+    protectedPackages: protectedPackages,
+  );
   UnprotectAuthorization? authorization;
   if (relaxed.isNotEmpty) {
     final UnprotectRequestResult request = await requestUnprotectAuthorization(
@@ -233,7 +284,14 @@ Future<SmartRuleChangeOutcome> applySmartRuleChange({
   // An older unlock window never outlives a change that makes an app
   // stricter right now (the access controller and native also revoke it
   // on their own when the level rises; this is the immediate path).
-  for (final String pkg in SmartRulePolicy.raisedAt(before, after, now())) {
+  for (final String pkg in SecurityProfilePolicy.combinedRaisedAt(
+    rulesBefore: before,
+    rulesAfter: after,
+    profilesBefore: profileSet,
+    profilesAfter: profileSet,
+    protectedPackages: protectedPackages,
+    localDateTime: now(),
+  )) {
     await accessController.revokeImmediately(pkg);
   }
   if (authorization != null) {
@@ -253,6 +311,9 @@ Future<SmartRuleChangeOutcome> applySmartRuleChange({
       ),
       rulesBefore: before,
       rulesAfter: after,
+      // Phase 11 / M3: bound to the profile set this decision used.
+      profilesBefore: profileSet,
+      profilesAfter: profileSet,
       storageHoldsAfter: true,
     );
     if (bound.status != BoundRelaxationStatus.applied) {

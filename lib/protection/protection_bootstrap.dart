@@ -99,6 +99,10 @@ class ProtectionBootstrap {
   /// requires for [packageName] at [now]; never lowers anything. The profile
   /// part mirrors the compiled overlay last sent to native: "all protected
   /// apps" covers only the protected set of that snapshot.
+  ///
+  /// Phase 11 / M3: plus the overlays activated by matching "Apply profile"
+  /// rules at [now] (compiled against the cached profile set and the same
+  /// protected set, exactly as last sent).
   AppSecurityLevel? extraLevelFor(String packageName, DateTime now) {
     final AppSecurityLevel? rule = ruleCache.levelFor(packageName, now);
     final AppSecurityLevel? profile = SecurityProfilePolicy.transportLevelFor(
@@ -106,9 +110,25 @@ class ProtectionBootstrap {
       packageName,
       _overlayPackages,
     );
-    if (rule == null) return profile;
-    if (profile == null) return rule;
-    return profile.isStricterThan(rule) ? profile : rule;
+    final AppSecurityLevel? scheduled =
+        SecurityProfilePolicy.activationLevelFor(
+      ruleCache.rules,
+      profileCache.set,
+      packageName,
+      now,
+      _overlayPackages,
+    );
+    AppSecurityLevel? best;
+    for (final AppSecurityLevel? level in <AppSecurityLevel?>[
+      rule,
+      profile,
+      scheduled,
+    ]) {
+      if (level != null && (best == null || level.isStricterThan(best))) {
+        best = level;
+      }
+    }
+    return best;
   }
 
   /// The protected set the last sent overlay was compiled for.
@@ -252,11 +272,11 @@ class ProtectionBootstrap {
     }
     final _BoundState before = _BoundState(
       rulesBefore ?? storedRules,
-      (profilesBefore ?? storedProfiles).active,
+      profilesBefore ?? storedProfiles,
     );
     final _BoundState after = _BoundState(
       rulesAfter ?? storedRules,
-      (profilesAfter ?? storedProfiles).active,
+      profilesAfter ?? storedProfiles,
     );
     final Set<String> packages =
         apps.map((ProtectedApp app) => app.packageName).toSet();
@@ -369,7 +389,15 @@ class ProtectionBootstrap {
         SmartRulePolicy.nativeTransport(state.rules);
     final List<Map<String, Object?>> profilePart =
         SmartRulePolicy.nativeTransport(
-      SecurityProfilePolicy.overlayRules(state.profile, packages),
+      SecurityProfilePolicy.overlayRules(state.profiles.active, packages),
+    );
+    final List<Map<String, Object?>> activationPart =
+        SmartRulePolicy.nativeTransport(
+      SecurityProfilePolicy.activationRules(
+        state.rules,
+        state.profiles,
+        packages,
+      ),
     );
     final configuredResult = await _watcher.configureProtection(
       enabled: configured,
@@ -381,9 +409,9 @@ class ProtectionBootstrap {
         },
         session: session,
         revision: ++_revision,
-        smartRules: SecurityProfilePolicy.nativeTransport(
+        smartRules: SecurityProfilePolicy.combinedTransport(
           state.rules,
-          state.profile,
+          state.profiles,
           packages,
         ),
         authorizedRuleRelaxation: flag,
@@ -395,6 +423,7 @@ class ProtectionBootstrap {
         sentRules: rulePart,
         failed: true,
         sentProfileOverlay: profilePart,
+        sentActivationOverlay: activationPart,
       );
       return Result.failure(configuredResult.errorOrNull!);
     }
@@ -403,6 +432,7 @@ class ProtectionBootstrap {
       status: ack.ruleStatus,
       sentRules: rulePart,
       sentProfileOverlay: profilePart,
+      sentActivationOverlay: activationPart,
     );
     if (ack.status != ProtectionPolicyStatus.unknown) _lastAck = ack;
     return Result.success(ack);
@@ -466,19 +496,33 @@ class ProtectionBootstrap {
     final bool configured =
         credentialResult.valueOrNull!.hasAnyCredential && packages.isNotEmpty;
     final List<SmartRule>? savedRules = await _readRules();
-    final SecurityProfile? profile = (await _readProfileSet())?.active;
+    final SecurityProfileSet? profiles = await _readProfileSet();
     // Phase 11 / M1: one transport (rules + profile overlay), or nothing at
-    // all when either part is unknown.
-    final bool send = savedRules != null && profile != null;
+    // all when either part is unknown. Phase 11 / M3: plus the overlays of
+    // "Apply profile" rules (which need both documents).
+    final bool send = savedRules != null && profiles != null;
     if (send) _overlayPackages = Set<String>.unmodifiable(packages);
     final List<Map<String, Object?>>? rules = send
-        ? SecurityProfilePolicy.nativeTransport(savedRules, profile, packages)
+        ? SecurityProfilePolicy.combinedTransport(
+            savedRules,
+            profiles,
+            packages,
+          )
         : null;
     final List<Map<String, Object?>>? rulePart =
         send ? SmartRulePolicy.nativeTransport(savedRules) : null;
     final List<Map<String, Object?>>? profilePart = send
         ? SmartRulePolicy.nativeTransport(
-            SecurityProfilePolicy.overlayRules(profile, packages),
+            SecurityProfilePolicy.overlayRules(profiles.active, packages),
+          )
+        : null;
+    final List<Map<String, Object?>>? activationPart = send
+        ? SmartRulePolicy.nativeTransport(
+            SecurityProfilePolicy.activationRules(
+              savedRules,
+              profiles,
+              packages,
+            ),
           )
         : null;
     final configuredResult = await _watcher.configureProtection(
@@ -501,6 +545,7 @@ class ProtectionBootstrap {
         sentRules: rulePart,
         failed: true,
         sentProfileOverlay: profilePart,
+        sentActivationOverlay: activationPart,
       );
       return Result.failure(configuredResult.errorOrNull!);
     }
@@ -509,6 +554,7 @@ class ProtectionBootstrap {
       status: ack.ruleStatus,
       sentRules: rulePart,
       sentProfileOverlay: profilePart,
+      sentActivationOverlay: activationPart,
     );
     if (ack.status != ProtectionPolicyStatus.unknown) _lastAck = ack;
     final running = await _watcher.isRunning();
@@ -547,15 +593,15 @@ class ProtectionBootstrap {
   }
 }
 
-/// One side (before or after) of a bound relaxation.
+/// One side (before or after) of a bound relaxation. Phase 11 / M3: the
+/// whole profile set (manual profile + profiles referenced by "Apply
+/// profile" rules), compiled into the ONE combined policy.
 final class _BoundState {
-  const _BoundState(this.rules, this.profile);
+  const _BoundState(this.rules, this.profiles);
 
   final List<SmartRule> rules;
-  final SecurityProfile profile;
+  final SecurityProfileSet profiles;
 
-  List<SmartRule> combined(Set<String> protectedPackages) => <SmartRule>[
-        ...rules,
-        ...SecurityProfilePolicy.overlayRules(profile, protectedPackages),
-      ];
+  List<SmartRule> combined(Set<String> protectedPackages) =>
+      SecurityProfilePolicy.combinedRules(rules, profiles, protectedPackages);
 }

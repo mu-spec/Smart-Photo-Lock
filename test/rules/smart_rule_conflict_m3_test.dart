@@ -61,8 +61,8 @@ void main() {
     });
 
     test('every pair of actions: the stronger one wins in both orders', () {
-      for (final _A a in _A.values) {
-        for (final _A b in _A.values) {
+      for (final _A a in _A.levelActions) {
+        for (final _A b in _A.levelActions) {
           final List<SmartRule> ab = <SmartRule>[_r('a', a), _r('b', b)];
           final SmartRuleResolution r1 =
               SmartRulePolicy.resolutionFor(ab, _bank, _mon(10));

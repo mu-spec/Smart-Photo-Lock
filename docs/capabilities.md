@@ -493,3 +493,44 @@ displays what already exists:
   profiles can be read at start-up.
 - **Device behaviour is unverified** until the combined device round
   (`docs/regression.md`, Phase 11 / M2).
+
+## Scheduled profiles limits (Phase 11 / M3)
+
+- **A Smart Rule can apply a profile on a schedule** ("Apply profile" in
+  the Smart Rules editor). The scheduled profile is an extra layer on top
+  of the profile you selected; your selected profile never changes. Like
+  every profile it only adds protection to apps that are already
+  protected. It never protects a new app, never unprotects one and never
+  changes an app's saved level.
+- **The strictest layer always wins.** Saved level, selected profile,
+  per-app rules and scheduled profiles are combined; the order of rules or
+  which one was saved last doesn't matter. Rule details explain which
+  layer decides an app's level.
+- **Starting and ending happen at the next app opening.** A scheduled
+  profile applies the next time you open or return to an app inside its
+  days and hours, and stops applying the next time outside them. Nothing
+  runs in the background (no timer or alarm), and ending a schedule never
+  unlocks an app, extends grace or clears a pending challenge — an app
+  locked at Critical stays locked until you unlock it normally.
+- **Lowering protection needs the app's PIN or pattern.** Turning off,
+  deleting, shortening or retargeting a scheduled profile rule, or
+  weakening a profile that a rule uses, asks for the PIN/pattern for
+  exactly the affected apps. Adding a rule or making it stricter doesn't.
+  Biometrics and the device screen lock are not accepted for this.
+- **A missing profile is treated as Critical.** If a rule's profile no
+  longer exists, every protected app is Critical while the rule applies,
+  until you choose another profile or delete the rule. A profile used by
+  any rule can't be deleted; profiles that are used say "Used by N Smart
+  Rules", and editing one warns that the changes apply on schedule.
+- **Limits:** up to 200 Smart Rules, of which up to 32 apply profiles.
+  Rules saved by older versions keep working unchanged; a rules file from a
+  newer version is shown as an error and never overwritten.
+- **Status is honest.** "Confirmed" means protection confirmed the saved
+  rules and profiles in the last check in this session; otherwise the app
+  says they are not confirmed or that stricter earlier settings still
+  apply.
+- **No other triggers:** no switching by notification, Quick Settings,
+  widget or Android Work Profile, and no schedule can lower protection
+  below an app's saved level.
+- **Device behaviour is unverified** until the combined device round
+  (`docs/regression.md`, Phase 11 / M3).

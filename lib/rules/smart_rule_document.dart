@@ -51,19 +51,38 @@ class SmartRuleDocumentException implements Exception {
 /// silent fallback to "no rules". Encoding is deterministic (fixed key
 /// order, sorted lists, rules in stored order).
 ///
+/// Phase 11 / M3 writes schema v3: level rules keep the exact v2 layout;
+/// a new "Apply profile" rule is
+/// `{"id","name","enabled","days","time","action":"profile","profile":<id>}`
+/// (no `targets`). Migration v2 → v3 is lossless and needs no rewrite: every
+/// v2 rule is read unchanged (ids, names, enabled state, targets, days, time
+/// and action); no profile action is ever invented. A `"profile"` action in
+/// a v1/v2 document is corrupt. As before, the stored text is rewritten only
+/// by the next confirmed write, so no partially migrated state exists.
+///
+/// Limits (all-or-nothing, on read and write): at most [maxRules] rules, of
+/// which at most [maxProfileRules] activate a profile, and at most
+/// [maxDocumentLength] characters.
+///
 /// A future schema bumps [currentVersion] and adds an explicit vN → vN+1
 /// path here. An older build that meets a newer document reports
 /// [SmartRuleDocumentProblem.unsupportedVersion] and refuses to write.
 abstract final class SmartRuleDocument {
   static const String schema = 'smart_rules';
-  static const int currentVersion = 2;
+  static const int currentVersion = 3;
+
+  /// Phase 11 / M3: limits of one rule document.
+  static const int maxRules = 200;
+  static const int maxProfileRules = 32;
+  static const int maxDocumentLength = 256 * 1024;
 
   /// The oldest schema this build can still read (and migrate).
   static const int oldestReadableVersion = 1;
 
   static const Set<String> _keys = <String>{'schema', 'version', 'rules'};
 
-  /// Encodes [rules] in order. Throws [ArgumentError] on duplicate ids.
+  /// Encodes [rules] in order. Throws [ArgumentError] on duplicate ids or
+  /// when a limit is exceeded (nothing is written then).
   static String encode(List<SmartRule> rules) {
     final Set<String> ids = <String>{};
     for (final SmartRule r in rules) {
@@ -71,19 +90,42 @@ abstract final class SmartRuleDocument {
         throw ArgumentError.value(r.id, 'rules', 'Duplicate rule id');
       }
     }
-    return jsonEncode(<String, Object?>{
+    final String? overLimit = limitProblem(rules);
+    if (overLimit != null) throw ArgumentError(overLimit);
+    final String encoded = jsonEncode(<String, Object?>{
       'schema': schema,
       'version': currentVersion,
       'rules': <Object?>[for (final SmartRule r in rules) r.toJson()],
     });
+    if (encoded.length > maxDocumentLength) {
+      throw ArgumentError('The rule document exceeds $maxDocumentLength '
+          'characters.');
+    }
+    return encoded;
   }
 
-  /// Decodes a stored document (v1 or v2). Throws
+  /// Phase 11 / M3: why [rules] exceed a count limit, or null.
+  static String? limitProblem(List<SmartRule> rules) {
+    if (rules.length > maxRules) return 'At most $maxRules rules.';
+    if (rules.where((SmartRule r) => r.isProfileRule).length >
+        maxProfileRules) {
+      return 'At most $maxProfileRules profile rules.';
+    }
+    return null;
+  }
+
+  /// Decodes a stored document (v1, v2 or v3). Throws
   /// [SmartRuleDocumentException].
   static List<SmartRule> decode(String raw) => decodeDocument(raw).rules;
 
   /// Like [decode], also reporting the stored schema version.
   static SmartRuleDocumentRead decodeDocument(String raw) {
+    if (raw.length > maxDocumentLength) {
+      throw const SmartRuleDocumentException(
+        SmartRuleDocumentProblem.corrupt,
+        'The document exceeds the size limit.',
+      );
+    }
     final Object? json;
     try {
       json = jsonDecode(raw);
@@ -163,6 +205,14 @@ abstract final class SmartRuleDocument {
         );
       }
       rules.add(rule);
+    }
+    final String? overLimit = limitProblem(rules);
+    if (overLimit != null) {
+      throw SmartRuleDocumentException(
+        SmartRuleDocumentProblem.corrupt,
+        overLimit,
+        version: version,
+      );
     }
     return SmartRuleDocumentRead(
       rules: List<SmartRule>.unmodifiable(rules),

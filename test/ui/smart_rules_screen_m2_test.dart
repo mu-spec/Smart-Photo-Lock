@@ -257,7 +257,7 @@ void main() {
           in <(String, String, String)>[
         ('{"schema":"smart_rules","vers', 'corrupt', _T.corrupt),
         (
-          '{"schema":"smart_rules","version":3,"rules":[]}',
+          '{"schema":"smart_rules","version":4,"rules":[]}',
           'unsupportedVersion',
           _T.unsupported
         ),

@@ -6,6 +6,8 @@ import '../../../app/app_scope.dart';
 import '../../../data/models/app_security_level.dart';
 import '../../../data/models/protected_app.dart';
 import '../../../design_system/design_system.dart';
+import '../../../profiles/security_profile.dart';
+import '../../../profiles/security_profile_policy.dart';
 import '../../../rules/smart_rule.dart';
 import '../../../rules/smart_rule_policy.dart';
 import '../../../utilities/result.dart';
@@ -30,6 +32,11 @@ import 'smart_wide_button.dart';
 /// (Discard changes / Keep editing). An unchanged or saved form closes
 /// normally. Routes pushed on top (the CR-2 confirmation, a lock challenge)
 /// are never intercepted: the guard applies to this route only.
+///
+/// Phase 11 / M3: the level choices include "Apply profile". Such a rule has
+/// no app list (the profile decides which protected apps get extra
+/// protection); a profile picker replaces it. The manually selected profile
+/// is never changed by a rule.
 class SmartRuleEditorScreen extends StatefulWidget {
   const SmartRuleEditorScreen({
     super.key,
@@ -69,6 +76,7 @@ class _Draft {
     required this.start,
     required this.end,
     required this.action,
+    required this.profileId,
   });
 
   final String name;
@@ -78,6 +86,7 @@ class _Draft {
   final int start;
   final int end;
   final SmartRuleAction? action;
+  final String? profileId;
 
   static bool _sameSet<T>(Set<T> a, Set<T> b) =>
       a.length == b.length && a.containsAll(b);
@@ -91,10 +100,11 @@ class _Draft {
       other.allDay == allDay &&
       // The window only matters when it is used.
       (allDay || (other.start == start && other.end == end)) &&
-      other.action == action;
+      other.action == action &&
+      other.profileId == profileId;
 
   @override
-  int get hashCode => Object.hash(name, allDay, action);
+  int get hashCode => Object.hash(name, allDay, action, profileId);
 }
 
 class _SmartRuleEditorScreenState extends State<SmartRuleEditorScreen> {
@@ -108,7 +118,12 @@ class _SmartRuleEditorScreenState extends State<SmartRuleEditorScreen> {
   late int _start;
   late int _end;
   SmartRuleAction? _action;
+  String? _profileId;
   late _Draft _initialDraft;
+
+  /// Phase 11 / M3: the profiles a rule can apply (null until loaded).
+  SecurityProfileSet? _profileSet;
+  bool _profilesFailed = false;
 
   List<ProtectedApp>? _apps;
   bool _appsFailed = false;
@@ -133,6 +148,7 @@ class _SmartRuleEditorScreenState extends State<SmartRuleEditorScreen> {
     _start = time is SmartRuleWindow ? time.startMinute : _defaultStart;
     _end = time is SmartRuleWindow ? time.endMinute : _defaultEnd;
     _action = r?.action;
+    _profileId = r?.profileId;
     _initialDraft = _draft();
     _name.addListener(_onNameChanged);
   }
@@ -163,7 +179,10 @@ class _SmartRuleEditorScreenState extends State<SmartRuleEditorScreen> {
         start: _start,
         end: _end,
         action: _action,
+        profileId: _isProfile ? _profileId : null,
       );
+
+  bool get _isProfile => _action == SmartRuleAction.applyProfile;
 
   bool get _dirty => _draft() != _initialDraft;
 
@@ -173,10 +192,19 @@ class _SmartRuleEditorScreenState extends State<SmartRuleEditorScreen> {
       setState(() => _appsFailed = true);
       return;
     }
-    setState(() => _appsFailed = false);
+    setState(() {
+      _appsFailed = false;
+      _profilesFailed = false;
+    });
+    final Result<SecurityProfileSet> profiles =
+        await container.securityProfiles.getProfiles();
     final Result<List<ProtectedApp>> result =
         await container.protectedApps.getProtectedApps();
     if (!mounted) return;
+    setState(() {
+      _profileSet = profiles.valueOrNull;
+      _profilesFailed = profiles.isFailure || profiles.valueOrNull == null;
+    });
     final List<ProtectedApp>? apps = result.valueOrNull;
     setState(() {
       if (result.isFailure || apps == null) {
@@ -213,7 +241,18 @@ class _SmartRuleEditorScreenState extends State<SmartRuleEditorScreen> {
   }
 
   String? get _appsError =>
-      _targets.isEmpty ? SmartRuleText.appsRequired : null;
+      !_isProfile && _targets.isEmpty ? SmartRuleText.appsRequired : null;
+
+  /// Phase 11 / M3: a profile rule needs an existing profile.
+  String? get _profileError {
+    if (!_isProfile) return null;
+    final String? id = _profileId;
+    if (id == null) return SmartRuleText.profileRequired;
+    final SecurityProfileSet? set = _profileSet;
+    if (set == null) return SmartRuleText.profilesUnavailable;
+    if (set.byId(id) == null) return SmartRuleText.profileMissing;
+    return null;
+  }
 
   String? get _daysError => _days.isEmpty ? SmartRuleText.daysRequired : null;
 
@@ -230,6 +269,7 @@ class _SmartRuleEditorScreenState extends State<SmartRuleEditorScreen> {
         _appsError != null ||
         _daysError != null ||
         _timeError != null ||
+        _profileError != null ||
         action == null) {
       return null;
     }
@@ -238,12 +278,13 @@ class _SmartRuleEditorScreenState extends State<SmartRuleEditorScreen> {
         id: widget.initial?.id ?? (widget.newId ?? _generateId)(),
         name: _name.text.trim(),
         enabled: widget.initial?.enabled ?? true,
-        targetPackages: _targets,
+        targetPackages: _isProfile ? const <String>[] : _targets,
         days: _days,
         time: _allDay
             ? const SmartRuleTime.allDay()
             : SmartRuleTime.window(startMinute: _start, endMinute: _end),
         action: action,
+        profileId: _isProfile ? _profileId : null,
       );
     } on SmartRuleFormatException {
       return null;
@@ -276,6 +317,8 @@ class _SmartRuleEditorScreenState extends State<SmartRuleEditorScreen> {
           : SmartRuleEdit(expected: initial, rule: rule),
       navigator: navigator,
       repository: container.smartRules,
+      profiles: container.securityProfiles,
+      protectedApps: container.protectedApps,
       credentials: container.auth,
       accessController: container.accessController,
       bootstrap: container.protectionBootstrap,
@@ -323,6 +366,8 @@ class _SmartRuleEditorScreenState extends State<SmartRuleEditorScreen> {
       change: SmartRuleDelete(initial),
       navigator: navigator,
       repository: container.smartRules,
+      profiles: container.securityProfiles,
+      protectedApps: container.protectedApps,
       credentials: container.auth,
       accessController: container.accessController,
       bootstrap: container.protectionBootstrap,
@@ -410,14 +455,20 @@ class _SmartRuleEditorScreenState extends State<SmartRuleEditorScreen> {
             children: <Widget>[
               _nameSection(context),
               const SizedBox(height: DsSpacing.xl),
-              _appsSection(context),
-              const SizedBox(height: DsSpacing.xl),
+              if (!_isProfile) ...<Widget>[
+                _appsSection(context),
+                const SizedBox(height: DsSpacing.xl),
+              ],
               _daysSection(context),
               const SizedBox(height: DsSpacing.xl),
               _timeSection(context),
               const SizedBox(height: DsSpacing.xl),
               _levelSection(context),
               const SizedBox(height: DsSpacing.xl),
+              if (_isProfile) ...<Widget>[
+                _profileSection(context),
+                const SizedBox(height: DsSpacing.xl),
+              ],
               _reviewSection(context),
               const SizedBox(height: DsSpacing.lg),
               if (_message != null) ...<Widget>[
@@ -646,21 +697,101 @@ class _SmartRuleEditorScreenState extends State<SmartRuleEditorScreen> {
     final bool selected = _action == action;
     // Unlocked is reserved: shown as not available, never selectable.
     final bool available = action != SmartRuleAction.unlocked;
-    return Semantics(
-      inMutuallyExclusiveGroup: true,
-      selected: selected,
-      child: ListTile(
-        key: Key('smart_level_${action.storageId}'),
-        contentPadding: EdgeInsets.zero,
-        enabled: available && !_saving,
-        leading: Icon(
-          selected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+    // MergeSemantics: the group / selected flags land on the tile's own
+    // node (the one TalkBack focuses), not on an ancestor.
+    return MergeSemantics(
+      child: Semantics(
+        inMutuallyExclusiveGroup: true,
+        selected: selected,
+        child: ListTile(
+          key: Key('smart_level_${action.storageId}'),
+          contentPadding: EdgeInsets.zero,
+          enabled: available && !_saving,
+          leading: Icon(
+            selected
+                ? Icons.radio_button_checked
+                : Icons.radio_button_unchecked,
+          ),
+          title: Text(action.label),
+          subtitle: Text(SmartRuleText.actionDescription(action)),
+          onTap: available ? () => setState(() => _action = action) : null,
         ),
-        title: Text(action.label),
-        subtitle: Text(SmartRuleText.actionDescription(action)),
-        onTap: available ? () => setState(() => _action = action) : null,
       ),
     );
+  }
+
+  /// Phase 11 / M3: the profile picker of an "Apply profile" rule.
+  Widget _profileSection(BuildContext context) {
+    final SecurityProfileSet? set = _profileSet;
+    final List<Widget> rows = <Widget>[];
+    if (set == null && !_profilesFailed) {
+      rows.add(const Padding(
+        padding: EdgeInsets.all(DsSpacing.md),
+        child: Center(child: CircularProgressIndicator()),
+      ));
+    } else if (set == null) {
+      rows.add(Row(
+        children: <Widget>[
+          const Expanded(child: Text(SmartRuleText.profilesUnavailable)),
+          TextButton(
+            key: const Key('smart_profiles_retry'),
+            onPressed: _loadApps,
+            child: const Text(SmartRuleText.retry),
+          ),
+        ],
+      ));
+    } else {
+      final String? id = _profileId;
+      if (id != null && set.byId(id) == null) {
+        rows.add(DsCard(
+          key: const Key('smart_profile_missing'),
+          color: context.dsColors.warning.withValues(alpha: 0.10),
+          child: const Text(SmartRuleText.profileMissing),
+        ));
+      }
+      for (final SecurityProfile p in set.profiles) {
+        final bool selected = _profileId == p.id;
+        rows.add(MergeSemantics(
+            child: Semantics(
+          inMutuallyExclusiveGroup: true,
+          selected: selected,
+          child: ListTile(
+            key: Key('smart_profile_${p.id}'),
+            contentPadding: EdgeInsets.zero,
+            enabled: !_saving,
+            leading: Icon(
+              selected
+                  ? Icons.radio_button_checked
+                  : Icons.radio_button_unchecked,
+            ),
+            title: Text(p.name),
+            subtitle: Text(_profileExplanation(p)),
+            onTap: () => setState(() => _profileId = p.id),
+          ),
+        )));
+      }
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        _title(SmartRuleText.profileTitle),
+        Text(
+          SmartRuleText.profileAppsNote,
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+        ...rows,
+        if (_profileError != SmartRuleText.profileMissing)
+          _error(context, _profileError, 'smart_profile_error'),
+      ],
+    );
+  }
+
+  static String _profileExplanation(SecurityProfile p) {
+    final AppSecurityLevel? all = p.allProtectedLevel;
+    final int apps = p.appLevels.length;
+    if (all == null && apps == 0) return 'Adds no protection';
+    if (all != null) return 'Every protected app at least ${all.label}';
+    return apps == 1 ? '1 selected app' : '$apps selected apps';
   }
 
   String _whenText() {
@@ -687,7 +818,16 @@ class _SmartRuleEditorScreenState extends State<SmartRuleEditorScreen> {
       for (final String pkg in targets) byPackage[pkg]?.label ?? pkg,
     ];
     final List<String> notes = <String>[];
-    if (action != null) {
+    final SecurityProfileSet? profileSet = _profileSet;
+    final SecurityProfile? profile =
+        _isProfile && _profileId != null ? profileSet?.byId(_profileId!) : null;
+    if (_isProfile &&
+        profile != null &&
+        profile.allProtectedLevel == null &&
+        profile.appLevels.isEmpty) {
+      notes.add(SmartRuleText.profileNoEffect);
+    }
+    if (action != null && !_isProfile) {
       for (final String pkg in targets) {
         final ProtectedApp? app = byPackage[pkg];
         final AppSecurityLevel? baseline = app?.securityLevel;
@@ -698,9 +838,23 @@ class _SmartRuleEditorScreenState extends State<SmartRuleEditorScreen> {
     }
     final SmartRule? rule = _buildRule();
     final SmartRule? initial = widget.initial;
+    // Phase 11 / M3: compared over the combined policy (profile rules
+    // compile to their profile's overlay); the save path decides for real.
     final bool reduces = rule != null &&
         initial != null &&
-        SmartRulePolicy.relaxedPackages(<SmartRule>[initial], <SmartRule>[rule])
+        (profileSet == null
+                ? SmartRulePolicy.relaxedPackages(
+                    <SmartRule>[initial],
+                    <SmartRule>[rule],
+                  )
+                : SecurityProfilePolicy.combinedRelaxedPackages(
+                    rulesBefore: <SmartRule>[initial],
+                    rulesAfter: <SmartRule>[rule],
+                    profilesBefore: profileSet,
+                    profilesAfter: profileSet,
+                    protectedPackages:
+                        apps.map((ProtectedApp a) => a.packageName).toSet(),
+                  ))
             .isNotEmpty;
     final TextStyle? small = Theme.of(context).textTheme.bodySmall;
     return Column(
@@ -714,10 +868,15 @@ class _SmartRuleEditorScreenState extends State<SmartRuleEditorScreen> {
             children: <Widget>[
               Text(_name.text.trim().isEmpty ? '—' : _name.text.trim()),
               const SizedBox(height: DsSpacing.xs),
-              Text('Apps: ${labels.isEmpty ? '—' : labels.join(', ')}'),
+              if (_isProfile)
+                Text('Profile: ${profile?.name ?? '—'}')
+              else
+                Text('Apps: ${labels.isEmpty ? '—' : labels.join(', ')}'),
               Text('When: ${_whenText()}'),
               Text(
-                'Level: ${action == null ? '—' : SmartRuleText.actionSummary(action)}',
+                _isProfile
+                    ? 'Effect: ${profile == null ? '—' : SmartRuleText.profileSummary(profile.name)}'
+                    : 'Level: ${action == null ? '—' : SmartRuleText.actionSummary(action)}',
               ),
               for (final String note in notes)
                 Padding(

@@ -3830,3 +3830,144 @@ extends grace, resets lockout or changes saved levels.
 - No activation by Smart Rules (M3), no Android Work Profile, no scheduled
   switching.
 - Device behaviour is unverified.
+
+## Phase 11 / M3 — Smart Rules profile activation, conflicts & security regression
+
+M3 lets a Smart Rule apply a security profile on a schedule. It is built
+inside the existing Smart Rules editor (no new tab) on the M1/M2 engine:
+one engine, one v1 native transport, raise-only. **No native code
+changed.** The design gate is `Phase11/M3_SECURITY_DESIGN_GATE.md`
+(outside the repo).
+
+### Model (`lib/rules/smart_rule.dart`)
+
+- New action `SmartRuleAction.applyProfile` (storage id `"profile"`) with a
+  required `profileId`: a preset id (`normal`, `home`, `work`, `guest`,
+  `kids`) or `custom-` + 12 lowercase hex. Anything else is refused at
+  construction and on decode.
+- A profile rule has **no app list**. Its scope is the referenced profile's
+  overlay (Guest = every protected app; Home/Work/Kids/custom = their
+  per-app entries). It can never enrol an app.
+- `SmartRuleAction.levelActions` lists the Phase 10 level actions;
+  existing level rules keep their exact shape and behaviour.
+
+### Document v3 (`lib/rules/smart_rule_document.dart`)
+
+- Writes store `version: 3`. A profile rule has exactly
+  `{id, name, enabled, days, time, action: "profile", profile}`.
+- Reads accept v1, v2 and v3. v1/v2 decode losslessly; `"profile"` in a
+  v1/v2 document is corrupt (no invented actions); the stored text is never
+  rewritten on read, so there is no partially migrated state. Encode is
+  deterministic (a v3 round trip is byte-identical).
+- Version > 3 → `unsupportedVersion`, never overwritten. Unknown action or
+  keys, bad ids, bad days, duplicates → corrupt (all-or-nothing).
+- Limits: at most 200 rules, 32 profile rules, 256 KiB. Over a limit: corrupt
+  on read; on write the encode fails and the repository reports
+  `SmartRuleStoreException(writeFailed)`, nothing written.
+- A failed read keeps the R-A Critical floor; native keeps its persisted
+  snapshot. No enforcement gap.
+
+### Compilation and precedence (`lib/profiles/security_profile_policy.dart`)
+
+- `activationRules(rules, profiles, protectedPackages)`: every **enabled**
+  profile rule compiles to the referenced profile's overlay entries,
+  carrying the rule's days and window. Normal adds nothing. A missing
+  profile compiles to Critical for every protected app inside the window
+  (fails closed, R2).
+- `combinedRules = direct level rules + manual overlay + activation
+  overlays` → ONE `SmartRulePolicy.nativeTransport`. With no profile rules
+  this equals the M2 transport byte-for-byte.
+- effective(app, t) = strictest(saved level, manual profile, matching direct
+  rules, matching activations). Order-independent; no last-write-wins. A
+  rule never writes `activeProfileId`; the manual profile is unchanged.
+- `combinedRelaxedPackages(...)` compares the combined policy before and
+  after over every weekday × boundary minute (the Phase 10 exact check).
+- `ProtectionLayerDiagnostics.diagnose(...)` reports, per protected app, the
+  saved level, the manual profile layer, the direct-rule layer (deciding
+  rule id), the scheduled-profile layer (deciding rule id + profile id), the
+  effective level and the winning layer. Ties are attribution only: saved >
+  manual > direct > scheduled, then the lowest stable rule id. The level is
+  always the strictest.
+
+### Start-up, sync and the Dart floor (`protection_bootstrap.dart`)
+
+- `extraLevelFor` includes the activation layer, so the Dart access floor
+  equals native. Activation needs both documents; until both are read the
+  R-A Critical floor applies (`extraLevelsCurrent`).
+- The sent record now includes `sentActivationOverlay`; "Applied" needs an
+  APPLIED ack for exactly the submitted rule, overlay and activation parts
+  (`profile_presentation.dart`).
+- `_BoundState.combined` (bound protocol relaxed set) uses the combined
+  policy.
+
+### Expiry and reductions (§7)
+
+- **(A) Scheduled start:** the activation entries are already in the native
+  snapshot; native raises at the next foreground decision inside the window.
+  No PIN, no snapshot change. Stricter levels end weaker sessions at that
+  decision (existing behaviour).
+- **(B) Scheduled end:** native snapshots are time-invariant (weekly specs
+  evaluated at each decision), so a window ending changes nothing that is
+  stored: no message, no proof, no flag, no HELD. Outside the window the
+  next strongest layer decides. Nothing is granted, cleared, reset or
+  extended. Takes effect at the next observed access decision; no timer,
+  alarm, polling or service.
+- **(C) Manual reduction:** disabling, deleting, narrowing or retargeting an
+  activation rule, or weakening a referenced profile, changes the snapshot.
+  Over the combined policy it is a reduction → CR-2 PIN/pattern scoped to
+  exactly the relaxed apps → bound protocol (rules: write first + Option A;
+  profiles: commit after the ack).
+
+### Isolation and referential integrity
+
+- Rule operations pass `profilesBefore == profilesAfter` (the displayed
+  set); profile operations pass `rulesBefore == rulesAfter`. The bootstrap
+  re-reads both documents (CAS) and recomputes the relaxed set with the
+  other side fixed, so a rule proof can't carry a profile reduction and
+  vice versa. Intents unchanged.
+- R1: a profile referenced by any rule can't be deleted
+  (`ProfileChangeStatus.inUse`). R2: a dangling reference is Critical in its
+  window; saving an enabled rule pointing at a missing profile is refused,
+  while disabling or deleting it is allowed (a reduction → PIN). R3:
+  editing a referenced profile uses the combined impact. R4: Normal adds
+  nothing.
+
+### UI
+
+- Editor: type selector (security level vs profile), profile picker,
+  missing-profile and load-error/retry states, discard guard. TalkBack:
+  each choice is a selected/unselected member of a mutually exclusive group
+  (`MergeSemantics` + `Semantics`).
+- List: readable summary ("Apply <profile> …"), "Profile missing — treated
+  as Critical" pill, Smart card shows the scheduled profiles.
+- Rule details: per app scheduled layer, effective level and winner; the
+  native exchange is labelled as the last exchange in this session.
+- Profiles: "Used by N rules" on tiles and in the editor; delete refused
+  while referenced.
+
+### Files
+
+- Changed: `smart_rule.dart`, `smart_rule_document.dart`,
+  `smart_rule_conflict.dart`, `security_profile_policy.dart`,
+  `protection_bootstrap.dart`, `watcher_service.dart`,
+  `smart_rule_repository_impl.dart`, `smart_rule_change.dart`,
+  `profile_change.dart`, `profile_presentation.dart`,
+  `smart_rule_editor_screen.dart`, `smart_rule_presentation.dart`,
+  `smart_rule_details.dart`, `smart_screen.dart`, `profiles_screen.dart`,
+  `profile_editor_screen.dart`.
+- No Kotlin production change. New shared fixture
+  `test/fixtures/security_profiles/activation_vectors.json` (generator
+  `generate_activation_vectors.py`, `--check`).
+
+### Limits (M3)
+
+- An "all protected apps" activation (scheduled Guest) compiles to the
+  protected set at sync time; unprotecting an app shrinks it, which native
+  holds (the M2 limit, now also reachable by schedule).
+- Native still trusts the Dart layer of the same process to raise the flag
+  only through `applyBoundRelaxation` (R-C hardening needs approval).
+- Local wall clock at decision time (time-zone and clock changes as
+  Phase 10). Scheduled profiles affect only apps that are opened.
+- No Android Work Profile, no notification/QS/widget switching, no
+  scheduled reduction below the saved level.
+- Device behaviour is unverified.

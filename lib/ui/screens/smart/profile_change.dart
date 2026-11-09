@@ -23,6 +23,14 @@
 /// A profile change never unlocks an app, grants a session or grace, clears
 /// a challenge, resets lockout, authorizes another package, enrols an app,
 /// or changes a saved security level or Smart Rule.
+///
+/// Phase 11 / M3: "enforced" now also includes the overlays of profiles
+/// activated by "Apply profile" Smart Rules. Editing a profile that an
+/// enabled rule references is therefore a policy change (raise: saved and
+/// sent; lower: PIN + bound protocol), and "inactive" means the COMBINED
+/// transport is unchanged. Deleting a profile that any rule references is
+/// refused ([ProfileChangeStatus.inUse]); the rule is never rewritten from
+/// here (the documents stay separate).
 library;
 
 import 'package:flutter/widgets.dart';
@@ -106,6 +114,10 @@ enum ProfileChangeStatus {
   /// The new state is not valid (limits, names). Nothing written.
   invalid,
 
+  /// Phase 11 / M3: a profile to be deleted is referenced by a Smart Rule.
+  /// Nothing written; edit or delete the rule first.
+  inUse,
+
   /// A lowering change was refused because native still holds other,
   /// stricter protection. The profile was not changed; nothing relaxed.
   blocked,
@@ -156,8 +168,9 @@ final class ProfileChangeImpact {
   bool get lowers => relaxed.isNotEmpty;
 }
 
-/// Compares the active overlays of [before] and [after] over the saved
-/// [rules] for the protected apps (full weekly schedule).
+/// Compares the COMBINED policy (saved [rules] + manual overlay + overlays
+/// activated by "Apply profile" rules) of [before] and [after] for the
+/// protected apps (full weekly schedule).
 ProfileChangeImpact profileChangeImpact({
   required List<SmartRule> rules,
   required SecurityProfileSet before,
@@ -165,35 +178,36 @@ ProfileChangeImpact profileChangeImpact({
   required Set<String> protectedPackages,
   required DateTime now,
 }) {
-  final List<SmartRule> was = <SmartRule>[
-    ...rules,
-    ...SecurityProfilePolicy.overlayRules(before.active, protectedPackages),
-  ];
-  final List<SmartRule> next = <SmartRule>[
-    ...rules,
-    ...SecurityProfilePolicy.overlayRules(after.active, protectedPackages),
-  ];
+  final List<SmartRule> was =
+      SecurityProfilePolicy.combinedRules(rules, before, protectedPackages);
+  final List<SmartRule> next =
+      SecurityProfilePolicy.combinedRules(rules, after, protectedPackages);
   return ProfileChangeImpact(
     relaxed: SmartRulePolicy.relaxedPackages(was, next),
     raisedNow: SmartRulePolicy.raisedAt(was, next, now),
   );
 }
 
-/// Whether the ACTIVE overlay compiles identically in [a] and [b] (same
-/// native transport). Ids and names are not part of the transport.
-bool sameActiveOverlay(
+/// Whether [a] and [b] compile to the same native transport together with
+/// [rules] (manual overlay + activated overlays). Ids and names are not
+/// part of the transport.
+bool sameEnforcedPolicy(
+  List<SmartRule> rules,
   SecurityProfileSet a,
   SecurityProfileSet b,
   Set<String> protectedPackages,
-) {
-  final List<Map<String, Object?>> x = SmartRulePolicy.nativeTransport(
-    SecurityProfilePolicy.overlayRules(a.active, protectedPackages),
-  );
-  final List<Map<String, Object?>> y = SmartRulePolicy.nativeTransport(
-    SecurityProfilePolicy.overlayRules(b.active, protectedPackages),
-  );
-  return x.toString() == y.toString();
-}
+) =>
+    SecurityProfilePolicy.combinedTransport(rules, a, protectedPackages)
+        .toString() ==
+    SecurityProfilePolicy.combinedTransport(rules, b, protectedPackages)
+        .toString();
+
+/// Phase 11 / M3: the Smart Rules that reference profile [profileId].
+List<SmartRule> rulesReferencing(List<SmartRule> rules, String profileId) =>
+    <SmartRule>[
+      for (final SmartRule r in rules)
+        if (r.isProfileRule && r.profileId == profileId) r,
+    ];
 
 /// Applies [change]; see the library documentation for the contract.
 /// [navigator] must be captured by the caller before any await. [clock] is
@@ -244,10 +258,18 @@ Future<ProfileChangeOutcome> applyProfileChange({
   Future<Result<void>> commit() =>
       profiles.saveProfiles(requested, expected: expected);
 
+  // Phase 11 / M3: a profile referenced by any rule cannot be deleted.
+  for (final SecurityProfile p in expected.profiles) {
+    if (requested.byId(p.id) == null &&
+        rulesReferencing(savedRules, p.id).isNotEmpty) {
+      return const ProfileChangeOutcome(ProfileChangeStatus.inUse);
+    }
+  }
+
   // Inactive edits: the enforced state is identical. Native is never
   // contacted and no proof is created or consumed.
   if (requested.activeProfileId == expected.activeProfileId &&
-      sameActiveOverlay(expected, requested, protectedPackages)) {
+      sameEnforcedPolicy(savedRules, expected, requested, protectedPackages)) {
     return _written(await commit()) ?? //
         const ProfileChangeOutcome(ProfileChangeStatus.saved);
   }

@@ -72,6 +72,16 @@ active only after the native watcher confirms it; create, rename,
 duplicate, edit and delete custom profiles with unsaved-change guards) is
 implemented and simulated-tested; device QA joins the same combined round
 (`docs/regression.md`, Phase 11 / M2; not device verified, not release
+ready). Phase 11 / Milestone 3 (Smart Rules can apply a profile on a
+schedule, inside the existing Smart Rules editor; the scheduled profile is
+a temporary extra layer on top of the manually chosen profile, which never
+changes; the strictest layer always wins and ties never decide the level;
+starting or ending a scheduled profile needs nothing and happens at the
+next app opening, while turning off, deleting or weakening one needs the
+app's PIN/pattern; a rule whose profile is missing is treated as Critical;
+a profile used by a rule can't be deleted) is implemented and
+simulated-tested; device QA joins the same combined round
+(`docs/regression.md`, Phase 11 / M3; not device verified, not release
 ready) — production scaffold, architecture, navigation, design
 system, persistence, secure storage, full authentication with settings,
 installed-apps management, the complete capability/permission layer,

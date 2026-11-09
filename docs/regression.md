@@ -3168,3 +3168,101 @@ step-level Phase 6–10 sessions remain open release gates.
 
 **Status:** implemented and simulated-tested. It is **not device verified**
 and **not release ready**.
+
+# Phase 11 / M3 — Smart Rules profile activation, conflicts & security regression
+
+## Automated evidence (Phase 11 / M3)
+
+All results are **SIMULATED**: production rule, profile, bootstrap, gate,
+change and UI code over `AppContainer.inMemory`, with the static watcher
+(which mirrors the native `SmartRuleSnapshotResolver`) standing in for
+native. **No native code changed.** Proofs are minted through the real PIN
+screen. No device, real watcher, TalkBack or OEM behaviour is observed.
+
+| Suite | Tests | Covers |
+| --- | --- | --- |
+| `test/rules/smart_rule_profile_m3_model_test.dart` (new) | 21 | **Model:** valid ids are the five presets and `custom-` + 12 hex; invalid or missing references rejected at construction; a profile rule refuses targets (never enrols); a level rule can't carry a profile id; equality/copyWith. **Document v3:** exact profile-rule layout; mixed round trip lossless and byte-identical (idempotent); `"profile"` in v1/v2 rejected (no invented actions); 15 malformed profile rules rejected (bad or non-string ids, unknown action variants, targets, unknown keys, empty/out-of-range/unsorted/duplicate days) plus duplicate rule ids; v4+ unsupported, never read as v3; 200 rules accepted, 201 rules and 33 profile rules refused; over 256 KiB refused by encode and corrupt on decode. a v1 store (no action key) is read losslessly without rewriting and v1 → v3 is idempotent (final gate). **Repository:** torn write (unconfirmed read-back) rolled back to the original; over a limit → `writeFailed`, nothing written; a v4 document, an unknown profile id and a v2 profile action fail closed, every write refused, stored text byte-for-byte unchanged |
+| `test/profiles/profile_activation_m3_policy_test.dart` (new) | 23 | **Overlay:** Normal + scheduled Guest (Sat/Sun 22:00–06:00) is Critical only inside the window; the manual profile is never changed; unprotected apps never enrolled; Work + scheduled Kids raises only Kids' apps; Normal/Home/Work/empty Kids add nothing; disabled rules compile to nothing; without profile rules the combined transport equals M2; the transport carries the rule's days and window. **R2:** a dangling reference is Critical for every protected app inside its window. **§4:** overlapping activations — strictest wins in either order; equal strictness → attribution to the lowest stable id; layer ties saved > manual > direct > scheduled; direct vs scheduled both directions; never below a stricter saved level; expiry falls back to the next layer; diagnosis == enforcement over a weekly grid. **§7:** (B) expiry leaves the snapshot identical; (A) add/enable/widen relaxes nothing; (C) delete/disable/narrow/retarget weaker are reductions with exactly the relaxed apps; editing a referenced profile weaker is a reduction, an unreferenced one isn't; leaving Guest manually is not a reduction while an all-week Guest activation covers it; `raisedAt` |
+| `test/protection/profile_activation_m3_bound_test.dart` (new) | 13 | **BA-1** one combined v1 transport, native and the Dart floor agree; **BA-2** expiry needs no message, proof or flag; **BA-3** dangling → Critical in its window; **BA-4** profiles unreadable → R-A floor, nothing sent; **BA-5** restart sends the identical combined transport; **BA-6** (final gate) an overnight Sat/Sun 22:00–06:00 Guest follows the stored snapshot across midnight and the Sun → Mon roll-over in native and the Dart floor, and expiry at 06:00 sends nothing, flags nothing and grants no session, grace or authorization (a Critical unlock never becomes Standard grace), the manual profile stays Normal, and a restarted process enforces the same schedule. **BR-A1** deleting an activation rule asks the proof for exactly the relaxed apps, probe then ONE flag; **BR-A2** a proof for fewer apps is refused, nothing flagged; **BR-A3** a concurrent profile change → `conflict`; **BR-A4** a rule proof never releases a held profile reduction; **BR-A5** weakening a referenced profile is a profile reduction; **BR-A6** profile commit failing after native applied → raised back; **BR-A7** adding an activation is a raise: no proof, no flag |
+| `test/ui/profile_activation_m3_ui_test.dart` (new) | 15 | **UA-1** type selector → profile picker (no app list) → save, readable summary; **UA-2** no profile → error, nothing saved; **UA-3** profiles unavailable → retry state, save refused, retry loads; **UA-4** discard guard; **UA-5** TalkBack: choices are a mutually exclusive group with selected state. **UR-1** turning off an activation rule needs the PIN, cancel changes nothing; **UR-2** missing profile shown (pill, summary, editor) and can be disabled with the PIN; **UR-3** "Used by", delete refused; **UR-4** weakening an inactive referenced profile warns and needs the PIN; **UR-5** strengthening needs no PIN. **UR-6** a disabled rule whose profile is missing can't be turned back on (refused before any write, nothing sent). **UD-1** scheduled layer and effective level per app in Rule details; the protection line is labelled as the last check in this session. **UN-1** profile status is "Applied" only when the activation part of the last exchange equals the current compile (stale, missing and deleted-rule cases → unconfirmed). **UL-1** 320 dp, 2× text, light and dark: list, details, profile editor without overflow |
+| `test/profiles/profile_activation_parity_vectors_m3_test.dart` (new) | 39 | Shared fixture `activation_vectors.json` (7 scenarios, 23 hand-written cases, 1736 grid points, 10 transitions of which 5 relax): rules are valid v3 and round-trip; Dart sends exactly the fixture transport; hand-written and dense-grid levels (effective = diagnosis); per-transition relaxed packages |
+| `ProfileActivationParityVectorsTest.kt` (new, Kotlin JVM) | 6 | The same fixture through the UNCHANGED native `SmartRuleTransport`, `SmartRulePolicy` and `ProtectionStateStore`: fixture shape; hand-written cases (pure policy, store and restart); dense grid (store and restart); expiry needs no message; relaxing transitions held unflagged and applied when authorized; a failed durable write of a reduction never weakens |
+
+Changed existing suites (deliberate, follow from the gate):
+- Document version 3 (future = 4): `smart_rule_repository_test.dart` #26
+  and "newer version", `smart_rule_model_test.dart` #8/#9,
+  `smart_rule_policy_m2_test.dart` #14/#15,
+  `smart_rules_screen_m2_test.dart` #33.
+- `SmartRuleAction.values` loops now use `SmartRuleAction.levelActions`
+  (a profile rule needs a profile id): `smart_rule_conflict_m3_test.dart`
+  every-pair, `smart_rule_policy_m2_test.dart` #1/#13.
+
+**Totals (final, formatted code):**
+- **Full Flutter:** **+2049, all passed**, 139 files, no skips
+  (1940 + 109 new: 20 + 23 + 12 + 15 + 39). The final security gate
+  then added two focused tests (BA-6, v1 → v3 idempotence) to two M3
+  files, rerun green (+13, +21); total **2051** (test-only change, no
+  production change, so the whole suite was not repeated). Run as three chunks (core
+  74 files +1027; regression 27 files +446; UI 38 files +576) after
+  background test processes were repeatedly terminated by the environment
+  (no failure was ever reported before a kill; the first single run had
+  reached +1753 with 0 failures).
+- **Kotlin JVM (no native production change):** **OK (367)** = 361 + 6
+  new activation parity tests; Phase 10 rule parity **OK (9)**; profile
+  parity **OK (6)**; activation parity alone **OK (6)**.
+- **Static checks:** `dart analyze lib test` no issues; `dart format
+  --language-version=3.5` (0 changed; the sensitive `unprotect_gate.dart`
+  and `lock_challenge_host.dart` are not reformatted); `git diff --check`
+  clean (tracked and new files); both fixture generators `--check` current.
+- Failures found while building M3, all resolved:
+  - 10 expected failures in existing suites (document version 3;
+    `SmartRuleAction.values` loops), updated as listed above.
+  - **Production defects fixed:** an over-limit document escaped the
+    repository as an `ArgumentError` (now `writeFailed`, nothing written);
+    a rule whose profile is missing could not be turned off (now only an
+    enabled resulting rule with a missing profile is refused); TalkBack did
+    not announce the selected type/profile choice (now `MergeSemantics` +
+    a mutually exclusive `Semantics`); the Rule details protection line
+    read as a live status (now "… at the last check in this session").
+  - Test/harness issues: a torn-write fault that also corrupted the
+    rollback write (made one-shot); a wrong expected relaxed set; a lazily
+    built list at 320 dp / 2×; a semantics finder on the wrong node; a
+    non-existent `AppSecurityLevel.fromStorageId`.
+
+**Targeted mutation checks: 20/20 valid mutants killed, 1 equivalent, 0
+invalid** (`Phase11/run_p11m3_mutations.py`, outside the repo; one
+production behaviour per mutant; runs the 5 new suites plus
+`bound_relaxation_m2_test.dart` and the R-A start-up floor suite;
+unmutated baseline +135 green; restoration verified byte-identical). The
+first run killed **17/20**: T4 (outer `enabled` guard) is **equivalent**
+because `activationRulesFor` repeats the guard, and was replaced by T4b
+(both guards, killed); M1 (an enabled rule saved with a missing profile)
+and N1 (native status ignoring the activation part) exposed real test gaps,
+closed by UR-6 and UN-1, after which both were killed:
+- **compile / transport (5/5):** activations not sent; missing profile
+  fails open; window ignored; disabled rules compile (T4b); Dart floor
+  ignores activations;
+- **CR-2 reductions / isolation (3/3):** rule reduction judged on level
+  rules only; profile impact ignores activations; bound relaxed set ignores
+  activations;
+- **referential integrity (2/2):** referenced profile deletable; enabled
+  rule saved with a missing profile;
+- **conflicts / diagnostics (4/4):** scheduled tie last-write-wins; layer
+  ties to the later layer; scheduled layer dropped from the diagnosis;
+  native status ignores the activation part;
+- **schema / migration / limits (6/6):** profile action in v1/v2; v4 read;
+  rule-count limit; profile-id validation; size limit on read; profile rule
+  with targets.
+
+Not covered automatically: the real watcher on a device; real process
+death; TalkBack speech; OEM behaviour; wall-clock changes on a device.
+
+## Phase 11 / M3 device QA (not executed)
+
+Plan only: Session 1l (SP1–SP7) in the consolidated plan
+(`Phase10_M3/P6_P10_CONSOLIDATED_QA_PLAN.md`, outside the repo). Failure
+states are HARNESS only. F3, biometric, the unverified parts of E13 and Q6,
+and the step-level Phase 6–11 sessions remain open release gates.
+
+**Status:** implemented and simulated-tested. It is **not device verified**
+and **not release ready**.

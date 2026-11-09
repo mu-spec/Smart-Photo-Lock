@@ -294,7 +294,9 @@ void main() {
           ).toJson()));
     });
 
-    test('document v2: exact format, order kept, round trip', () {
+    test(
+        'document v3 (level rules keep the v2 layout): exact format, order '
+        'kept, round trip', () {
       final List<SmartRule> rules = <SmartRule>[
         _rule(id: 'b'),
         _rule(id: 'a', time: const SmartRuleTime.allDay(), days: <int>[1]),
@@ -302,7 +304,7 @@ void main() {
       final String encoded = SmartRuleDocument.encode(rules);
       expect(
         encoded,
-        '{"schema":"smart_rules","version":2,"rules":['
+        '{"schema":"smart_rules","version":3,"rules":['
         '{"id":"b","name":"Work hours","enabled":true,'
         '"targets":["com.example.mail"],"days":[1,2,3,4,5],'
         '"time":{"type":"window","start":540,"end":1020},'
@@ -327,12 +329,12 @@ void main() {
   group('9. schema versions', () {
     test('a newer version is reported as unsupported, with the version', () {
       expect(
-        () => SmartRuleDocument.decode(_doc(<Object?>[], version: 3)),
+        () => SmartRuleDocument.decode(_doc(<Object?>[], version: 4)),
         throwsA(
           _docError(SmartRuleDocumentProblem.unsupportedVersion).having(
             (SmartRuleDocumentException e) => e.version,
             'version',
-            3,
+            4,
           ),
         ),
       );

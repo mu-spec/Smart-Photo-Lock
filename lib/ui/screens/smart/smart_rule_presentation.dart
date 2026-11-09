@@ -136,6 +136,9 @@ abstract final class SmartRuleText {
           'Critical during this time: PIN or pattern each time you return.',
         SmartRuleAction.unlocked =>
           'Not available. Smart Rules can\'t unlock apps or lower protection.',
+        SmartRuleAction.applyProfile =>
+          'Adds a profile\'s extra protection during this time. Your '
+              'selected profile stays as it is; nothing is ever lowered.',
       };
 
   /// Short level summary for the list.
@@ -144,7 +147,40 @@ abstract final class SmartRuleText {
         SmartRuleAction.sensitive => 'At least Sensitive',
         SmartRuleAction.critical => 'Critical',
         SmartRuleAction.unlocked => 'Unlocked · not available, no effect',
+        SmartRuleAction.applyProfile => 'Applies a profile',
       };
+
+  // ---- Phase 11 / M3: "Apply profile" rules ------------------------------
+
+  static const String profileTitle = 'Profile to apply';
+  static const String profileRequired = 'Choose a profile.';
+  static const String profileMissing =
+      'The profile this rule used no longer exists. Until you choose another '
+      'profile or delete the rule, every protected app is Critical while it '
+      'applies.';
+  static const String profilesUnavailable =
+      'Profiles could not be loaded. Try again.';
+  static const String profileAppsNote =
+      'The profile decides which protected apps get extra protection. '
+      'Unprotected apps are never added.';
+  static const String profileNoEffect =
+      'Normal adds no protection, so this rule has no effect.';
+
+  /// The apps line of a profile rule in the list.
+  static String profileApps(String? profileName) => profileName == null
+      ? 'Apps: profile missing'
+      : 'Apps from the $profileName profile';
+
+  /// The action line of a profile rule in the list.
+  static String profileSummary(String? profileName) => profileName == null
+      ? 'Profile missing · treated as Critical'
+      : 'Applies $profileName · in addition to your selected profile';
+
+  /// The "scheduled now" line of the profile card (calculated, not a native
+  /// confirmation).
+  static String scheduledNow(List<String> names) =>
+      'Scheduled now: ${names.join(', ')}, in addition to your selected '
+      'profile. Applies the next time you open or return to an app.';
 
   /// Why [action] does nothing for an app whose saved level is [baseline],
   /// or null when it can raise it.

@@ -5,6 +5,7 @@ import '../../../data/models/app_security_level.dart';
 import '../../../data/repositories/security_profile_repository.dart';
 import '../../../profiles/security_profile.dart';
 import '../../../profiles/security_profile_policy.dart';
+import '../../../rules/smart_rule.dart';
 import '../../../rules/smart_rule_policy.dart';
 import '../../../services/watcher_service.dart';
 import '../apps/unprotect_gate.dart';
@@ -33,10 +34,15 @@ enum ProfileNativeStatus {
 
 /// Derives [ProfileNativeStatus] from the saved set and the last exchange.
 /// "Applied" is never derived from Dart state alone.
+///
+/// Phase 11 / M3: with [rules], the overlays of "Apply profile" rules last
+/// sent must also equal what [saved] and [rules] compile to now (an edit of
+/// a referenced profile is "Applied" only once THAT snapshot was applied).
 ProfileNativeStatus profileNativeStatus({
   required SecurityProfileSet? saved,
   required SmartRuleNativeRecord? record,
   required Set<String> protectedPackages,
+  List<SmartRule>? rules,
 }) {
   if (saved == null) return ProfileNativeStatus.unavailable;
   if (record == null) return ProfileNativeStatus.notChecked;
@@ -46,6 +52,17 @@ ProfileNativeStatus profileNativeStatus({
   final List<Map<String, Object?>>? sent = record.sentProfileOverlay;
   if (record.failed || sent == null || sent.toString() != expected.toString()) {
     return ProfileNativeStatus.unconfirmed;
+  }
+  if (rules != null) {
+    final List<Map<String, Object?>> expectedActivation =
+        SmartRulePolicy.nativeTransport(
+      SecurityProfilePolicy.activationRules(rules, saved, protectedPackages),
+    );
+    final List<Map<String, Object?>> sentActivation =
+        record.sentActivationOverlay ?? const <Map<String, Object?>>[];
+    if (sentActivation.toString() != expectedActivation.toString()) {
+      return ProfileNativeStatus.unconfirmed;
+    }
   }
   return switch (record.status) {
     SmartRuleSyncStatus.applied => ProfileNativeStatus.applied,
@@ -62,6 +79,18 @@ abstract final class ProfileText {
       'A profile adds extra protection on top of your saved app levels and '
       'Smart Rules. It never removes protection.';
   static const String change = 'Change profile';
+
+  /// Phase 11 / M3: delete refused while a Smart Rule references the profile.
+  static const String inUse =
+      'A Smart Rule uses this profile. Edit or delete that rule first. '
+      'Nothing was changed.';
+
+  /// Phase 11 / M3: editing a profile that scheduled rules apply.
+  static String usedByRules(int count) => count == 1
+      ? 'Used by 1 Smart Rule. Changes apply whenever that rule applies; '
+          'lowering protection needs your PIN or pattern.'
+      : 'Used by $count Smart Rules. Changes apply whenever those rules '
+          'apply; lowering protection needs your PIN or pattern.';
   static const String create = 'New profile';
   static const String loading = 'Loading profiles';
   static const String retry = 'Retry';
@@ -190,6 +219,7 @@ abstract final class ProfileText {
         ProfileChangeStatus.failed =>
           "Couldn't save the profile change. Nothing was changed.",
         ProfileChangeStatus.invalid => 'Check the profile and try again.',
+        ProfileChangeStatus.inUse => inUse,
         ProfileChangeStatus.blocked =>
           "Couldn't lower protection now: stricter earlier protection is "
               'still in force. Your profile was not changed.',

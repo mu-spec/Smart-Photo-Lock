@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../../../data/models/app_security_level.dart';
 import '../../../data/models/protected_app.dart';
 import '../../../design_system/design_system.dart';
+import '../../../profiles/security_profile.dart';
+import '../../../profiles/security_profile_policy.dart';
 import '../../../rules/smart_rule.dart';
 import '../../../rules/smart_rule_diagnostics.dart';
 import '../../../rules/smart_rule_evaluator.dart';
@@ -18,12 +20,17 @@ abstract final class SmartRuleDetailsText {
       'Calculated from your saved rules. This is not a confirmation from '
       'protection.';
   static const String protectionLabel = 'Protection status';
+  // Phase 11 / M3 (§9): this is the LAST exchange with protection in this
+  // session, never a live reading, and is labelled as such.
   static const String nativeConfirmed =
-      'Confirmed: protection is using these saved rules.';
+      'Confirmed at the last check in this session: protection accepted '
+      'these saved rules.';
   static const String nativeHeld =
-      'Not confirmed: earlier, stricter rule settings still apply.';
+      'Not confirmed at the last check in this session: earlier, stricter '
+      'rule settings still apply.';
   static const String nativeNotConfirmed =
-      'Not confirmed: protection hasn\'t confirmed these saved rules.';
+      'Not confirmed at the last check in this session: protection hasn\'t '
+      'confirmed these saved rules.';
   static const String nativeNotReported =
       'Not checked yet: protection hasn\'t reported on your rules since the '
       'app started.';
@@ -49,11 +56,37 @@ abstract final class SmartRuleDetailsText {
       'Calculated level now: ${level.label}';
   static String decidedByRule(String name) => 'Decided by: $name';
 
+  // ---- Phase 11 / M3: protection layers (calculated) ---------------------
+  static const String layersLabel = 'Protection layers (calculated)';
+  static String manualLayer(String profile, AppSecurityLevel? level) =>
+      'Selected profile ($profile): ${level?.label ?? 'no extra protection'}';
+  static String directLayer(String? rule, AppSecurityLevel? level) =>
+      level == null || rule == null
+          ? 'Level rules now: none'
+          : 'Level rules now: ${level.label} ($rule)';
+  static String scheduledLayer(
+    String? rule,
+    String? profile,
+    AppSecurityLevel? level,
+  ) =>
+      level == null || rule == null
+          ? 'Scheduled profiles now: none'
+          : 'Scheduled profile now: ${profile ?? 'missing profile'} via '
+              '$rule: ${level.label}';
+  static String effective(AppSecurityLevel level, ProtectionLayer layer) =>
+      'Strictest now: ${level.label} · from ${switch (layer) {
+        ProtectionLayer.savedLevel => 'saved level',
+        ProtectionLayer.manualProfile => 'selected profile',
+        ProtectionLayer.directRule => 'a level rule',
+        ProtectionLayer.scheduledProfile => 'a scheduled profile',
+      }}';
+
   static String requested(SmartRuleAction action) => switch (action) {
         SmartRuleAction.critical => 'Critical',
         SmartRuleAction.sensitive => 'Sensitive',
         SmartRuleAction.standard => 'Standard',
         SmartRuleAction.unlocked => 'Unlocked (not available)',
+        SmartRuleAction.applyProfile => 'Applies a profile',
       };
 
   /// Why a rule has (or has no) effect, for [d]'s app.
@@ -116,7 +149,12 @@ class SmartRuleDetails extends StatefulWidget {
     required this.engineState,
     required this.nativeState,
     this.clock,
+    this.profiles,
   });
+
+  /// Phase 11 / M3: the saved profiles (enables the per-layer breakdown:
+  /// saved level, selected profile, level rules, scheduled profiles).
+  final SecurityProfileSet? profiles;
 
   /// The saved rules as read by the screen.
   final List<SmartRule> rules;
@@ -199,8 +237,18 @@ class _SmartRuleDetailsState extends State<SmartRuleDetails> {
       for (final SmartRule r in widget.rules) r.id: r,
     };
     String nameOf(String id) => byId[id]?.name ?? id;
+    // Phase 11 / M3: profile rules (and the selected profile) can affect
+    // every protected app, so all of them are explained then.
+    final SecurityProfileSet? profiles = widget.profiles;
+    final bool profileLayers = profiles != null &&
+        (widget.rules.any((SmartRule r) => r.isProfileRule) ||
+            SecurityProfilePolicy.overlayRules(
+              profiles.active,
+              widget.apps.keys.toSet(),
+            ).isNotEmpty);
     final List<String> packages = <String>{
       for (final SmartRule r in widget.rules) ...r.targetPackages,
+      if (profileLayers) ...widget.apps.keys,
     }.toList()
       ..sort((String a, String b) {
         final String la = widget.apps[a]?.label ?? a;
@@ -257,6 +305,59 @@ class _SmartRuleDetailsState extends State<SmartRuleDetails> {
     ];
   }
 
+  /// Phase 11 / M3: the per-layer explanation (calculated, not native).
+  List<Widget> _layers(
+    BuildContext context,
+    String pkg,
+    AppSecurityLevel saved,
+    DateTime at,
+    String Function(String) nameOf,
+    TextStyle? secondary,
+  ) {
+    final SecurityProfileSet set = widget.profiles!;
+    final ProtectionLayerDiagnosis d = ProtectionLayerDiagnostics.diagnose(
+      rules: widget.rules,
+      profiles: set,
+      packageName: pkg,
+      savedLevel: saved,
+      protectedPackages: widget.apps.keys.toSet(),
+      at: at,
+    );
+    return <Widget>[
+      const SizedBox(height: DsSpacing.xxs),
+      Text(
+        SmartRuleDetailsText.layersLabel,
+        style: Theme.of(context).textTheme.labelLarge,
+      ),
+      Text(
+        SmartRuleDetailsText.manualLayer(set.active.name, d.manualLevel),
+        style: secondary,
+      ),
+      Text(
+        SmartRuleDetailsText.directLayer(
+          d.directRuleId == null ? null : nameOf(d.directRuleId!),
+          d.directLevel,
+        ),
+        style: secondary,
+      ),
+      Text(
+        SmartRuleDetailsText.scheduledLayer(
+          d.scheduledRuleId == null ? null : nameOf(d.scheduledRuleId!),
+          d.scheduledProfileId == null
+              ? null
+              : set.byId(d.scheduledProfileId!)?.name,
+          d.scheduledLevel,
+        ),
+        key: Key('smart_rule_details_scheduled_$pkg'),
+        style: secondary,
+      ),
+      Text(
+        SmartRuleDetailsText.effective(d.effectiveLevel!, d.decidedBy!),
+        key: Key('smart_rule_details_effective_$pkg'),
+      ),
+    ];
+  }
+
   Widget _appBlock(
     BuildContext context,
     String pkg,
@@ -280,6 +381,7 @@ class _SmartRuleDetailsState extends State<SmartRuleDetails> {
     ];
     final AppSecurityLevel? saved = d.savedLevel;
     final AppSecurityLevel? calculated = d.calculatedLevel;
+    // (Phase 11 / M3 layers follow the rule-only lines below.)
     return Padding(
       key: Key('smart_rule_details_app_$pkg'),
       padding: const EdgeInsets.only(top: DsSpacing.sm),
@@ -308,6 +410,8 @@ class _SmartRuleDetailsState extends State<SmartRuleDetails> {
               key: Key('smart_rule_details_decided_$pkg'),
             ),
           ],
+          if (widget.profiles != null && saved != null)
+            ..._layers(context, pkg, saved, at, nameOf, secondary),
           for (final SmartRuleDiagnosticEntry e in shown)
             Padding(
               padding: const EdgeInsets.only(top: DsSpacing.xxs),

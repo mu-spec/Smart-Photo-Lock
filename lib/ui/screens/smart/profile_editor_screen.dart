@@ -38,6 +38,7 @@ class ProfileEditorScreen extends StatefulWidget {
     required this.protectedApps,
     this.profile,
     this.duplicateOf,
+    this.referencingRules = 0,
     this.clock,
   });
 
@@ -54,6 +55,10 @@ class ProfileEditorScreen extends StatefulWidget {
 
   /// Creates a new custom profile pre-filled from this one.
   final SecurityProfile? duplicateOf;
+
+  /// Phase 11 / M3: how many Smart Rules apply this profile (a warning is
+  /// shown; the security decision is made when saving).
+  final int referencingRules;
 
   final DateTime Function()? clock;
 
@@ -281,6 +286,14 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
                     style: Theme.of(context).textTheme.headlineSmall,
                   ),
                 ),
+              if (widget.referencingRules > 0) ...<Widget>[
+                const SizedBox(height: DsSpacing.sm),
+                DsCard(
+                  key: const Key('profile_editor_used_by'),
+                  color: context.dsColors.warning.withValues(alpha: 0.10),
+                  child: Text(ProfileText.usedByRules(widget.referencingRules)),
+                ),
+              ],
               const SizedBox(height: DsSpacing.md),
               Text(
                 ProfileText.allLabel,

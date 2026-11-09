@@ -153,14 +153,14 @@ void main() {
       expect(await readFresh(), <SmartRule>[_rule('b'), _rule('a')]);
     });
 
-    test('the stored value is the versioned v2 document under one key',
+    test('the stored value is the versioned v3 document under one key',
         () async {
       final (SmartRuleRepositoryImpl repo, _FileDb db) = open();
       await repo.saveRule(_rule('a'));
       final Map<String, dynamic> doc =
           jsonDecode(db.rawValue()!) as Map<String, dynamic>;
       expect(doc['schema'], 'smart_rules');
-      expect(doc['version'], 2);
+      expect(doc['version'], 3);
       expect((doc['rules'] as List<dynamic>).length, 1);
       expect(db.setKeys.toSet(), <String>{_key});
     });
@@ -366,7 +366,7 @@ void main() {
       ),
       (
         'a newer schema version',
-        '{"schema":"smart_rules","version":3,"rules":[],"actions":{}}',
+        '{"schema":"smart_rules","version":4,"rules":[],"actions":{}}',
         _K.unsupportedVersion,
       ),
     ]) {

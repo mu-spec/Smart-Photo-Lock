@@ -86,6 +86,9 @@ abstract final class SmartRuleConflictPolicy {
         SmartRuleAction.sensitive => 2,
         SmartRuleAction.standard => 1,
         SmartRuleAction.unlocked => 0,
+        // Phase 11 / M3: never matches an app directly (no targets); its
+        // profile is compiled into ordinary raising rules instead.
+        SmartRuleAction.applyProfile => -1,
       };
 
   /// Resolves the rules for which [matches] holds (the caller's evaluator

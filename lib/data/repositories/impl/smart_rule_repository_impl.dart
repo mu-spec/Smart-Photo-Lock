@@ -161,7 +161,18 @@ class SmartRuleRepositoryImpl implements SmartRuleRepository {
   }
 
   Future<void> _write(_Stored before, List<SmartRule> rules) async {
-    final String encoded = SmartRuleDocument.encode(rules);
+    final String encoded;
+    try {
+      encoded = SmartRuleDocument.encode(rules);
+    } on ArgumentError catch (e) {
+      // Phase 11 / M3: over a document limit (or duplicate ids). Nothing
+      // is written; the stored document stays byte-for-byte.
+      throw SmartRuleStoreException(
+        SmartRuleStoreErrorKind.writeFailed,
+        'The rule change was not saved: ${e.message}',
+        e,
+      );
+    }
     Object? failure;
     try {
       await _database.setSetting(storageKey, encoded);

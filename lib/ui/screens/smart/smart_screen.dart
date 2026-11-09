@@ -5,6 +5,7 @@ import '../../../data/models/protected_app.dart';
 import '../../../data/repositories/smart_rule_repository.dart';
 import '../../../design_system/design_system.dart';
 import '../../../profiles/security_profile.dart';
+import '../../../profiles/security_profile_policy.dart';
 import '../../../rules/smart_rule.dart';
 import '../../../rules/smart_rule_diagnostics.dart';
 import '../../../services/watcher_service.dart';
@@ -161,6 +162,8 @@ class _SmartScreenState extends State<SmartScreen> {
       change: SmartRuleToggle(rule: rule, enabled: enabled),
       navigator: navigator,
       repository: container.smartRules,
+      profiles: container.securityProfiles,
+      protectedApps: container.protectedApps,
       credentials: container.auth,
       accessController: container.accessController,
       bootstrap: container.protectionBootstrap,
@@ -336,6 +339,7 @@ class _SmartScreenState extends State<SmartScreen> {
           rules: rules,
           apps: _apps,
           clock: widget.clock,
+          profiles: _profiles,
           engineState: SmartRuleDiagnostics.engineStateFor(
             container.protectionBootstrap.ruleCache,
             rules,
@@ -391,9 +395,20 @@ class _SmartScreenState extends State<SmartScreen> {
           saved: set,
           record: AppScope.read(context)?.protectionBootstrap.lastRuleExchange,
           protectedPackages: _apps.keys.toSet(),
+          rules: _rules,
         ),
       )}';
     }
+    // Phase 11 / M3: profiles activated right now by "Apply profile" rules
+    // (calculated from the saved rules; native applies them at the next
+    // foreground decision).
+    final DateTime now = (widget.clock ?? DateTime.now)();
+    final List<String> scheduled = <String>[
+      if (set != null)
+        for (final SmartRule r in _rules ?? const <SmartRule>[])
+          if (profileRuleMatchesAt(r, now))
+            set.byId(r.profileId!)?.name ?? 'Missing profile (Critical)',
+    ];
     return DsCard(
       key: const Key('smart_profile_card'),
       child: Column(
@@ -403,6 +418,14 @@ class _SmartScreenState extends State<SmartScreen> {
           const SizedBox(height: DsSpacing.xxs),
           Text(detail,
               key: const Key('smart_profile_detail'), style: secondary),
+          if (scheduled.isNotEmpty) ...<Widget>[
+            const SizedBox(height: DsSpacing.xxs),
+            Text(
+              SmartRuleText.scheduledNow(scheduled),
+              key: const Key('smart_profile_scheduled'),
+              style: secondary,
+            ),
+          ],
           Align(
             alignment: AlignmentDirectional.centerStart,
             child: TextButton(
@@ -434,8 +457,21 @@ class _SmartScreenState extends State<SmartScreen> {
       );
 
   Widget _ruleCard(BuildContext context, SmartRule rule) {
-    final String apps =
-        rule.targetPackages.map((String p) => _apps[p]?.label ?? p).join(', ');
+    // Phase 11 / M3: a profile rule shows its profile (or that it is
+    // missing, which fails closed) instead of an app list.
+    final SecurityProfileSet? set = _profiles;
+    final String? profileName =
+        rule.isProfileRule ? set?.byId(rule.profileId!)?.name : null;
+    final bool missingProfile = rule.isProfileRule &&
+        set != null &&
+        SecurityProfilePolicy.referencesMissingProfile(rule, set);
+    final String apps = rule.isProfileRule
+        ? (set == null
+            ? SmartRuleText.profilesUnavailable
+            : SmartRuleText.profileApps(profileName))
+        : rule.targetPackages
+            .map((String p) => _apps[p]?.label ?? p)
+            .join(', ');
     final bool busy = _busy.contains(rule.id);
     final TextStyle? secondary =
         Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -462,12 +498,28 @@ class _SmartScreenState extends State<SmartScreen> {
                   '${SmartRuleText.time(rule.time)}',
                   style: secondary,
                 ),
-                Text(SmartRuleText.actionSummary(rule.action),
+                Text(
+                    rule.isProfileRule && set != null
+                        ? SmartRuleText.profileSummary(profileName)
+                        : SmartRuleText.actionSummary(rule.action),
+                    key: Key('smart_rule_summary_${rule.id}'),
                     style: secondary),
                 const SizedBox(height: DsSpacing.xs),
-                DsStatusPill(
-                  label: rule.enabled ? 'On' : 'Off',
-                  tone: rule.enabled ? DsTone.info : DsTone.neutral,
+                Wrap(
+                  spacing: DsSpacing.xs,
+                  runSpacing: DsSpacing.xs,
+                  children: <Widget>[
+                    DsStatusPill(
+                      label: rule.enabled ? 'On' : 'Off',
+                      tone: rule.enabled ? DsTone.info : DsTone.neutral,
+                    ),
+                    if (missingProfile)
+                      DsStatusPill(
+                        key: Key('smart_rule_missing_${rule.id}'),
+                        label: 'Profile missing',
+                        tone: DsTone.warning,
+                      ),
+                  ],
                 ),
               ],
             ),

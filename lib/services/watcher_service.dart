@@ -212,6 +212,7 @@ final class SmartRuleNativeRecord {
     required this.sentRules,
     this.failed = false,
     this.sentProfileOverlay,
+    this.sentActivationOverlay,
   });
 
   /// Native's treatment of the rules ([SmartRuleSyncStatus.unknown] for a
@@ -228,6 +229,12 @@ final class SmartRuleNativeRecord {
   /// transport (`SecurityProfilePolicy.overlayRules`, canonical form); empty
   /// for Normal, null when no transport was sent. Diagnostics only.
   final List<Map<String, Object?>>? sentProfileOverlay;
+
+  /// Phase 11 / M3: the overlays of "Apply profile" rules sent in the SAME
+  /// transport (`SecurityProfilePolicy.activationRules`, canonical form,
+  /// with each rule's days and time); empty when there are none, null when
+  /// no transport was sent. Diagnostics only.
+  final List<Map<String, Object?>>? sentActivationOverlay;
 
   @override
   String toString() => 'SmartRuleNativeRecord(${status.name}, '
