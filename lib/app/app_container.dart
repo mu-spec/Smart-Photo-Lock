@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:shared_preferences/shared_preferences.dart';
@@ -37,6 +38,10 @@ import '../security/credentials/credential_hash_policy.dart';
 import '../security/credentials/credential_state_machine.dart';
 import '../security/credentials/impl/default_credential_manager.dart';
 import '../security/intruder/intruder_failure_log_store.dart';
+import '../security/intruder/intruder_defense_coordinator.dart';
+import '../security/intruder/intruder_defense_settings.dart';
+import '../security/intruder/intruder_evidence_service.dart';
+import '../security/intruder/intruder_evidence_store.dart';
 import '../security/intruder/intruder_monitor.dart';
 import '../security/credentials/impl/default_pin_credential_store.dart';
 import '../security/storage/impl/flutter_secure_secret_store.dart';
@@ -47,10 +52,12 @@ import '../services/biometric_service.dart';
 import '../services/impl/local_auth_biometric_service.dart';
 import '../services/impl/method_channel_accessibility_lock_service.dart';
 import '../services/impl/method_channel_installed_apps_service.dart';
+import '../services/impl/method_channel_intruder_evidence_service.dart';
 import '../services/impl/method_channel_overlay_lock_service.dart';
 import '../services/impl/method_channel_screen_state_service.dart';
 import '../services/impl/static_accessibility_lock_service.dart';
 import '../services/impl/static_installed_apps_service.dart';
+import '../services/impl/static_intruder_evidence_service.dart';
 import '../services/impl/static_overlay_lock_service.dart';
 import '../services/impl/static_screen_state_service.dart';
 import '../services/impl/static_watcher_service.dart';
@@ -82,6 +89,7 @@ class AppContainer {
     required WatcherService watcherService,
     required this.capabilityMonitor,
     BiometricService? biometricsOverride,
+    IntruderEvidenceService? intruderEvidenceOverride,
     PreferencesStore? preferencesOverride,
     DateTime Function()? accessClock,
   })  : _keyValueStore = keyValueStore,
@@ -139,6 +147,21 @@ class AppContainer {
     intruderMonitor = IntruderMonitor(
       store: IntruderFailureLogStore(_database, cipher: settingsCipher),
     );
+    // Phase 12 / M2: owner opt-in evidence + alarm. Observe-only listener
+    // on the monitor (called after an event is persisted); it never sees
+    // the credential manager or any enforcement component.
+    intruderEvidenceService =
+        intruderEvidenceOverride ?? MethodChannelIntruderEvidenceService();
+    intruderDefenseSettings =
+        IntruderDefenseSettingsStore(_database, settingsCipher);
+    intruderEvidence = IntruderEvidenceStore(_database, settingsCipher);
+    intruderDefense = IntruderDefenseCoordinator(
+      settings: intruderDefenseSettings,
+      evidence: intruderEvidence,
+      service: intruderEvidenceService,
+    );
+    intruderMonitor.listener = intruderDefense;
+    unawaited(intruderEvidence.sweepOrphans().catchError((Object _) => 0));
     auth = DefaultCredentialManager(
       settings: securitySettings,
       // Production PIN storage: strict hash policy (PBKDF2 work factor,
@@ -277,6 +300,8 @@ class AppContainer {
     SecretStore? secretStore,
     // Phase 9 / M3: share (or fail) the preferences tier the same way.
     KeyValueStore? keyValueStore,
+    // Phase 12 / M2: fake camera/alarm platform (default: no camera).
+    IntruderEvidenceService? intruderEvidence,
   }) {
     final InstalledAppsService installedAppsService =
         StaticInstalledAppsService(
@@ -302,6 +327,8 @@ class AppContainer {
       overlayService: overlayService,
       screenStateService: StaticScreenStateService(),
       watcherService: StaticWatcherService(),
+      intruderEvidenceOverride:
+          intruderEvidence ?? StaticIntruderEvidenceService(),
       capabilityMonitor: CapabilityMonitor(
         hasUsageAccess: installedAppsService.hasUsageAccess,
         isAccessibilityEnabled: accessibilityService.isServiceEnabled,
@@ -358,6 +385,13 @@ class AppContainer {
   /// failure run (encrypted, bounded, local only). Observe-only: nothing in
   /// enforcement reads it.
   late final IntruderMonitor intruderMonitor;
+
+  /// Phase 12 / M2: platform camera/alarm boundary, owner settings,
+  /// encrypted evidence store and the observe-only coordinator.
+  late final IntruderEvidenceService intruderEvidenceService;
+  late final IntruderDefenseSettingsStore intruderDefenseSettings;
+  late final IntruderEvidenceStore intruderEvidence;
+  late final IntruderDefenseCoordinator intruderDefense;
 
   /// Keeps the native reboot/process-death bootstrap state synchronized with
   /// the encrypted credential state and protected-app repository.

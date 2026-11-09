@@ -85,6 +85,8 @@ class MainActivity : FlutterFragmentActivity() {
 
     override fun onPause() {
         ProtectionRuntime.activityResumed = false
+        // Phase 12 / M2: the camera and alarm never outlive the foreground.
+        IntruderEvidenceChannel.onActivityPaused()
         // H-1 F1: confirms a leave reported just before this pause.
         WatcherService.onChallengeActivityPaused(this)
         pendingPackageAtPause = ProtectionStateStore.pendingChallenge(this)?.packageName
@@ -93,6 +95,7 @@ class MainActivity : FlutterFragmentActivity() {
 
     override fun onDestroy() {
         ProtectionRuntime.activityResumed = false
+        IntruderEvidenceChannel.onActivityDestroyed()
         ProtectionRuntime.activityInMultiWindow = false
         // Phase 6 / M3 (R-M3-2): the engine's screen-off revocation goes away
         // with this Activity. Without a running watcher receiver no session
@@ -165,6 +168,19 @@ class MainActivity : FlutterFragmentActivity() {
         OverlayStatusChannel.register(flutterEngine, this)
         ScreenStateChannel.register(flutterEngine, this)
         WatcherChannel.register(flutterEngine, this)
+        // Phase 12 / M2: owner-opted-in intruder evidence + alarm.
+        IntruderEvidenceChannel.register(flutterEngine, this)
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        if (IntruderEvidenceChannel.onRequestPermissionsResult(this, requestCode, grantResults)) {
+            return
+        }
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
     }
 
     private fun acceptRecoveryIntent(intent: Intent?, callback: String) {

@@ -12,6 +12,8 @@ import '../../../security/credentials/auth_type.dart';
 import '../../../security/credentials/biometric_options.dart';
 import '../../../security/credentials/credential_manager.dart';
 import '../../../security/credentials/credential_state.dart';
+import '../../../security/intruder/intruder_defense_settings.dart';
+import '../../../security/intruder/intruder_evidence_service.dart';
 import '../../../services/accessibility_lock_service.dart';
 import '../../../services/capability_monitor.dart';
 import '../../../services/installed_apps_service.dart';
@@ -90,6 +92,24 @@ class SecurityScreen extends StatefulWidget {
   static const String patternChangedMessage = 'Pattern changed ✓';
   static const String couldNotSaveMessage = 'Could not save the setting.';
 
+  // Phase 12 / M2: owner-only intruder defense controls.
+  static const String intruderPhotoTitle = 'Intruder photo';
+  static const String intruderPhotoSubtitle =
+      'After repeated wrong PINs or patterns on a locked app, take one '
+      'front-camera photo while the lock screen is open. Stored encrypted '
+      'on this device only.';
+  static const String intruderAlarmTitle = 'Intruder alarm';
+  static const String intruderAlarmSubtitle =
+      'Sound a 30-second alert after repeated wrong attempts. Respects Do '
+      'Not Disturb and silent mode.';
+  static const String intruderNotChangedMessage =
+      'Not changed. Verify with your app PIN or pattern to change this.';
+  static const String intruderCameraDeniedMessage =
+      'Camera permission is required for intruder photos. Nothing was '
+      'enabled.';
+  static const String intruderUnavailableMessage =
+      'Intruder protection settings could not be read on this device.';
+
   @override
   State<SecurityScreen> createState() => _SecurityScreenState();
 }
@@ -104,6 +124,12 @@ class _SecurityScreenState extends State<SecurityScreen>
   bool _hasPin = false;
   bool _hasPattern = false;
   bool _biometricEnrolled = false;
+
+  /// Phase 12 / M2 intruder defense switches (false until loaded).
+  bool _intruderPhoto = false;
+  bool _intruderAlarm = false;
+  bool _intruderWritable = false;
+  bool _intruderBusy = false;
 
   /// H-3 F4: true while a biometric enable/disable is in progress, so a
   /// duplicate tap cannot start a second (stale) operation.
@@ -213,6 +239,7 @@ class _SecurityScreenState extends State<SecurityScreen>
       return; // no container in scope (pure widget tests)
     }
     final CredentialManager auth = container.auth;
+    unawaited(_loadIntruderSettings(container));
     // Phase 4F repair: resolve the shared capability bridges BEFORE any
     // await — BuildContext must never be read across an async gap.
     final InstalledAppsService installedApps = container.installedAppsService;
@@ -412,6 +439,112 @@ class _SecurityScreenState extends State<SecurityScreen>
   }
 
   // -- toggles --------------------------------------------------------------
+
+  Future<void> _loadIntruderSettings(AppContainer container) async {
+    final IntruderSettingsRead read;
+    try {
+      read = await container.intruderDefenseSettings.read();
+    } catch (_) {
+      return;
+    }
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _intruderPhoto = read.settings.evidenceEnabled;
+      _intruderAlarm = read.settings.alarmEnabled;
+      _intruderWritable = read.writable;
+    });
+  }
+
+  /// Phase 12 / M2: change an intruder option. BOTH directions require the
+  /// primary app credential (H-3 F4 verification) plus a fresh re-check;
+  /// enabling the photo additionally requires the CAMERA permission, which
+  /// is requested only here, after the owner was verified. Nothing is
+  /// saved unless every step succeeds.
+  Future<void> _setIntruderOption({
+    required bool photo,
+    required bool value,
+  }) async {
+    final AppContainer? container = AppScope.read(context);
+    if (container == null || _intruderBusy) {
+      return;
+    }
+    setState(() => _intruderBusy = true);
+    try {
+      final CredentialManager auth = container.auth;
+      final AppCredentialVerificationResult verification =
+          await verifyPrimaryAppCredential(Navigator.of(context), auth);
+      if (!mounted) {
+        return;
+      }
+      if (!verification.isVerified) {
+        _showBiometricMessage(SecurityScreen.intruderNotChangedMessage);
+        return;
+      }
+      final CredentialState? fresh = (await auth.status()).valueOrNull;
+      if (!mounted) {
+        return;
+      }
+      final AuthType verifiedMethod = verification.method!;
+      final DateTime? lockedUntil = fresh?.lockedOutUntil;
+      if (fresh == null ||
+          fresh.primary != verifiedMethod ||
+          !fresh.hasEnrolled(verifiedMethod) ||
+          (lockedUntil != null && DateTime.now().isBefore(lockedUntil))) {
+        _showBiometricMessage(SecurityScreen.intruderNotChangedMessage);
+        return;
+      }
+      if (photo && value) {
+        final IntruderEvidenceService camera =
+            container.intruderEvidenceService;
+        CameraPermissionState permission = await camera.cameraPermission();
+        if (permission != CameraPermissionState.granted) {
+          permission = await camera.requestCameraPermission();
+        }
+        if (!mounted) {
+          return;
+        }
+        if (permission != CameraPermissionState.granted) {
+          _showBiometricMessage(SecurityScreen.intruderCameraDeniedMessage);
+          return;
+        }
+      }
+      final IntruderDefenseSettingsStore store =
+          container.intruderDefenseSettings;
+      final IntruderSettingsRead current = await store.read();
+      if (!mounted) {
+        return;
+      }
+      if (!current.writable) {
+        _showBiometricMessage(SecurityScreen.intruderUnavailableMessage);
+        return;
+      }
+      final IntruderDefenseSettings next = photo
+          ? current.settings.copyWith(evidenceEnabled: value)
+          : current.settings.copyWith(alarmEnabled: value);
+      final bool saved = await store.write(next);
+      if (!mounted) {
+        return;
+      }
+      if (!saved) {
+        _showBiometricMessage(SecurityScreen.couldNotSaveMessage);
+        return;
+      }
+      // Revoked consent takes effect at once for in-flight work (pending
+      // capture aborted, alarm or pending alarm start silenced).
+      container.intruderDefense.onSettingsChanged(next);
+      setState(() {
+        _intruderPhoto = next.evidenceEnabled;
+        _intruderAlarm = next.alarmEnabled;
+        _intruderWritable = true;
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _intruderBusy = false);
+      }
+    }
+  }
 
   Future<void> _setRandomized(bool value) async {
     setState(() => _randomized = value); // optimistic
@@ -872,32 +1005,47 @@ class _SecurityScreenState extends State<SecurityScreen>
           const SizedBox(height: DsSpacing.xl),
           const DsSectionTitle('Advanced protection'),
           const SizedBox(height: DsSpacing.md),
-          const DsCard(
-            padding: EdgeInsets.symmetric(vertical: DsSpacing.xs),
+          DsCard(
+            padding: const EdgeInsets.symmetric(vertical: DsSpacing.xs),
             child: Column(
               children: <Widget>[
-                SecurityStatusItem(
+                _SwitchRow(
+                  key: const ValueKey<String>('intruder_photo_switch'),
                   icon: Icons.photo_camera_outlined,
-                  title: 'Intruder selfie',
-                  subtitle: 'Photograph anyone who enters a wrong PIN',
-                  level: SecurityLevel.notSet,
+                  title: SecurityScreen.intruderPhotoTitle,
+                  subtitle: SecurityScreen.intruderPhotoSubtitle,
+                  value: _intruderPhoto,
+                  onChanged: !_intruderWritable || _intruderBusy
+                      ? null
+                      : (bool v) => _setIntruderOption(photo: true, value: v),
                 ),
-                Divider(),
-                SecurityStatusItem(
+                const Divider(),
+                _SwitchRow(
+                  key: const ValueKey<String>('intruder_alarm_switch'),
+                  icon: Icons.campaign_outlined,
+                  title: SecurityScreen.intruderAlarmTitle,
+                  subtitle: SecurityScreen.intruderAlarmSubtitle,
+                  value: _intruderAlarm,
+                  onChanged: !_intruderWritable || _intruderBusy
+                      ? null
+                      : (bool v) => _setIntruderOption(photo: false, value: v),
+                ),
+                const Divider(),
+                const SecurityStatusItem(
                   icon: Icons.notifications_active_outlined,
                   title: 'Break-in alerts',
                   subtitle: 'Get notified about blocked attempts',
                   level: SecurityLevel.notSet,
                 ),
-                Divider(),
-                SecurityStatusItem(
+                const Divider(),
+                const SecurityStatusItem(
                   icon: Icons.visibility_off_outlined,
                   title: 'Stealth mode',
                   subtitle: 'Hide the app lock from the launcher',
                   level: SecurityLevel.notSet,
                 ),
-                Divider(),
-                SecurityStatusItem(
+                const Divider(),
+                const SecurityStatusItem(
                   icon: Icons.block_outlined,
                   title: 'Uninstall protection',
                   subtitle: 'Stop the app being removed while locks are active',
@@ -915,6 +1063,7 @@ class _SecurityScreenState extends State<SecurityScreen>
 /// Control row with a trailing [Switch] (used for live security options).
 class _SwitchRow extends StatelessWidget {
   const _SwitchRow({
+    super.key,
     required this.icon,
     required this.title,
     required this.subtitle,

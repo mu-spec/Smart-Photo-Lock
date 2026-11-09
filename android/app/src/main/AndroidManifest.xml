@@ -17,6 +17,15 @@
          on Android 9 and lower; harmless on newer versions. -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
 
+    <!-- Phase 12 / M2: OPTIONAL intruder photo. Runtime permission requested
+         only from the owner-verified Security-screen enable flow; the camera
+         is used only while the lock challenge Activity is in the foreground
+         (no foreground service, no background capture). Camera hardware is
+         not required to install the app. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.front" android:required="false" />
+
     <!-- Phase 4B (device-QA fix): PACKAGE_USAGE_STATS list membership.
          The GRANT is still made exclusively through the system Usage Access
          settings screen (AppOps OPSTR_GET_USAGE_STATS) — this declaration

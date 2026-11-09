@@ -30,6 +30,20 @@ enum IntruderMonitorHealth {
   readOnly,
 }
 
+/// Phase 12 / M2: observe-only listener for evidence and the alarm.
+///
+/// [onFailedAttemptRecorded] is called ONLY after an event was persisted
+/// (never for dropped, duplicate or blocked attempts) and only if no owner
+/// success was verified after that failure. [onOwnerVerified] is
+/// called synchronously for a verified, persisted success. Listener
+/// exceptions are swallowed; the listener can never affect the monitor or
+/// authentication.
+abstract interface class IntruderEventListener {
+  void onFailedAttemptRecorded(FailedAttemptEvent event);
+
+  void onOwnerVerified();
+}
+
 /// Redacted diagnostics: counts and health only — no packages, no times.
 final class IntruderMonitorStatus {
   const IntruderMonitorStatus({
@@ -66,6 +80,27 @@ class IntruderMonitor implements VerifiedAttemptObserver {
   static const int _seenIdsCapacity = 256;
 
   final IntruderFailureLogStore _store;
+
+  /// Phase 12 / M2 evidence + alarm listener (observe-only; may be null).
+  IntruderEventListener? listener;
+
+  /// Phase 12 / M2 gate B: bumped SYNCHRONOUSLY by every verified owner
+  /// success. A failure verified before a later owner success is still
+  /// logged (M1 unchanged) but is not reported to [listener]: it is
+  /// superseded, so it can never start evidence or an alarm against the
+  /// owner who has since unlocked.
+  int _ownerEpoch = 0;
+
+  void _notify(void Function(IntruderEventListener l) call) {
+    final IntruderEventListener? l = listener;
+    if (l == null) return;
+    try {
+      call(l);
+    } catch (_) {
+      // A failing listener never affects the log or authentication.
+    }
+  }
+
   final DateTime Function() _now;
   final int maxEvents;
   final Duration retention;
@@ -131,6 +166,8 @@ class IntruderMonitor implements VerifiedAttemptObserver {
       // A verified, persisted success proves the owner: the run resets.
       // (An unpersisted success is returned as a failure — no access.)
       if (attempt.counterPersisted) {
+        _ownerEpoch++;
+        _notify((IntruderEventListener l) => l.onOwnerVerified());
         _enqueue(_resetRun);
       }
       return;
@@ -147,7 +184,8 @@ class IntruderMonitor implements VerifiedAttemptObserver {
     if (method == null || !countedFailure) {
       return; // biometric, lockout-blocked, or not a counted failure
     }
-    _enqueue(() => _record(attempt, method, result));
+    final int ownerEpoch = _ownerEpoch;
+    _enqueue(() => _record(attempt, method, result, ownerEpoch));
   }
 
   // -- queue ----------------------------------------------------------------
@@ -250,6 +288,7 @@ class IntruderMonitor implements VerifiedAttemptObserver {
     VerifiedAttempt attempt,
     FailedAttemptMethod method,
     AuthAttemptResult result,
+    int ownerEpoch,
   ) async {
     final IntruderFailureLog? log = await _ensureLoaded();
     if (log == null) {
@@ -289,6 +328,9 @@ class IntruderMonitor implements VerifiedAttemptObserver {
       ),
     );
     if (saved) {
+      if (ownerEpoch == _ownerEpoch) {
+        _notify((IntruderEventListener l) => l.onFailedAttemptRecorded(event));
+      }
       _seenIds.add(vid);
       while (_seenIds.length > _seenIdsCapacity) {
         _seenIds.remove(_seenIds.first);

@@ -201,9 +201,13 @@ void main() {
 
     expect(find.text(SecurityScreen.patternVisibilityTitle), findsOneWidget);
     final Finder switches = find.byType(Switch);
-    // Switches: [Visible pattern, Randomized keypad]
-    expect(switches, findsNWidgets(2));
+    // Switches: [Visible pattern, Randomized keypad, Intruder photo,
+    // Intruder alarm] — Phase 12 / M2 added the two owner-only intruder
+    // switches, which must be OFF by default.
+    expect(switches, findsNWidgets(4));
     expect(tester.widget<Switch>(switches.first).value, isTrue);
+    expect(tester.widget<Switch>(switches.at(2)).value, isFalse);
+    expect(tester.widget<Switch>(switches.at(3)).value, isFalse);
 
     await tester.tap(switches.first);
     await tester.pumpAndSettle();
