@@ -36,6 +36,8 @@ import '../security/credentials/credential_manager.dart';
 import '../security/credentials/credential_hash_policy.dart';
 import '../security/credentials/credential_state_machine.dart';
 import '../security/credentials/impl/default_credential_manager.dart';
+import '../security/intruder/intruder_failure_log_store.dart';
+import '../security/intruder/intruder_monitor.dart';
 import '../security/credentials/impl/default_pin_credential_store.dart';
 import '../security/storage/impl/flutter_secure_secret_store.dart';
 import '../security/storage/impl/in_memory_secret_store.dart';
@@ -131,6 +133,12 @@ class AppContainer {
     // Tests may override it with a fake for deterministic availability
     // states; production always uses the real local_auth service.
     biometrics = biometricsOverride ?? LocalAuthBiometricService();
+    // Phase 12 / M1: observe-only failed-attempt monitor over the SAME
+    // database and AES-GCM cipher as the security settings. It hears about
+    // completed verifications from the manager and can never change one.
+    intruderMonitor = IntruderMonitor(
+      store: IntruderFailureLogStore(_database, cipher: settingsCipher),
+    );
     auth = DefaultCredentialManager(
       settings: securitySettings,
       // Production PIN storage: strict hash policy (PBKDF2 work factor,
@@ -157,6 +165,7 @@ class AppContainer {
       ),
       patternHashPolicy: CredentialHashPolicy.strict,
       biometricService: biometrics,
+      attemptObserver: intruderMonitor,
     );
     protectionBootstrap = ProtectionBootstrap(
       protectedApps: protectedApps,
@@ -344,6 +353,11 @@ class AppContainer {
   /// Credential lifecycle (Phase 2A): enroll / status / authenticate /
   /// clear for PIN, pattern and biometric.
   late final CredentialManager auth;
+
+  /// Phase 12 / M1: failed PIN / pattern verifications and the consecutive
+  /// failure run (encrypted, bounded, local only). Observe-only: nothing in
+  /// enforcement reads it.
+  late final IntruderMonitor intruderMonitor;
 
   /// Keeps the native reboot/process-death bootstrap state synchronized with
   /// the encrypted credential state and protected-app repository.

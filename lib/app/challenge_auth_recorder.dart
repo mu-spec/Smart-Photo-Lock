@@ -11,6 +11,7 @@ import '../security/credentials/credential_change_authorization.dart';
 import '../security/credentials/credential_manager.dart';
 import '../security/credentials/credential_state.dart';
 import '../security/credentials/pattern_policy.dart';
+import '../security/credentials/verified_attempt.dart';
 import '../security/pin_policy.dart';
 import '../utilities/result.dart';
 
@@ -45,26 +46,47 @@ class ChallengeAuthRecorder implements CredentialManager {
   ChallengeAuthRecorder(
     this._delegate, {
     required Set<AuthType> permittedTypes,
-  }) : _permitted = Set<AuthType>.unmodifiable(permittedTypes);
+    AuthAttemptContext? attemptContext,
+  })  : _permitted = Set<AuthType>.unmodifiable(permittedTypes),
+        _context = attemptContext;
 
   /// For the PIN challenge route: PIN plus the biometric accelerator
   /// (offered by the screen only when the user enabled it, Phase 5G).
-  factory ChallengeAuthRecorder.forPinRoute(CredentialManager delegate) =>
+  factory ChallengeAuthRecorder.forPinRoute(
+    CredentialManager delegate, {
+    AuthAttemptContext? attemptContext,
+  }) =>
       ChallengeAuthRecorder(
         delegate,
         permittedTypes: const <AuthType>{AuthType.pin, AuthType.biometric},
+        attemptContext: attemptContext,
       );
 
   /// For the pattern challenge route: pattern plus the biometric
   /// accelerator (offered by the screen only when the user enabled it).
-  factory ChallengeAuthRecorder.forPatternRoute(CredentialManager delegate) =>
+  factory ChallengeAuthRecorder.forPatternRoute(
+    CredentialManager delegate, {
+    AuthAttemptContext? attemptContext,
+  }) =>
       ChallengeAuthRecorder(
         delegate,
         permittedTypes: const <AuthType>{AuthType.pattern, AuthType.biometric},
+        attemptContext: attemptContext,
       );
 
   final CredentialManager _delegate;
   final Set<AuthType> _permitted;
+
+  /// Phase 12 / M1: attribution for verifications started on this challenge
+  /// (package, native ticket generation, host serial). Carried in a zone to
+  /// the real manager; it is never consulted for any access decision.
+  final AuthAttemptContext? _context;
+
+  /// Runs a forwarded call with this challenge's attribution attached.
+  Future<T> _attributed<T>(Future<T> Function() call) {
+    final AuthAttemptContext? context = _context;
+    return context == null ? call() : context.run(call);
+  }
 
   bool _closed = false;
   bool _succeeded = false;
@@ -115,14 +137,19 @@ class ChallengeAuthRecorder implements CredentialManager {
   @override
   Future<Result<AuthAttemptResult>> authenticatePin(String pin) async {
     if (!_accepts(AuthType.pin)) return _refused();
-    return _record(AuthType.pin, await _delegate.authenticatePin(pin));
+    return _record(
+      AuthType.pin,
+      await _attributed(() => _delegate.authenticatePin(pin)),
+    );
   }
 
   @override
   Future<Result<AuthAttemptResult>> authenticatePattern(List<int> nodes) async {
     if (!_accepts(AuthType.pattern)) return _refused();
     return _record(
-        AuthType.pattern, await _delegate.authenticatePattern(nodes));
+      AuthType.pattern,
+      await _attributed(() => _delegate.authenticatePattern(nodes)),
+    );
   }
 
   @override
@@ -132,7 +159,7 @@ class ChallengeAuthRecorder implements CredentialManager {
     if (!_accepts(AuthType.biometric)) return _refused();
     return _record(
       AuthType.biometric,
-      await _delegate.authenticateBiometric(reason: reason),
+      await _attributed(() => _delegate.authenticateBiometric(reason: reason)),
     );
   }
 

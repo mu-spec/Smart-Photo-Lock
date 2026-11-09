@@ -1,3 +1,8 @@
+import 'dart:async';
+import 'dart:collection';
+import 'dart:convert';
+import 'dart:math';
+
 import '../../../data/models/security_settings.dart';
 import '../../../data/repositories/security_settings_repository.dart';
 import '../../../services/biometric_service.dart';
@@ -15,6 +20,7 @@ import '../credential_manager.dart';
 import '../credential_hash_policy.dart';
 import '../pattern_hasher.dart';
 import '../pattern_policy.dart';
+import '../verified_attempt.dart';
 import '../pin_storage.dart';
 import 'default_pin_credential_store.dart';
 
@@ -40,6 +46,7 @@ class DefaultCredentialManager implements CredentialManager {
     CredentialHashPolicy patternHashPolicy = CredentialHashPolicy.lenient,
     BiometricService? biometricService,
     DateTime Function()? now,
+    VerifiedAttemptObserver? attemptObserver,
   })  : _settings = settings,
         _pinHasher = pinHasher ?? Pbkdf2PinHasher(),
         _patternHasher = patternHasher ?? Pbkdf2PatternHasher(),
@@ -47,7 +54,9 @@ class DefaultCredentialManager implements CredentialManager {
         _pinStore = pinStore ?? DefaultPinCredentialStore(settings),
         _patternHashPolicy = patternHashPolicy,
         _biometrics = biometricService,
-        _now = now ?? DateTime.now;
+        _now = now ?? DateTime.now,
+        _observer = attemptObserver,
+        _instanceNonce = _newInstanceNonce();
 
   final SecuritySettingsRepository _settings;
   final PinHasher _pinHasher;
@@ -63,6 +72,45 @@ class DefaultCredentialManager implements CredentialManager {
   /// Clock seam (Phase 2L QA): lockout timestamps come from here so tests
   /// can drive time deterministically; defaults to [DateTime.now].
   final DateTime Function() _now;
+
+  /// Phase 12 / M1: observe-only sink for completed, counted verifications
+  /// (the intruder monitor). Never awaited; exceptions are swallowed; it can
+  /// never change a verdict.
+  final VerifiedAttemptObserver? _observer;
+
+  /// Phase 12 / M1: random per-instance prefix of every verification id, so
+  /// ids stay unique across process recreation without using the clock.
+  final String _instanceNonce;
+  int _verificationSequence = 0;
+
+  /// Phase 12 / M1 defect fix: every read-modify-write of the settings
+  /// document (authentication counters, enrollment, preferences, clearAll)
+  /// runs under ONE FIFO lock. Without it, concurrent verifications each
+  /// loaded the same counters and overwrote one another — three concurrent
+  /// wrong PINs persisted one failure and never tripped the lockout. A
+  /// biometric system prompt is NEVER held under this lock (a stuck prompt
+  /// must not block PIN entry); only its verdict is applied under it.
+  final _SerialLock _lock = _SerialLock();
+
+  /// Phase 12 / M1 gate B: the biometric "basis" epoch. Bumped (under
+  /// [_lock], immediately before the write) by every credential-set or
+  /// biometric-option write — enrollPin, enrollPattern, clearAll,
+  /// updateBiometricOptions — whether or not the write lands. A biometric
+  /// prompt captures it before it starts; a SUCCESS delivered after the
+  /// epoch moved is stale and never authorizes. Separate from the CR-3
+  /// [_credentialEpoch] so CR-3 grant semantics are untouched.
+  int _biometricBasisEpoch = 0;
+
+  static String _newInstanceNonce() {
+    Random random;
+    try {
+      random = Random.secure();
+    } on UnsupportedError {
+      random = Random();
+    }
+    String part() => random.nextInt(1 << 32).toRadixString(16).padLeft(8, '0');
+    return '${part()}${part()}';
+  }
 
   // -- status -------------------------------------------------------------
 
@@ -82,7 +130,14 @@ class DefaultCredentialManager implements CredentialManager {
     String pin, {
     PinPolicy policy = PinPolicy.defaults,
     CredentialChangeAuthorization? authorization,
-  }) async {
+  }) =>
+      _lock.run(() => _enrollPinLocked(pin, policy, authorization));
+
+  Future<Result<void>> _enrollPinLocked(
+    String pin,
+    PinPolicy policy,
+    CredentialChangeAuthorization? authorization,
+  ) async {
     final PinValidation validation = policy.validate(pin);
     if (validation != PinValidation.valid) {
       return Result.failure(
@@ -104,6 +159,7 @@ class DefaultCredentialManager implements CredentialManager {
     // The hash and all metadata that describes it must land in ONE settings
     // write. Two writes can leave an old hash paired with a new length or
     // primary method when the second write fails.
+    _biometricBasisEpoch++;
     final Result<void> saved = await _pinStore.save(
       hash,
       pinLength: pin.length,
@@ -119,7 +175,14 @@ class DefaultCredentialManager implements CredentialManager {
     List<int> nodes, {
     PatternPolicy policy = PatternPolicy.defaults,
     CredentialChangeAuthorization? authorization,
-  }) async {
+  }) =>
+      _lock.run(() => _enrollPatternLocked(nodes, policy, authorization));
+
+  Future<Result<void>> _enrollPatternLocked(
+    List<int> nodes,
+    PatternPolicy policy,
+    CredentialChangeAuthorization? authorization,
+  ) async {
     final PatternValidation validation = policy.validate(nodes);
     if (validation != PatternValidation.valid) {
       return Result.failure(
@@ -138,6 +201,7 @@ class DefaultCredentialManager implements CredentialManager {
     }
     final CredentialHash hash = await _patternHasher.hash(nodes);
     final Result<SecuritySettings> loaded = await _settings.getSettings();
+    _biometricBasisEpoch++;
     final Result<void> saved = await loaded.fold(
       (SecuritySettings s) => _settings.saveSettings(
         s.copyWith(
@@ -154,44 +218,57 @@ class DefaultCredentialManager implements CredentialManager {
   }
 
   @override
-  Future<Result<void>> updateBiometricOptions(BiometricOptions? options) async {
-    final Result<SecuritySettings> loaded = await _settings.getSettings();
-    return loaded.fold(
-      (SecuritySettings s) => _settings.saveSettings(
-        options == null
-            ? s.copyWith(clearBiometricOptions: true)
-            : s.copyWith(biometricOptions: options),
-      ),
-      Result.failure,
-    );
-  }
+  Future<Result<void>> updateBiometricOptions(BiometricOptions? options) =>
+      _lock.run(() async {
+        final Result<SecuritySettings> loaded = await _settings.getSettings();
+        _biometricBasisEpoch++;
+        return loaded.fold(
+          (SecuritySettings s) => _settings.saveSettings(
+            options == null
+                ? s.copyWith(clearBiometricOptions: true)
+                : s.copyWith(biometricOptions: options),
+          ),
+          Result.failure,
+        );
+      });
 
   @override
-  Future<Result<void>> setRandomizedKeypadEnabled(bool enabled) async {
-    final Result<SecuritySettings> loaded = await _settings.getSettings();
-    return loaded.fold(
-      (SecuritySettings s) => _settings.saveSettings(
-        s.copyWith(randomizedKeypadEnabled: enabled),
-      ),
-      Result.failure,
-    );
-  }
+  Future<Result<void>> setRandomizedKeypadEnabled(bool enabled) =>
+      _lock.run(() async {
+        final Result<SecuritySettings> loaded = await _settings.getSettings();
+        return loaded.fold(
+          (SecuritySettings s) => _settings.saveSettings(
+            s.copyWith(randomizedKeypadEnabled: enabled),
+          ),
+          Result.failure,
+        );
+      });
 
   @override
-  Future<Result<void>> setPatternVisibilityEnabled(bool enabled) async {
-    final Result<SecuritySettings> loaded = await _settings.getSettings();
-    return loaded.fold(
-      (SecuritySettings s) => _settings.saveSettings(
-        s.copyWith(patternVisibilityEnabled: enabled),
-      ),
-      Result.failure,
-    );
-  }
+  Future<Result<void>> setPatternVisibilityEnabled(bool enabled) =>
+      _lock.run(() async {
+        final Result<SecuritySettings> loaded = await _settings.getSettings();
+        return loaded.fold(
+          (SecuritySettings s) => _settings.saveSettings(
+            s.copyWith(patternVisibilityEnabled: enabled),
+          ),
+          Result.failure,
+        );
+      });
 
   // -- authentication -----------------------------------------------------
 
   @override
-  Future<Result<AuthAttemptResult>> authenticatePin(String pin) async {
+  Future<Result<AuthAttemptResult>> authenticatePin(String pin) {
+    // Attribution is captured when the call STARTS (Phase 12 / M1).
+    final AuthAttemptContext context = AuthAttemptContext.current;
+    return _lock.run(() => _authenticatePinLocked(pin, context));
+  }
+
+  Future<Result<AuthAttemptResult>> _authenticatePinLocked(
+    String pin,
+    AuthAttemptContext context,
+  ) async {
     final Result<PinHash?> loadedHash = await _pinStore.load();
     if (loadedHash.isFailure) {
       // Fail closed: corrupted/weakened stored credential.
@@ -220,12 +297,18 @@ class DefaultCredentialManager implements CredentialManager {
     }
 
     final bool matches = await _pinHasher.verify(pin, stored);
-    return _evaluateAndPersist(s, state, matches, AuthType.pin);
+    return _evaluateAndPersist(s, state, matches, AuthType.pin, context);
   }
 
   @override
-  Future<Result<AuthAttemptResult>> authenticatePattern(
+  Future<Result<AuthAttemptResult>> authenticatePattern(List<int> nodes) {
+    final AuthAttemptContext context = AuthAttemptContext.current;
+    return _lock.run(() => _authenticatePatternLocked(nodes, context));
+  }
+
+  Future<Result<AuthAttemptResult>> _authenticatePatternLocked(
     List<int> nodes,
+    AuthAttemptContext context,
   ) async {
     final Result<SecuritySettings> loaded = await _settings.getSettings();
     if (loaded.isFailure) {
@@ -262,13 +345,17 @@ class DefaultCredentialManager implements CredentialManager {
     }
 
     final bool matches = await _patternHasher.verify(nodes, patternHash);
-    return _evaluateAndPersist(s, state, matches, AuthType.pattern);
+    return _evaluateAndPersist(s, state, matches, AuthType.pattern, context);
   }
 
   @override
   Future<Result<AuthAttemptResult>> authenticateBiometric({
     String reason = 'Unlock Smart App Lock',
   }) async {
+    final AuthAttemptContext context = AuthAttemptContext.current;
+    // Gate B: captured BEFORE the pre-prompt read, so any credential or
+    // biometric-option write that could race the read is still detected.
+    final int basisEpoch = _biometricBasisEpoch;
     // 1. Configuration gates: biometric is an accelerator — it needs the
     //    user's explicit opt-in AND an enrolled primary credential.
     final Result<SecuritySettings> loaded = await _settings.getSettings();
@@ -346,21 +433,35 @@ class DefaultCredentialManager implements CredentialManager {
       }
       // Any other platform error is treated as a rejection and counts, so
       // a failing prompt can never be used to dodge the escalating lockout.
-      return _evaluateAndPersist(s, state, false, AuthType.biometric);
+      return _evaluateLatestAndPersist(
+        false,
+        AuthType.biometric,
+        context,
+        promptBasis: s,
+        basisEpoch: basisEpoch,
+      );
     }
 
-    return _evaluateAndPersist(
-      s,
-      state,
+    // Phase 12 / M1: the verdict is applied to the CURRENT counters (re-read
+    // under the lock), not the pre-prompt snapshot — a lockout that started
+    // while the prompt was open still blocks, and a stale write can never
+    // revert newer counters or credentials. H-3 branches above are unchanged.
+    return _evaluateLatestAndPersist(
       outcome.valueOrNull == true,
       AuthType.biometric,
+      context,
+      promptBasis: s,
+      basisEpoch: basisEpoch,
     );
   }
 
   // -- lifecycle ----------------------------------------------------------
 
   @override
-  Future<Result<void>> clearAll() async {
+  Future<Result<void>> clearAll() => _lock.run(_clearAllLocked);
+
+  Future<Result<void>> _clearAllLocked() async {
+    _biometricBasisEpoch++;
     _credentialSetChanged();
     final Result<void> saved =
         await _settings.saveSettings(SecuritySettings.defaults);
@@ -533,18 +634,84 @@ class DefaultCredentialManager implements CredentialManager {
     return remaining < 0 ? 0 : remaining;
   }
 
-  /// Runs the state machine and persists the resulting counters.
+  /// Biometric verdicts: re-reads the settings under the lock and applies
+  /// the verdict to the current counters (fails closed on a read failure).
+  ///
+  /// Gate B: a SUCCESS is discarded — no grant, no counter reset, nothing
+  /// persisted, nothing reported — when, while the prompt was open,
+  ///  * biometric unlock was disabled or every credential was cleared
+  ///    (-> notConfigured, as the pre-prompt gate would answer), or
+  ///  * the credential set / biometric options were written (basis epoch
+  ///    moved) or now differ from what the prompt started against
+  ///    (-> cancelled: the prompt ended without a usable verdict).
+  /// A REJECTION is always counted against the current counters, so a
+  /// stale prompt can never reduce counting either.
+  Future<Result<AuthAttemptResult>> _evaluateLatestAndPersist(
+    bool matches,
+    AuthType type,
+    AuthAttemptContext context, {
+    required SecuritySettings promptBasis,
+    required int basisEpoch,
+  }) =>
+      _lock.run(() async {
+        final Result<SecuritySettings> loaded = await _settings.getSettings();
+        if (loaded.isFailure) {
+          return Result<AuthAttemptResult>.failure(loaded.errorOrNull!);
+        }
+        final SecuritySettings s = loaded.valueOrNull!;
+        final CredentialState state = _stateFrom(s);
+        if (matches) {
+          if (s.biometricOptions == null || !s.hasAnyCredential) {
+            return Result<AuthAttemptResult>.success(
+              const AuthFailure(
+                reason: AuthFailureReason.notConfigured,
+                remainingAttempts: 0,
+              ),
+            );
+          }
+          if (basisEpoch != _biometricBasisEpoch ||
+              _biometricBasisOf(promptBasis) != _biometricBasisOf(s)) {
+            return Result<AuthAttemptResult>.success(
+              AuthFailure(
+                reason: AuthFailureReason.cancelled,
+                remainingAttempts: _remainingAttempts(state),
+              ),
+            );
+          }
+        }
+        return _evaluateAndPersist(s, state, matches, type, context);
+      });
+
+  /// What a biometric prompt authorizes against: the enrolled credential
+  /// material, the biometric options and the primary method. Compared as
+  /// canonical JSON (catches writes from any manager instance).
+  static String _biometricBasisOf(SecuritySettings s) {
+    final Map<String, dynamic> j = s.toJson();
+    return jsonEncode(<String, dynamic>{
+      'pinHash': j['pinHash'],
+      'patternHash': j['patternHash'],
+      'biometricOptions': j['biometricOptions'],
+      'primaryAuthType': j['primaryAuthType'],
+    });
+  }
+
+  /// Runs the state machine and persists the resulting counters. Always
+  /// called under [_lock]. This is the ONE place a counted verdict exists,
+  /// so it is the one place the [_observer] hears about it — after the
+  /// counter write, so a lost event can never mean a lost counter.
   Future<Result<AuthAttemptResult>> _evaluateAndPersist(
     SecuritySettings s,
     CredentialState state,
     bool matches,
     AuthType type,
+    AuthAttemptContext context,
   ) async {
+    final DateTime now = _now();
     final (CredentialState next, AuthAttemptResult result) = _machine.evaluate(
       state: state,
       credentialMatches: matches,
       attemptType: type,
-      now: _now(),
+      now: now,
     );
     final Result<void> saved = await _settings.saveSettings(
       s.copyWith(
@@ -554,10 +721,68 @@ class DefaultCredentialManager implements CredentialManager {
         lockoutStreak: next.lockoutStreak,
       ),
     );
+    _notifyObserver(
+      VerifiedAttempt(
+        verificationId: '$_instanceNonce:${++_verificationSequence}',
+        type: type,
+        matched: matches,
+        result: result,
+        counterPersisted: saved.isSuccess,
+        lockoutStreak: next.lockoutStreak,
+        context: context,
+        at: now,
+      ),
+    );
     if (saved.isFailure) {
       return Result.failure(saved.errorOrNull!);
     }
     return Result.success(result);
+  }
+
+  /// Observe-only: synchronous, never awaited, never allowed to throw into
+  /// the authentication path (monitoring can never override enforcement).
+  void _notifyObserver(VerifiedAttempt attempt) {
+    final VerifiedAttemptObserver? observer = _observer;
+    if (observer == null) {
+      return;
+    }
+    try {
+      observer.onVerifiedAttempt(attempt);
+    } catch (_) {
+      // Deliberately ignored: a failing monitor must not affect the verdict.
+    }
+  }
+}
+
+/// Phase 12 / M1: minimal FIFO async mutex. Actions run one at a time in
+/// call order; an action's failure never wedges the queue.
+///
+/// Zone-safe by construction: an uncontended action starts immediately in
+/// the caller's zone, and each waiter parks on a [Completer] created in ITS
+/// OWN zone, handed the lock directly on release. No future is ever shared
+/// across callers (a completed future schedules its listeners in the zone
+/// that created it, which can stall callers from another zone).
+final class _SerialLock {
+  bool _held = false;
+  final Queue<Completer<void>> _waiters = Queue<Completer<void>>();
+
+  Future<T> run<T>(Future<T> Function() action) async {
+    if (_held) {
+      final Completer<void> turn = Completer<void>();
+      _waiters.add(turn);
+      await turn.future; // ownership is handed over; _held stays true
+    } else {
+      _held = true;
+    }
+    try {
+      return await action();
+    } finally {
+      if (_waiters.isEmpty) {
+        _held = false;
+      } else {
+        _waiters.removeFirst().complete();
+      }
+    }
   }
 }
 

@@ -7,6 +7,7 @@ import '../protection/access_controller.dart';
 import '../protection/lock_trigger.dart';
 import '../security/credentials/auth_type.dart';
 import '../security/credentials/credential_state.dart';
+import '../security/credentials/verified_attempt.dart';
 import '../services/pending_lock_challenge.dart';
 import '../ui/screens/pattern/pattern_unlock_screen.dart';
 import '../ui/screens/pin/pin_unlock_screen.dart';
@@ -858,9 +859,18 @@ class _LockChallengeHostState extends State<LockChallengeHost>
         // authenticates through THIS challenge's recorder (which forwards
         // to the real manager and records only a genuine success).
         final bool patternRoute = route == RouteNames.patternUnlock;
+        // Phase 12 / M1: attribution only (failed-attempt events).
+        final AuthAttemptContext attemptContext =
+            AuthAttemptContext.protectedAppChallenge(
+          packageName: packageName,
+          generation: nativeChallenge.generation,
+          challengeSerial: _challengeSerial,
+        );
         final ChallengeAuthRecorder routeRecorder = patternRoute
-            ? ChallengeAuthRecorder.forPatternRoute(container.auth)
-            : ChallengeAuthRecorder.forPinRoute(container.auth);
+            ? ChallengeAuthRecorder.forPatternRoute(container.auth,
+                attemptContext: attemptContext)
+            : ChallengeAuthRecorder.forPinRoute(container.auth,
+                attemptContext: attemptContext);
         recorder = routeRecorder;
         final MaterialPageRoute<bool> presentedRoute = MaterialPageRoute<bool>(
           settings: RouteSettings(name: route),
