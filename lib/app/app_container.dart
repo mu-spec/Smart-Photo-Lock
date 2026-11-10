@@ -44,6 +44,9 @@ import '../security/intruder/intruder_evidence_service.dart';
 import '../security/intruder/intruder_evidence_store.dart';
 import '../security/intruder/intruder_monitor.dart';
 import '../security/intruder/intruder_owner_session.dart';
+import '../security/timeline/security_event_journal.dart';
+import '../security/timeline/security_event_journal_store.dart';
+import '../security/timeline/security_timeline.dart';
 import '../security/credentials/impl/default_pin_credential_store.dart';
 import '../security/storage/impl/flutter_secure_secret_store.dart';
 import '../security/storage/impl/in_memory_secret_store.dart';
@@ -167,6 +170,22 @@ class AppContainer {
     intruderStartup =
         intruderEvidence.startupMaintenance().catchError((Object _) {});
     unawaited(intruderStartup);
+    // Phase 13 / M1: encrypted, bounded security event journal (same DB and
+    // cipher) + the read-only timeline model. Observe-only: nothing in
+    // enforcement reads, imports or awaits either; startup maintenance never
+    // blocks startup and never fails.
+    securityJournalStore =
+        SecurityEventJournalStore(_database, cipher: settingsCipher);
+    securityJournal = SecurityEventJournal(store: securityJournalStore);
+    securityTimeline = SecurityTimelineReader(
+      monitor: intruderMonitor,
+      journal: securityJournal,
+      journalStore: securityJournalStore,
+      database: _database,
+    );
+    securityJournalStartup =
+        securityJournal.startup().catchError((Object _) {});
+    unawaited(securityJournalStartup);
     auth = DefaultCredentialManager(
       settings: securitySettings,
       // Production PIN storage: strict hash policy (PBKDF2 work factor,
@@ -405,6 +424,24 @@ class AppContainer {
   /// Phase 12 / M3 — in-memory owner evidence-viewing sessions (never
   /// persisted). Replaceable only so tests can inject a clock.
   IntruderOwnerSessionGate intruderOwnerSessions = IntruderOwnerSessionGate();
+
+  /// Phase 13 / M1 — security event journal (encrypted, bounded, local).
+  late final SecurityEventJournalStore securityJournalStore;
+  late final SecurityEventJournal securityJournal;
+
+  /// Phase 13 / M1 — read-only timeline model over the failure log and the
+  /// journal.
+  late final SecurityTimelineReader securityTimeline;
+
+  /// Phase 13 / M1 — completes when journal startup maintenance finished.
+  /// Never fails.
+  late final Future<void> securityJournalStartup;
+
+  /// Phase 13 / M1 — in-memory owner sessions for the Security timeline
+  /// (separate from evidence sessions; never persisted). Replaceable only
+  /// so tests can inject a clock.
+  IntruderOwnerSessionGate securityTimelineSessions =
+      IntruderOwnerSessionGate();
 
   /// Keeps the native reboot/process-death bootstrap state synchronized with
   /// the encrypted credential state and protected-app repository.

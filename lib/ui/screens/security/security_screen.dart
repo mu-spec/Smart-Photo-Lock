@@ -22,6 +22,7 @@ import '../../../utilities/result.dart';
 import 'app_credential_verification.dart';
 import 'intruder_settings_screen.dart';
 import 'security_center_section.dart';
+import 'security_timeline_screen.dart';
 
 /// Security tab — the authentication settings surface (Phase 2K).
 ///
@@ -598,6 +599,16 @@ class _SecurityScreenState extends State<SecurityScreen>
     }
   }
 
+  /// Phase 13 / M1 — opens the owner-only Security timeline (fresh
+  /// PIN/pattern verification inside [openSecurityTimeline]).
+  Future<void> _openSecurityTimeline() async {
+    final AppContainer? container = AppScope.read(context);
+    if (container == null) {
+      return;
+    }
+    await openSecurityTimeline(context, container);
+  }
+
   /// Phase 12 / M3 — opens Intruder settings. Viewing settings needs no
   /// verification (no evidence content is shown); every change and the
   /// evidence viewer verify freshly. Re-reads the switches on return.
@@ -1117,6 +1128,15 @@ class _SecurityScreenState extends State<SecurityScreen>
                   subtitle: const Text(SecurityScreen.intruderSettingsSubtitle),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: _intruderBusy ? null : _openIntruderSettings,
+                ),
+                const Divider(),
+                ListTile(
+                  key: const ValueKey<String>('security_timeline_row'),
+                  leading: const Icon(Icons.timeline_outlined),
+                  title: const Text(SecurityTimelineText.rowTitle),
+                  subtitle: const Text(SecurityTimelineText.rowSubtitle),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: _intruderBusy ? null : _openSecurityTimeline,
                 ),
                 const Divider(),
                 const SecurityStatusItem(
