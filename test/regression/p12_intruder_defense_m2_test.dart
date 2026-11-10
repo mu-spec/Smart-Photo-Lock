@@ -230,6 +230,12 @@ void main() {
       expect(find.byType(PinUnlockScreen), findsOneWidget);
       expect(fake.permissionRequests, 0, reason: 'not before verification');
       await typePin(tester, _pin);
+      // Phase 12 / M3 (R-4): explicit consent between verification and the
+      // permission request.
+      expect(find.text(SecurityScreen.intruderConsentTitle), findsOneWidget);
+      expect(fake.permissionRequests, 0, reason: 'not before consent');
+      await tester.tap(find.byKey(const Key('intruder_consent_accept')));
+      await tester.pumpAndSettle();
       expect(fake.permissionRequests, 1);
       expect((await stored(c)).evidenceEnabled, isTrue);
       expect(tester.widget<Switch>(switchOf('intruder_photo_switch')).value,
@@ -258,6 +264,8 @@ void main() {
       await pumpSecurity(tester, c);
       await tapSwitch(tester, 'intruder_photo_switch');
       await typePin(tester, _pin);
+      await tester.tap(find.byKey(const Key('intruder_consent_accept')));
+      await tester.pumpAndSettle();
       expect(fake.permissionRequests, 1);
       expect((await stored(c)).evidenceEnabled, isFalse);
       expect(find.text(SecurityScreen.intruderCameraDeniedMessage),
@@ -347,13 +355,37 @@ void main() {
       }
     });
 
-    test('no UI renders evidence images in M2', () {
+    // Phase 12 / M3 supersedes the M2 "no UI renders evidence" rule with an
+    // allowlist: ONLY the owner-verified viewer decrypts images, only the
+    // viewer and Intruder settings touch the evidence store, and neither
+    // ever shares, copies, writes files or prints.
+    test('evidence images render only in the owner-verified M3 viewer', () {
+      const String viewer = 'intruder_evidence_screen.dart';
+      const Set<String> storeUsers = <String>{
+        viewer,
+        'intruder_settings_screen.dart',
+      };
       for (final FileSystemEntity e
           in Directory('lib/ui').listSync(recursive: true)) {
         if (e is File && e.path.endsWith('.dart')) {
           final String s = e.readAsStringSync();
-          expect(s.contains('readImage('), isFalse, reason: e.path);
-          expect(s.contains('intruderEvidence.'), isFalse, reason: e.path);
+          final String name = e.uri.pathSegments.last;
+          expect(s.contains('readImage('), name == viewer, reason: e.path);
+          if (!storeUsers.contains(name)) {
+            expect(s.contains('intruderEvidence.'), isFalse, reason: e.path);
+          } else {
+            for (final String banned in <String>[
+              'Clipboard',
+              'Share',
+              'File(',
+              'print(',
+              'debugPrint(',
+              'saveToGallery',
+              'path_provider',
+            ]) {
+              expect(s.contains(banned), isFalse, reason: '$name: $banned');
+            }
+          }
         }
       }
     });

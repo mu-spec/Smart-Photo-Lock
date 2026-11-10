@@ -51,6 +51,10 @@ class StaticOverlayLockService implements OverlayLockService {
   bool secureWindow = false;
   int setSecureWindowCalls = 0;
 
+  /// Phase 12 / M3 test seam: when true, [setSecureWindow] reports a
+  /// failure (and leaves [secureWindow] unchanged).
+  bool secureWindowFails = false;
+
   @override
   Future<Result<bool>> canDrawOverlays() async =>
       Result.success(overlayGranted);
@@ -117,6 +121,9 @@ class StaticOverlayLockService implements OverlayLockService {
   @override
   Future<Result<void>> setSecureWindow(bool secure) async {
     setSecureWindowCalls++;
+    if (secureWindowFails) {
+      return Result.failure(StateError('FLAG_SECURE unavailable'));
+    }
     secureWindow = secure;
     return Result.success(null);
   }

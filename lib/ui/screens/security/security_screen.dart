@@ -20,6 +20,7 @@ import '../../../services/installed_apps_service.dart';
 import '../../../services/overlay_lock_service.dart';
 import '../../../utilities/result.dart';
 import 'app_credential_verification.dart';
+import 'intruder_settings_screen.dart';
 import 'security_center_section.dart';
 
 /// Security tab — the authentication settings surface (Phase 2K).
@@ -109,6 +110,25 @@ class SecurityScreen extends StatefulWidget {
       'enabled.';
   static const String intruderUnavailableMessage =
       'Intruder protection settings could not be read on this device.';
+
+  /// Phase 12 / M3 (R-4) — explicit consent before intruder photos are
+  /// enabled (shown after owner verification, before any permission
+  /// request).
+  static const String intruderConsentTitle = 'Allow intruder photos?';
+  static const String intruderConsentBody =
+      'When someone enters the wrong PIN or pattern on a locked app the '
+      'configured number of times, Smart App Lock takes ONE front-camera '
+      'photo while its lock screen is open (Android shows the camera '
+      'indicator). Photos are encrypted, stay on this device, are never '
+      'uploaded or shared, and are deleted after 30 days. Only you can '
+      'view or delete them, after verifying your app PIN or pattern. You '
+      'can turn this off at any time; existing photos are kept until you '
+      'delete them.';
+  static const String intruderConsentDeclinedMessage =
+      'Not enabled. Intruder photos stay off.';
+  static const String intruderSettingsTitle = 'Intruder settings & photos';
+  static const String intruderSettingsSubtitle =
+      'Trigger threshold, camera permission status, stored photos';
 
   @override
   State<SecurityScreen> createState() => _SecurityScreenState();
@@ -496,6 +516,38 @@ class _SecurityScreenState extends State<SecurityScreen>
         return;
       }
       if (photo && value) {
+        // Phase 12 / M3 (R-4): explicit informed consent, after
+        // verification and before the camera permission request. Declining
+        // requests nothing and writes nothing.
+        final bool consented = await showDialog<bool>(
+              context: context,
+              builder: (BuildContext ctx) => AlertDialog(
+                title: const Text(SecurityScreen.intruderConsentTitle),
+                content: const SingleChildScrollView(
+                  child: Text(SecurityScreen.intruderConsentBody),
+                ),
+                actions: <Widget>[
+                  TextButton(
+                    key: const Key('intruder_consent_decline'),
+                    onPressed: () => Navigator.of(ctx).pop(false),
+                    child: const Text('Not now'),
+                  ),
+                  TextButton(
+                    key: const Key('intruder_consent_accept'),
+                    onPressed: () => Navigator.of(ctx).pop(true),
+                    child: const Text('I agree'),
+                  ),
+                ],
+              ),
+            ) ??
+            false;
+        if (!mounted) {
+          return;
+        }
+        if (!consented) {
+          _showBiometricMessage(SecurityScreen.intruderConsentDeclinedMessage);
+          return;
+        }
         final IntruderEvidenceService camera =
             container.intruderEvidenceService;
         CameraPermissionState permission = await camera.cameraPermission();
@@ -544,6 +596,33 @@ class _SecurityScreenState extends State<SecurityScreen>
         setState(() => _intruderBusy = false);
       }
     }
+  }
+
+  /// Phase 12 / M3 — opens Intruder settings. Viewing settings needs no
+  /// verification (no evidence content is shown); every change and the
+  /// evidence viewer verify freshly. Re-reads the switches on return.
+  Future<void> _openIntruderSettings() async {
+    final AppContainer? container = AppScope.read(context);
+    if (container == null) {
+      return;
+    }
+    await Navigator.of(context).push<void>(MaterialPageRoute<void>(
+      settings: const RouteSettings(name: intruderSettingsRouteName),
+      builder: (_) => IntruderSettingsScreen(container: container),
+    ));
+    if (!mounted) {
+      return;
+    }
+    final IntruderSettingsRead r =
+        await container.intruderDefenseSettings.read();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _intruderPhoto = r.settings.evidenceEnabled;
+      _intruderAlarm = r.settings.alarmEnabled;
+      _intruderWritable = r.writable;
+    });
   }
 
   Future<void> _setRandomized(bool value) async {
@@ -1029,6 +1108,15 @@ class _SecurityScreenState extends State<SecurityScreen>
                   onChanged: !_intruderWritable || _intruderBusy
                       ? null
                       : (bool v) => _setIntruderOption(photo: false, value: v),
+                ),
+                const Divider(),
+                ListTile(
+                  key: const ValueKey<String>('intruder_settings_row'),
+                  leading: const Icon(Icons.shield_outlined),
+                  title: const Text(SecurityScreen.intruderSettingsTitle),
+                  subtitle: const Text(SecurityScreen.intruderSettingsSubtitle),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: _intruderBusy ? null : _openIntruderSettings,
                 ),
                 const Divider(),
                 const SecurityStatusItem(

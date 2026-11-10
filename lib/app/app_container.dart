@@ -43,6 +43,7 @@ import '../security/intruder/intruder_defense_settings.dart';
 import '../security/intruder/intruder_evidence_service.dart';
 import '../security/intruder/intruder_evidence_store.dart';
 import '../security/intruder/intruder_monitor.dart';
+import '../security/intruder/intruder_owner_session.dart';
 import '../security/credentials/impl/default_pin_credential_store.dart';
 import '../security/storage/impl/flutter_secure_secret_store.dart';
 import '../security/storage/impl/in_memory_secret_store.dart';
@@ -161,7 +162,11 @@ class AppContainer {
       service: intruderEvidenceService,
     );
     intruderMonitor.listener = intruderDefense;
-    unawaited(intruderEvidence.sweepOrphans().catchError((Object _) => 0));
+    // Phase 12 / M3: crash recovery (orphans) then retention as ONE
+    // serialized store operation; never blocks startup.
+    intruderStartup =
+        intruderEvidence.startupMaintenance().catchError((Object _) {});
+    unawaited(intruderStartup);
     auth = DefaultCredentialManager(
       settings: securitySettings,
       // Production PIN storage: strict hash policy (PBKDF2 work factor,
@@ -392,6 +397,14 @@ class AppContainer {
   late final IntruderDefenseSettingsStore intruderDefenseSettings;
   late final IntruderEvidenceStore intruderEvidence;
   late final IntruderDefenseCoordinator intruderDefense;
+
+  /// Phase 12 / M3 — completes when startup evidence maintenance (orphan
+  /// sweep + retention) has finished. Never fails.
+  late final Future<void> intruderStartup;
+
+  /// Phase 12 / M3 — in-memory owner evidence-viewing sessions (never
+  /// persisted). Replaceable only so tests can inject a clock.
+  IntruderOwnerSessionGate intruderOwnerSessions = IntruderOwnerSessionGate();
 
   /// Keeps the native reboot/process-death bootstrap state synchronized with
   /// the encrypted credential state and protected-app repository.

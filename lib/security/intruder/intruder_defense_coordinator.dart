@@ -69,6 +69,11 @@ class IntruderDefenseCoordinator implements IntruderEventListener {
 
   final IntruderDefenseStatus status = IntruderDefenseStatus();
   final LinkedHashSet<int> _handled = LinkedHashSet<int>();
+
+  /// Phase 12 / M3: highest event seq ever handed to this coordinator
+  /// (never evicted). Used as the clear-all floor so evidence for any
+  /// failure that happened before the clear can never be saved after it.
+  int _highestSeq = -1;
   final Set<Future<void>> _inFlight = <Future<void>>{};
   bool _capturing = false;
 
@@ -97,6 +102,7 @@ class IntruderDefenseCoordinator implements IntruderEventListener {
   void onFailedAttemptRecorded(FailedAttemptEvent event) {
     if (event.surface != AuthAttemptSurface.protectedAppChallenge) return;
     if (!_handled.add(event.seq)) return; // duplicate notification
+    if (event.seq > _highestSeq) _highestSeq = event.seq;
     while (_handled.length > _handledCapacity) {
       _handled.remove(_handled.first);
     }
@@ -120,6 +126,16 @@ class IntruderDefenseCoordinator implements IntruderEventListener {
     if (!settings.evidenceEnabled) _invalidateCapture(force: true);
     if (!settings.alarmEnabled) _invalidateAlarm(force: true);
   }
+
+  /// Phase 12 / M3 — highest failed-attempt seq this coordinator was
+  /// notified of (-1 when none).
+  int get highestHandledSeq => _highestSeq;
+
+  /// Phase 12 / M3 — the owner (freshly verified) is clearing all evidence.
+  /// Synchronous: bumps the capture epoch BEFORE the store clear so a
+  /// capture already in flight fails its commit-point check, and signals
+  /// the platform to abort any camera session. The alarm is untouched.
+  void onEvidenceCleared() => _invalidateCapture(force: true);
 
   void _invalidateCapture({bool force = false}) {
     _captureEpoch++;
@@ -242,7 +258,8 @@ class IntruderDefenseCoordinator implements IntruderEventListener {
           );
           if (saved == EvidenceSaveResult.saved) {
             status.captured++;
-          } else if (saved == EvidenceSaveResult.cancelled) {
+          } else if (saved == EvidenceSaveResult.cancelled ||
+              saved == EvidenceSaveResult.superseded) {
             _cancelled();
           } else {
             status.saveFailed++;

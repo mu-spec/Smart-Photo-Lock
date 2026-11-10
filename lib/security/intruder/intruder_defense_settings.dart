@@ -8,6 +8,8 @@
 // overwritten. This record controls evidence and the alarm only — it is
 // never consulted for any access decision.
 
+import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 
 import '../../data/storage/local_database.dart';
@@ -156,7 +158,11 @@ class IntruderDefenseSettingsStore {
 
   /// Saves [settings]. Returns false (and writes nothing) when the current
   /// record must not be overwritten, or when the write fails.
-  Future<bool> write(IntruderDefenseSettings settings) async {
+  Future<bool> write(IntruderDefenseSettings settings) =>
+      _serial(() => _writeUnlocked(settings));
+
+  Future<bool> _writeUnlocked(IntruderDefenseSettings settings) async {
+    if (!_inRange(settings.threshold)) return false;
     final IntruderSettingsRead current = await read();
     if (!current.writable) {
       return false;
@@ -168,6 +174,49 @@ class IntruderDefenseSettingsStore {
       return true;
     } catch (_) {
       return false;
+    }
+  }
+
+  static bool _inRange(int t) =>
+      t >= IntruderDefenseSettings.minThreshold &&
+      t <= IntruderDefenseSettings.maxThreshold;
+
+  /// Phase 12 / M3 — serialized read-modify-write. Re-reads the
+  /// authoritative record, refuses when it is not writable (corrupt /
+  /// newer / unreadable — never overwritten), applies [transform], validates
+  /// the threshold range and writes. Returns the record now persisted, or
+  /// null when nothing was written. Callers must have a FRESH owner
+  /// verification (UI responsibility; this store never authorizes).
+  Future<IntruderDefenseSettings?> update(
+    IntruderDefenseSettings Function(IntruderDefenseSettings current) transform,
+  ) =>
+      _serial(() async {
+        final IntruderSettingsRead current = await read();
+        if (!current.writable) return null;
+        final IntruderDefenseSettings next = transform(current.settings);
+        return await _writeUnlocked(next) ? next : null;
+      });
+
+  // Zone-safe FIFO lock (same design as the evidence store's).
+  bool _held = false;
+  final Queue<Completer<void>> _waiters = Queue<Completer<void>>();
+
+  Future<T> _serial<T>(Future<T> Function() op) async {
+    if (_held) {
+      final Completer<void> turn = Completer<void>();
+      _waiters.add(turn);
+      await turn.future;
+    } else {
+      _held = true;
+    }
+    try {
+      return await op();
+    } finally {
+      if (_waiters.isEmpty) {
+        _held = false;
+      } else {
+        _waiters.removeFirst().complete();
+      }
     }
   }
 }
