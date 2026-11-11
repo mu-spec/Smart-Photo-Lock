@@ -4,8 +4,11 @@
 // Deterministic scheduling: storage reads/writes are held on explicit
 // gates, so the exact queue state at every enqueue is known. Compared with
 // the Phase 12 baseline (no timeline reads):
-//  * timeline reads add AT MOST ONE occupied monitor slot at any time,
-//    however many loads are requested (single-flight reader);
+//  * timeline reads add NO failure-record loss at all (P-1: monitor
+//    snapshots never consume failure-record capacity; before P-1 they held
+//    one slot — R-P13M1-1 — and these tests asserted 7 / 13);
+//  * at most one timeline snapshot is in flight, however many loads are
+//    requested (single-flight reader);
 //  * every attempt is either recorded or counted as dropped;
 //  * the timeline reports the drops and never claims complete history;
 //  * forced reads cannot grow the monitor queue without bound under
@@ -185,12 +188,13 @@ void main() {
     });
 
     test(
-        'one concurrent timeline read costs AT MOST one slot (7 / 13); '
+        'one concurrent timeline read costs NO failure-record slot (8 / 12, '
+        '= baseline; P-1); '
         'accounting exact; timeline discloses the loss', () async {
       final (int recorded, int dropped, List<SecurityTimelineSnapshot> s, _) =
           await scenario(1);
-      expect(recorded, 7);
-      expect(dropped, 13);
+      expect(recorded, 8, reason: 'P-1: equal to the Phase 12 baseline');
+      expect(dropped, 12);
       expect(recorded + dropped, 20, reason: 'every attempt accounted for');
       final SecurityTimelineSnapshot snap = s.single;
       // The snapshot ran in queue order, after the 4 earlier records.
@@ -202,13 +206,13 @@ void main() {
           4);
       final TimelineSourceStatus f = snap.sources[0];
       expect(f.available, isTrue);
-      expect(f.lost, 13, reason: 'drops reported, not hidden');
+      expect(f.lost, 12, reason: 'drops reported, not hidden');
       expect(snap.hasGaps, isTrue);
       expect(snap.confirmedEmpty, isFalse);
     });
 
     test(
-        'TEN concurrent timeline reads still cost at most ONE slot '
+        'TEN concurrent timeline reads cost NO failure-record slot (P-1) '
         '(single-flight); at most one snapshot in flight', () async {
       final (
         int recorded,
@@ -216,14 +220,14 @@ void main() {
         List<SecurityTimelineSnapshot> snaps,
         _Rig r
       ) = await scenario(10);
-      expect(recorded, 7);
-      expect(dropped, 13);
+      expect(recorded, 8, reason: 'P-1: equal to the Phase 12 baseline');
+      expect(dropped, 12);
       expect(r.monitor.maxInFlight, 1);
       expect(r.journal.maxInFlight, 1);
       expect(r.monitor.calls, lessThanOrEqualTo(3),
           reason: '10 requests coalesce into <= 2 loads (+1 test read)');
       for (final SecurityTimelineSnapshot s in snaps) {
-        expect(s.sources[0].lost, 13);
+        expect(s.sources[0].lost, 12);
         expect(s.hasGaps, isTrue);
         expect(s.confirmedEmpty, isFalse);
       }
@@ -248,8 +252,8 @@ void main() {
 
   group('R-P13M1-1 stalled storage: no unbounded growth', () {
     test(
-        '1,000 loads with storage stalled leave exactly ONE forced snapshot '
-        'queued; capacity for failure records is preserved (7 of 8)', () async {
+        '1,000 loads with storage stalled leave exactly ONE snapshot queued; '
+        'full failure-record capacity is preserved (8 of 8, P-1)', () async {
       final _Rig r = _Rig();
       r.db.arm();
       r.db.gatedReads.addAll(<String>{_logKey, _jKey});
@@ -264,8 +268,8 @@ void main() {
       for (int i = 0; i < 20; i++) {
         r.monitor.onVerifiedAttempt(_wrong());
       }
-      expect(r.monitor.status.droppedEvents, 13,
-          reason: 'one slot held by the single snapshot; 7 records accepted');
+      expect(r.monitor.status.droppedEvents, 12,
+          reason: 'P-1: the snapshot holds no record slot; 8 accepted');
       r.db.release();
       final List<SecurityTimelineSnapshot> snaps = await Future.wait(loads);
       await r.monitor.idle();
