@@ -15,13 +15,22 @@ import '../../../services/installed_apps_service.dart';
 ///  4. **detect successful return** — re-checks when the app resumes
 ///     and after the settings intent fires, then shows the granted state.
 class UsageAccessScreen extends StatefulWidget {
-  const UsageAccessScreen(
-      {super.key, this.service, this.title = 'Usage access'});
+  const UsageAccessScreen({
+    super.key,
+    this.service,
+    this.title = 'Usage access',
+    this.returnToSetup = false,
+  });
 
   /// Overrides the service resolved from [AppScope] (tests/previews).
   final InstalledAppsService? service;
 
   final String title;
+
+  /// Opened from guided setup: after the user comes back from the Android
+  /// settings hand-off, return to the setup hub (granted or not) so it can
+  /// show the next step or help. Default false (unchanged behavior).
+  final bool returnToSetup;
 
   static const String notGrantedTitle = 'Usage access is off';
   static const String notGrantedMessage =
@@ -46,6 +55,14 @@ class UsageAccessScreen extends StatefulWidget {
       'again.';
   static const String retryLabel = 'Retry';
 
+  /// The Android settings screen could not be started (distinct from a
+  /// failed status read).
+  static const String launchFailedTitle = "Couldn't open Android settings";
+  static const String launchFailedMessage =
+      "Android didn't open its Usage access settings. Open your phone's "
+      'Settings app, search for "Usage access", allow Smart App Lock, then '
+      'come back.';
+
   @override
   State<UsageAccessScreen> createState() => _UsageAccessScreenState();
 }
@@ -55,6 +72,9 @@ enum _AccessState { checking, granted, notGranted, unavailable }
 class _UsageAccessScreenState extends State<UsageAccessScreen>
     with WidgetsBindingObserver {
   _AccessState _state = _AccessState.checking;
+  bool _launchFailed = false;
+  bool _awaitingSettingsReturn = false;
+  bool _returned = false;
 
   @override
   void initState() {
@@ -77,11 +97,11 @@ class _UsageAccessScreenState extends State<UsageAccessScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      _check();
+      _check(afterSettings: _awaitingSettingsReturn);
     }
   }
 
-  Future<void> _check() async {
+  Future<void> _check({bool afterSettings = false}) async {
     final InstalledAppsService service;
     try {
       service = _service;
@@ -98,6 +118,7 @@ class _UsageAccessScreenState extends State<UsageAccessScreen>
       return;
     }
     setState(() {
+      _launchFailed = false;
       if (result.isFailure) {
         _state = _AccessState.unavailable;
       } else if (result.valueOrNull == true) {
@@ -106,21 +127,45 @@ class _UsageAccessScreenState extends State<UsageAccessScreen>
         _state = _AccessState.notGranted;
       }
     });
+    if (afterSettings) {
+      _returnToSetup();
+    }
   }
 
   /// Step 3: fire the system settings intent through the service, then
   /// re-check (the intent result is fire-and-forget; the resume observer
   /// covers the actual return).
   Future<void> _openSettings() async {
+    _awaitingSettingsReturn = widget.returnToSetup;
     final result = await _service.requestUsageAccess();
     if (!mounted) {
       return;
     }
     if (result.isFailure) {
-      setState(() => _state = _AccessState.unavailable);
+      _awaitingSettingsReturn = false;
+      setState(() {
+        _launchFailed = true;
+        _state = _AccessState.unavailable;
+      });
       return;
     }
     await _check();
+  }
+
+  /// Guided setup only: the user is back from the Android settings
+  /// hand-off. Return to the setup hub, which re-reads Android and shows the
+  /// next step (or help). Never grants or opens anything.
+  void _returnToSetup() {
+    _awaitingSettingsReturn = false;
+    if (!widget.returnToSetup || _returned || !mounted) {
+      return;
+    }
+    final ModalRoute<Object?>? route = ModalRoute.of(context);
+    if (route != null && !route.isCurrent) {
+      return;
+    }
+    _returned = true;
+    Navigator.of(context).pop(_state == _AccessState.granted);
   }
 
   @override
@@ -285,14 +330,18 @@ class _UsageAccessScreenState extends State<UsageAccessScreen>
         const SizedBox(height: DsSpacing.xl),
         Center(
           child: Text(
-            UsageAccessScreen.unavailableTitle,
+            _launchFailed
+                ? UsageAccessScreen.launchFailedTitle
+                : UsageAccessScreen.unavailableTitle,
             style: theme.textTheme.headlineSmall,
           ),
         ),
         const SizedBox(height: DsSpacing.sm),
         Center(
           child: Text(
-            UsageAccessScreen.unavailableMessage,
+            _launchFailed
+                ? UsageAccessScreen.launchFailedMessage
+                : UsageAccessScreen.unavailableMessage,
             textAlign: TextAlign.center,
             style: theme.textTheme.bodyMedium?.copyWith(
               color: palette.textSecondary,

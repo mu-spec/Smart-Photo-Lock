@@ -55,6 +55,12 @@ abstract final class RouteNames {
   /// for every required capability.
   static const String permissionSetup = '/permissions';
 
+  /// Route argument for [usageAccess], [accessibilitySetup] and
+  /// [overlaySetup]: opened from guided setup, so the flow returns to the
+  /// setup hub after the user comes back from Android settings. Nothing is
+  /// granted or opened automatically.
+  static const String returnToSetupArgument = 'return_to_setup';
+
   /// Detection diagnostics (Phase 5B): temporary developer screen that
   /// verifies foreground detection on a device.
   static const String detectionDiagnostics = '/diagnostics/detection';
@@ -113,18 +119,26 @@ abstract final class AppRouter {
       case RouteNames.usageAccess:
         return MaterialPageRoute<bool>(
           settings: settings,
-          builder: (BuildContext context) => const UsageAccessScreen(),
+          builder: (BuildContext context) => UsageAccessScreen(
+            returnToSetup:
+                settings.arguments == RouteNames.returnToSetupArgument,
+          ),
         );
       case RouteNames.accessibilitySetup:
         return MaterialPageRoute<bool>(
           settings: settings,
-          builder: (BuildContext context) =>
-              const AccessibilitySetupScreen(),
+          builder: (BuildContext context) => AccessibilitySetupScreen(
+            returnToSetup:
+                settings.arguments == RouteNames.returnToSetupArgument,
+          ),
         );
       case RouteNames.overlaySetup:
         return MaterialPageRoute<bool>(
           settings: settings,
-          builder: (BuildContext context) => const OverlaySetupScreen(),
+          builder: (BuildContext context) => OverlaySetupScreen(
+            returnToSetup:
+                settings.arguments == RouteNames.returnToSetupArgument,
+          ),
         );
       case RouteNames.permissionSetup:
         return MaterialPageRoute<bool>(

@@ -21,12 +21,18 @@ class AccessibilitySetupScreen extends StatefulWidget {
     super.key,
     this.service,
     this.title = 'Accessibility service',
+    this.returnToSetup = false,
   });
 
   /// Overrides the service resolved from [AppScope] (tests/previews).
   final AccessibilityLockService? service;
 
   final String title;
+
+  /// Opened from guided setup: after the user comes back from the Android
+  /// settings hand-off, return to the setup hub (granted or not) so it can
+  /// show the next step or help. Default false (unchanged behavior).
+  final bool returnToSetup;
 
   static const String notEnabledTitle = 'Accessibility is off';
   static const String disclosureTitle = 'Why Smart App Lock uses Accessibility';
@@ -77,6 +83,14 @@ class AccessibilitySetupScreen extends StatefulWidget {
       'again.';
   static const String retryLabel = 'Retry';
 
+  /// The Android settings screen could not be started (distinct from a
+  /// failed status read).
+  static const String launchFailedTitle = "Couldn't open Android settings";
+  static const String launchFailedMessage =
+      "Android didn't open its Accessibility settings. Open your phone's "
+      'Settings app, search for "Accessibility", find Smart App Lock and '
+      'turn it on, then come back.';
+
   @override
   State<AccessibilitySetupScreen> createState() =>
       _AccessibilitySetupScreenState();
@@ -87,6 +101,9 @@ enum _ServiceState { checking, enabled, notEnabled, unavailable }
 class _AccessibilitySetupScreenState extends State<AccessibilitySetupScreen>
     with WidgetsBindingObserver {
   _ServiceState _state = _ServiceState.checking;
+  bool _launchFailed = false;
+  bool _awaitingSettingsReturn = false;
+  bool _returned = false;
 
   @override
   void initState() {
@@ -108,11 +125,11 @@ class _AccessibilitySetupScreenState extends State<AccessibilitySetupScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      _check();
+      _check(afterSettings: _awaitingSettingsReturn);
     }
   }
 
-  Future<void> _check() async {
+  Future<void> _check({bool afterSettings = false}) async {
     final AccessibilityLockService service;
     try {
       service = _service;
@@ -128,6 +145,7 @@ class _AccessibilitySetupScreenState extends State<AccessibilitySetupScreen>
       return;
     }
     setState(() {
+      _launchFailed = false;
       if (result.isFailure) {
         _state = _ServiceState.unavailable;
       } else if (result.valueOrNull == true) {
@@ -136,18 +154,42 @@ class _AccessibilitySetupScreenState extends State<AccessibilitySetupScreen>
         _state = _ServiceState.notEnabled;
       }
     });
+    if (afterSettings) {
+      _returnToSetup();
+    }
   }
 
   Future<void> _openSettings() async {
+    _awaitingSettingsReturn = widget.returnToSetup;
     final result = await _service.requestServiceEnable();
     if (!mounted) {
       return;
     }
     if (result.isFailure) {
-      setState(() => _state = _ServiceState.unavailable);
+      _awaitingSettingsReturn = false;
+      setState(() {
+        _launchFailed = true;
+        _state = _ServiceState.unavailable;
+      });
       return;
     }
     await _check();
+  }
+
+  /// Guided setup only: the user is back from the Android settings
+  /// hand-off. Return to the setup hub, which re-reads Android and shows the
+  /// next step (or help). Never grants or opens anything.
+  void _returnToSetup() {
+    _awaitingSettingsReturn = false;
+    if (!widget.returnToSetup || _returned || !mounted) {
+      return;
+    }
+    final ModalRoute<Object?>? route = ModalRoute.of(context);
+    if (route != null && !route.isCurrent) {
+      return;
+    }
+    _returned = true;
+    Navigator.of(context).pop(_state == _ServiceState.enabled);
   }
 
   @override
@@ -361,14 +403,18 @@ class _AccessibilitySetupScreenState extends State<AccessibilitySetupScreen>
         const SizedBox(height: DsSpacing.xl),
         Center(
           child: Text(
-            AccessibilitySetupScreen.unavailableTitle,
+            _launchFailed
+                ? AccessibilitySetupScreen.launchFailedTitle
+                : AccessibilitySetupScreen.unavailableTitle,
             style: theme.textTheme.headlineSmall,
           ),
         ),
         const SizedBox(height: DsSpacing.sm),
         Center(
           child: Text(
-            AccessibilitySetupScreen.unavailableMessage,
+            _launchFailed
+                ? AccessibilitySetupScreen.launchFailedMessage
+                : AccessibilitySetupScreen.unavailableMessage,
             textAlign: TextAlign.center,
             style: theme.textTheme.bodyMedium?.copyWith(
               color: palette.textSecondary,

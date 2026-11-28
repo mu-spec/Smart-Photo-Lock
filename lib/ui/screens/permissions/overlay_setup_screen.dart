@@ -20,12 +20,18 @@ class OverlaySetupScreen extends StatefulWidget {
     super.key,
     this.service,
     this.title = 'Draw over apps',
+    this.returnToSetup = false,
   });
 
   /// Overrides the service resolved from [AppScope] (tests/previews).
   final OverlayLockService? service;
 
   final String title;
+
+  /// Opened from guided setup: after the user comes back from the Android
+  /// settings hand-off, return to the setup hub (granted or not) so it can
+  /// show the next step or help. Default false (unchanged behavior).
+  final bool returnToSetup;
 
   static const String notGrantedTitle = 'Draw over apps is off';
   static const String disclosureTitle =
@@ -55,6 +61,14 @@ class OverlaySetupScreen extends StatefulWidget {
       'try again.';
   static const String retryLabel = 'Retry';
 
+  /// The Android settings screen could not be started (distinct from a
+  /// failed status read).
+  static const String launchFailedTitle = "Couldn't open Android settings";
+  static const String launchFailedMessage =
+      "Android didn't open the Display over other apps settings. Open "
+      "your phone's Settings app, search for \"Display over other apps\", "
+      'allow Smart App Lock, then come back.';
+
   @override
   State<OverlaySetupScreen> createState() => _OverlaySetupScreenState();
 }
@@ -64,6 +78,9 @@ enum _OverlayState { checking, granted, notGranted, unavailable }
 class _OverlaySetupScreenState extends State<OverlaySetupScreen>
     with WidgetsBindingObserver {
   _OverlayState _state = _OverlayState.checking;
+  bool _launchFailed = false;
+  bool _awaitingSettingsReturn = false;
+  bool _returned = false;
 
   @override
   void initState() {
@@ -85,11 +102,11 @@ class _OverlaySetupScreenState extends State<OverlaySetupScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      _check();
+      _check(afterSettings: _awaitingSettingsReturn);
     }
   }
 
-  Future<void> _check() async {
+  Future<void> _check({bool afterSettings = false}) async {
     final OverlayLockService service;
     try {
       service = _service;
@@ -105,6 +122,7 @@ class _OverlaySetupScreenState extends State<OverlaySetupScreen>
       return;
     }
     setState(() {
+      _launchFailed = false;
       if (result.isFailure) {
         _state = _OverlayState.unavailable;
       } else if (result.valueOrNull == true) {
@@ -113,18 +131,42 @@ class _OverlaySetupScreenState extends State<OverlaySetupScreen>
         _state = _OverlayState.notGranted;
       }
     });
+    if (afterSettings) {
+      _returnToSetup();
+    }
   }
 
   Future<void> _openSettings() async {
+    _awaitingSettingsReturn = widget.returnToSetup;
     final result = await _service.requestOverlayPermission();
     if (!mounted) {
       return;
     }
     if (result.isFailure) {
-      setState(() => _state = _OverlayState.unavailable);
+      _awaitingSettingsReturn = false;
+      setState(() {
+        _launchFailed = true;
+        _state = _OverlayState.unavailable;
+      });
       return;
     }
     await _check();
+  }
+
+  /// Guided setup only: the user is back from the Android settings
+  /// hand-off. Return to the setup hub, which re-reads Android and shows the
+  /// next step (or help). Never grants or opens anything.
+  void _returnToSetup() {
+    _awaitingSettingsReturn = false;
+    if (!widget.returnToSetup || _returned || !mounted) {
+      return;
+    }
+    final ModalRoute<Object?>? route = ModalRoute.of(context);
+    if (route != null && !route.isCurrent) {
+      return;
+    }
+    _returned = true;
+    Navigator.of(context).pop(_state == _OverlayState.granted);
   }
 
   @override
@@ -321,14 +363,18 @@ class _OverlaySetupScreenState extends State<OverlaySetupScreen>
         const SizedBox(height: DsSpacing.xl),
         Center(
           child: Text(
-            OverlaySetupScreen.unavailableTitle,
+            _launchFailed
+                ? OverlaySetupScreen.launchFailedTitle
+                : OverlaySetupScreen.unavailableTitle,
             style: theme.textTheme.headlineSmall,
           ),
         ),
         const SizedBox(height: DsSpacing.sm),
         Center(
           child: Text(
-            OverlaySetupScreen.unavailableMessage,
+            _launchFailed
+                ? OverlaySetupScreen.launchFailedMessage
+                : OverlaySetupScreen.unavailableMessage,
             textAlign: TextAlign.center,
             style: theme.textTheme.bodyMedium?.copyWith(
               color: palette.textSecondary,
