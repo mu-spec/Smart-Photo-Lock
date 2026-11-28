@@ -31,22 +31,42 @@ class AccessibilitySetupScreen extends StatefulWidget {
   static const String notEnabledTitle = 'Accessibility is off';
   static const String disclosureTitle = 'Why Smart App Lock uses Accessibility';
   static const String disclosureBody =
-      'Smart App Lock uses the accessibility service for one purpose '
-      'only: to receive the package name when an app window opens, so the '
-      'native protection shield can react before slower usage-history '
-      'polling. This is required for the strongest available protection.';
+      'Smart App Lock uses the Android Accessibility service for one '
+      'purpose only: to notice which app has just opened, so it can lock '
+      'the apps you chose to protect right away.\n\n'
+      'While the service is on, even when Smart App Lock is closed, Android '
+      'tells Smart App Lock the app name (package name, for example '
+      'com.example.app) and the window type each time an app window opens. '
+      'Smart App Lock checks the app name against your protected apps on '
+      'this phone and shows the lock screen when it matches. Without it, '
+      'Smart App Lock can only use Usage access, which is slower.';
   static const String disclosureNever =
-      'It never reads your screen content, never clicks or types for you, '
-      'and never collects or sends any data.';
+      'Smart App Lock does not read the text or anything else on your '
+      'screen, does not tap, type or act for you, and does not keep a list '
+      'of the apps you open. This information never leaves your phone and '
+      'is not shared. If someone fails to unlock a protected app, that '
+      "app's name can be saved in your encrypted security records on this "
+      'phone.';
   static const String notUsedElsewhere = 'Not used for anything else.';
-  static const String openSettingsLabel = 'Open Settings';
+
+  /// P19/M1: the separate, affirmative consent request. "Agree" is the
+  /// consent; only then are Android's Accessibility settings opened (the
+  /// Android switch itself stays the user's decision). "Not now" declines
+  /// without opening anything.
+  static const String consentQuestion =
+      'Do you agree to let Smart App Lock use the Accessibility service '
+      'this way?';
+  static const String openSettingsLabel = 'Agree';
+  static const String declineLabel = 'Not now';
 
   /// Granted-state secondary action: reopen the same system settings
   /// destination so the user can always manage (or revoke) the service.
   static const String manageSettingsLabel = 'Manage Settings';
   static const String settingsNote =
-      'Android will show its own warning — this is normal. Find Smart App '
-      'Lock in the list, enable it, then come back.';
+      "Agree opens Android's Accessibility settings. Android will show its "
+      'own warning — this is normal. Find Smart App Lock in the list, turn '
+      'it on, then come back. You can turn it off there at any time. If you '
+      'choose Not now, nothing is turned on.';
   static const String enabledTitle = 'Accessibility enabled';
   static const String enabledMessage =
       'Early event-driven protection detection is active.';
@@ -280,11 +300,28 @@ class _AccessibilitySetupScreenState extends State<AccessibilitySetupScreen>
           ),
         ),
         const SizedBox(height: DsSpacing.xl),
+        Text(
+          AccessibilitySetupScreen.consentQuestion,
+          key: const Key('accessibility_consent_question'),
+          textAlign: TextAlign.center,
+          style: theme.textTheme.titleSmall,
+        ),
+        const SizedBox(height: DsSpacing.md),
+        // P19/M1: affirmative consent first; the Android hand-off follows.
         DsButton(
           key: const Key('accessibility_open_settings'),
           label: AccessibilitySetupScreen.openSettingsLabel,
           expand: true,
           onPressed: _openSettings,
+        ),
+        const SizedBox(height: DsSpacing.md),
+        // P19/M1: a genuine decline — opens nothing, records nothing.
+        DsButton(
+          key: const Key('accessibility_decline'),
+          label: AccessibilitySetupScreen.declineLabel,
+          variant: DsButtonVariant.secondary,
+          expand: true,
+          onPressed: () => Navigator.of(context).maybePop(false),
         ),
         const SizedBox(height: DsSpacing.lg),
         Center(

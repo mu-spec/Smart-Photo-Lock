@@ -48,10 +48,16 @@ void main() {
     final StaticAccessibilityLockService service =
         await pumpScreen(tester, enabled: false);
 
+    // P19/M1: the fuller disclosure places the consent button below the
+    // fold of the default test surface; scroll to it as a user would.
+    await tester.scrollUntilVisible(
+        find.byKey(const Key('accessibility_open_settings')), 200);
     await tester.tap(find.byKey(const Key('accessibility_open_settings')));
     await tester.pumpAndSettle();
 
     expect(service.requestServiceEnableCalls, 1);
+    await tester.scrollUntilVisible(
+        find.text(AccessibilitySetupScreen.notEnabledTitle), -200);
     expect(find.text(AccessibilitySetupScreen.notEnabledTitle), findsOneWidget);
   });
 
