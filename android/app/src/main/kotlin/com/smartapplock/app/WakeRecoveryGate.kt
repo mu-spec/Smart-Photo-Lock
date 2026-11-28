@@ -801,3 +801,53 @@ object WatcherTeardownPolicy {
     fun revokesOnAccessibilityDisconnect(protectionEnabled: Boolean): Boolean =
         protectionEnabled
 }
+
+// -- G14 F1: a reported-successful challenge launch that never took effect ----
+
+/**
+ * G14 F1. `MainActivity.foregroundForRecovery` reports success whenever
+ * Android accepted the call without an exception, but a blocked background
+ * activity launch is silent (no exception, no return value). This tracks the
+ * first reported-successful launch for the EXACT pending ticket (package and
+ * generation) and reports it blocked only after [graceMs] in which the
+ * challenge Activity never resumed and the exact ticket was never
+ * acknowledged ready. Time counts only while the screen is interactive and
+ * unlocked ([presentable]): a ticket raised at screen-off legitimately waits
+ * behind the keyguard for USER_PRESENT, and an unknown state never records.
+ *
+ * Observational only: the result selects the existing
+ * [LastErrorCode.CHALLENGE_LAUNCH_BLOCKED]. It never hides the shield,
+ * clears or replaces a ticket, changes recovery or grants anything.
+ * Process memory only; nothing is persisted or logged.
+ */
+class ChallengeLaunchWatch(private val graceMs: Long) {
+    private var ticket: ProtectionStateStore.PendingChallenge? = null
+    private var sinceElapsedMs = 0L
+
+    /**
+     * Called after each reported-successful launch for [ticket]. Returns
+     * true once that exact ticket has waited at least [graceMs] since its
+     * first observed launch without the Activity resuming or acknowledging.
+     */
+    @Synchronized
+    fun launchBlocked(
+        ticket: ProtectionStateStore.PendingChallenge,
+        activityResumed: Boolean,
+        challengeReady: Boolean,
+        presentable: Boolean,
+        nowElapsedMs: Long,
+    ): Boolean {
+        if (activityResumed || challengeReady || !presentable) {
+            // The hand-off took effect, or the wait is legitimate: restart.
+            this.ticket = null
+            return false
+        }
+        if (this.ticket != ticket) {
+            // First launch for this exact ticket (or a newer generation).
+            this.ticket = ticket
+            sinceElapsedMs = nowElapsedMs
+            return false
+        }
+        return nowElapsedMs - sinceElapsedMs >= graceMs
+    }
+}

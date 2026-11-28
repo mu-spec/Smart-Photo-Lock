@@ -119,6 +119,12 @@ abstract final class HealthPresentation {
   static const String permissionNotAllowedMessage = 'A permission protection '
       'needs has not been allowed yet. App locking may not work until it is '
       'allowed.';
+  /// G14 E1: shown wherever detection falls back to Usage Access alone
+  /// (Accessibility off or not connected). Hedged: the backup polls usage
+  /// history and Android or the phone battery manager can delay or pause
+  /// it, so a protected app may open before the lock appears.
+  static const String usageOnlyCaveat = 'protected apps may open before the '
+      'lock appears, and Android or the phone battery manager can pause it.';
   static const String checkingTitle = 'Checking protection…';
   static const String unavailableTitle = 'Status unavailable';
 
@@ -319,16 +325,19 @@ abstract final class HealthPresentation {
               : 'Accessibility service is not turned on',
           explanation: revoked
               ? 'It was on before. Without it, detection relies on the '
-                  'slower Usage Access backup.'
+                  'slower Usage Access backup, which is best-effort: '
+                  '$usageOnlyCaveat'
               : 'It is the fastest way to detect protected apps. Until it is '
-                  'on, detection relies on the slower Usage Access backup.',
+                  'on, detection relies on the slower Usage Access backup, '
+                  'which is best-effort: $usageOnlyCaveat',
         );
       case HealthIssueCode.accessibilityNotRunning:
         return (
           title: 'Accessibility service is not running',
           explanation: 'Android shows it as on, but it is not connected. '
               'Turning it off and on again in Accessibility settings usually '
-              'reconnects it.',
+              'reconnects it. Until then, detection relies on the best-effort '
+              'Usage Access backup: $usageOnlyCaveat',
         );
       case HealthIssueCode.usageAccessUnavailable:
         return (

@@ -22,9 +22,11 @@ class P18M1FStatusTextPolicyTest {
     private fun status(e: Boolean, o: Boolean?, a: Boolean?, u: Boolean?) =
         WatcherStatusTextPolicy.status(e, o, a, u)
 
+    // G14 E1: only the bound Accessibility path counts; Usage Access alone is
+    // a best-effort backup and never yields ACTIVE or RECOVERING.
     @Test fun activeOnlyWithOverlayAndADetectionPath() {
         for (engine in listOf(true, false)) for (o in values) for (a in values) for (u in values) {
-            val core = o == true && (a == true || u == true)
+            val core = o == true && a == true
             val expected = when {
                 !core -> WatcherStatus.NEEDS_ATTENTION
                 engine -> WatcherStatus.ACTIVE
@@ -43,12 +45,20 @@ class P18M1FStatusTextPolicyTest {
     @Test fun unknownSignalsAreNeverGranted() {
         assertEquals(WatcherStatus.NEEDS_ATTENTION, status(true, null, true, true))
         assertEquals(WatcherStatus.NEEDS_ATTENTION, status(true, true, null, null))
-        assertEquals(WatcherStatus.ACTIVE, status(true, true, null, true))
+        assertEquals(WatcherStatus.NEEDS_ATTENTION, status(true, true, null, true))
     }
 
-    @Test fun oneDetectionPathIsEnough() {
+    @Test fun accessibilityAloneIsEnough() {
         assertEquals(WatcherStatus.ACTIVE, status(true, true, true, false))
-        assertEquals(WatcherStatus.ACTIVE, status(true, true, false, true))
+        assertEquals(WatcherStatus.RECOVERING, status(false, true, true, false))
+    }
+
+    /** G14 E1: Usage Access only (Accessibility off or not connected) is never active. */
+    @Test fun usageAccessAloneIsNeverActive() {
+        for (engine in listOf(true, false)) {
+            assertEquals(WatcherStatus.NEEDS_ATTENTION, status(engine, true, false, true))
+            assertEquals(WatcherStatus.NEEDS_ATTENTION, status(engine, true, null, true))
+        }
     }
 
     private fun watcherSource(): String {

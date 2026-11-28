@@ -298,6 +298,32 @@ void main() {
       expect(never.categoryLabel, 'Setup needed');
     });
 
+    test(
+        'G14 E1: Accessibility off or not connected describes the Usage '
+        'Access backup as best-effort', () {
+      for (final (HealthIssueCode code, HealthCause cause)
+          in <(HealthIssueCode, HealthCause)>[
+        (HealthIssueCode.accessibilityUnavailable, HealthCause.notGranted),
+        (HealthIssueCode.accessibilityUnavailable, HealthCause.revoked),
+        (HealthIssueCode.accessibilityNotRunning, HealthCause.notRunning),
+      ]) {
+        final String explanation = HealthPresentation.issue(
+          HealthIssue(
+            code: code,
+            component: HealthComponent.accessibilityDetection,
+            cause: cause,
+            action: HealthRepairAction.openAccessibilitySettings,
+          ),
+        ).explanation;
+        expect(explanation, contains('best-effort'), reason: '$code $cause');
+        expect(
+          explanation,
+          contains(HealthPresentation.usageOnlyCaveat),
+          reason: '$code $cause',
+        );
+      }
+    });
+
     test('repair plans follow the M1 action hint', () {
       HealthRepairPlan plan(HealthRepairAction? a) => HealthPresentation.repair(
             HealthIssue(

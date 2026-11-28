@@ -1,5 +1,6 @@
 package com.smartapplock.app
 
+import android.app.KeyguardManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -248,6 +249,7 @@ class WatcherService : Service() {
     /**
      * Phase 18 / M1F (F18-4 proposal): never "active" while Android reports
      * the overlay or every detection path as missing ([WatcherStatusTextPolicy]).
+     * G14 E1: nor while only the best-effort Usage Access backup is available.
      */
     private fun notificationText(): String = when (
         WatcherStatusTextPolicy.status(
@@ -330,6 +332,10 @@ class WatcherService : Service() {
         private const val TAG = "SmartAppLockWatcher"
         private const val POLL_INTERVAL_MS = 1_000L
         private const val RECOVERY_RETRY_MS = 3_000L
+        // G14 F1: two retry intervals without the challenge Activity resuming
+        // or acknowledging the exact ticket before a reported-successful
+        // launch is recorded as blocked. Observational only (error code).
+        private const val CHALLENGE_LAUNCH_GRACE_MS = 2 * RECOVERY_RETRY_MS
         // This is only a bounded launcher/task-transition coordination window.
         // It is never treated as authentication or protected-app authorization.
         private const val SAFE_EXIT_COORDINATION_MS = 1_500L
@@ -342,6 +348,7 @@ class WatcherService : Service() {
         // U1-C: latest non-transient Accessibility package, process memory only.
         private val usageLeaveCorroboration = UsageLeaveCorroboration()
         private val recoveryGate = WakeRecoveryGate(RECOVERY_RETRY_MS)
+        private val challengeLaunchWatch = ChallengeLaunchWatch(CHALLENGE_LAUNCH_GRACE_MS)
         private val safeExitGate = SafeExitGate()
         private val safeExitHandler = Handler(Looper.getMainLooper())
         private var safeExitTimeout: Runnable? = null
@@ -485,6 +492,13 @@ class WatcherService : Service() {
         private fun isScreenInteractive(context: Context): Boolean =
             (context.getSystemService(Context.POWER_SERVICE) as? PowerManager)
                 ?.isInteractive == true
+
+        /** G14 F1: unknown (null) never counts as unlocked. */
+        private fun isKeyguardLocked(context: Context): Boolean? = try {
+            context.getSystemService(KeyguardManager::class.java)?.isKeyguardLocked
+        } catch (_: Exception) {
+            null
+        }
 
         fun reportForeground(
             context: Context,
@@ -753,6 +767,20 @@ class WatcherService : Service() {
                     LastErrorCode.OVERLAY_UNAVAILABLE,
                 )
                 !launched -> ProtectionStateStore.setLastError(
+                    context,
+                    LastErrorCode.CHALLENGE_LAUNCH_BLOCKED,
+                )
+                // G14 F1: a reported launch is not proof the Activity came
+                // forward (a blocked background launch is silent). Only the
+                // recorded code changes; the shield, ticket and retry stay.
+                challengeLaunchWatch.launchBlocked(
+                    ticket = pending,
+                    activityResumed = ProtectionRuntime.activityResumed,
+                    challengeReady = ProtectionRuntime.isChallengeReady(pending),
+                    presentable = isScreenInteractive(context) &&
+                        isKeyguardLocked(context) == false,
+                    nowElapsedMs = now,
+                ) -> ProtectionStateStore.setLastError(
                     context,
                     LastErrorCode.CHALLENGE_LAUNCH_BLOCKED,
                 )

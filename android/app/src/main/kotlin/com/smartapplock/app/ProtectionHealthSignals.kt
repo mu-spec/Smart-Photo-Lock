@@ -130,19 +130,26 @@ enum class WatcherStatus { ACTIVE, RECOVERING, NEEDS_ATTENTION }
  * Phase 18 / M1F (F18-4 proposal): the foreground-service status line.
  *
  * An "active" status is reported only when Android reports the shield
- * permission (overlay) AND at least one detection path (Accessibility bound
- * or Usage Access allowed) — the same core requirement as the Flutter
- * capability evaluation. An unknown (null) input never counts as granted.
+ * permission (overlay) AND the Accessibility detection service bound. An
+ * unknown (null) input never counts as granted.
+ *
+ * G14 E1: Usage Access alone is a best-effort, polling-based backup that
+ * Android or a manufacturer battery manager can delay or pause, so on its
+ * own it never yields ACTIVE or RECOVERING; it is NEEDS_ATTENTION, matching
+ * the Flutter health state (ATTENTION REQUIRED while Accessibility is off or
+ * not connected). Status text only: enforcement is unchanged, and
+ * [usageAccessGranted] stays wired for the call site but cannot raise the
+ * status.
  */
 object WatcherStatusTextPolicy {
     fun status(
         engineHealthy: Boolean,
         overlayGranted: Boolean?,
         accessibilityConnected: Boolean?,
-        usageAccessGranted: Boolean?,
+        @Suppress("UNUSED_PARAMETER") usageAccessGranted: Boolean?,
     ): WatcherStatus {
-        val detection = accessibilityConnected == true || usageAccessGranted == true
-        if (overlayGranted != true || !detection) return WatcherStatus.NEEDS_ATTENTION
+        val reliableDetection = accessibilityConnected == true
+        if (overlayGranted != true || !reliableDetection) return WatcherStatus.NEEDS_ATTENTION
         return if (engineHealthy) WatcherStatus.ACTIVE else WatcherStatus.RECOVERING
     }
 }
